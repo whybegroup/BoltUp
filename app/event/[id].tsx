@@ -130,10 +130,14 @@ export default function EventDetailScreen() {
             <Text style={styles.navEditText}>Edit</Text>
           </TouchableOpacity>
         )}
-        <View style={styles.navGroup}>
+        <TouchableOpacity 
+          style={styles.navGroup}
+          onPress={() => router.push(`/group/${ev.groupId}`)}
+          activeOpacity={0.7}
+        >
           <View style={[styles.groupDot, { backgroundColor: p.dot }]} />
           <Text style={styles.navGroupName}>{group?.name}</Text>
-        </View>
+        </TouchableOpacity>
       </View>
 
       <ScrollView ref={scrollRef} style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
