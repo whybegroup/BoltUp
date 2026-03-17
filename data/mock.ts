@@ -3,11 +3,13 @@ export interface Group {
   id: string;
   name: string;
   emoji: string;
+  thumbnail?: string | null;
   palette: number;
   desc: string;
   superAdmin: string;
   isAdmin: boolean;
   members: string[];
+  pendingReqs: { name: string; handle: string }[];
 }
 
 export interface Rsvp {
@@ -93,18 +95,24 @@ export const GROUPS: Group[] = [
     desc: 'Friday nights, pocha runs, random KTown adventures. Everyone welcome!',
     superAdmin: 'Jenny · KTown · 92', isAdmin: true,
     members: ['Jenny · KTown · 92','지훈 · LA · 90','Mike · KTown · 88','수연 · LA · 93','David · SGV · 89','Haru · Lamirada · 80','Jay · LA · 83','가후 · OC · 88'],
+    pendingReqs: [
+      { name: 'Rachel · OC · 91', handle: 'rachel.oc.91' },
+      { name: 'Tommy · SGV · 89', handle: 'tommy.sgv.89' },
+    ],
   },
   {
     id: 'g2', name: 'SGV Foodies', emoji: '🍜', palette: 1,
     desc: 'Exploring the best of SGV — dim sum, KBBQ, and everything in between.',
     superAdmin: '민지 · SGV · 88', isAdmin: false,
     members: ['Jenny · KTown · 92','민지 · SGV · 88','Chris · LA · 90','Amy · OC · 91','상훈 · SGV · 87','Jay · LA · 83','Hannah · SGV · 92'],
+    pendingReqs: [],
   },
   {
     id: 'g4', name: 'LA Hiking Crew', emoji: '⛰️', palette: 3,
     desc: 'Weekend hikes across LA — Griffith, Mt. Baldy, Runyon. All levels welcome.',
     superAdmin: 'Jenny · KTown · 92', isAdmin: true,
     members: ['Jenny · KTown · 92','준혁 · LA · 91','Lisa · Glendale · 89','태현 · LA · 88','Brian · Burbank · 90','Chloe · LA · 93'],
+    pendingReqs: [],
   },
 ];
 
@@ -197,6 +205,19 @@ export const ALL_EVENTS: Event[] = ([
 export function addEvent(event: Event): void {
   ALL_EVENTS.push(event);
   ALL_EVENTS.sort((a, b) => a.start.getTime() - b.start.getTime());
+}
+
+export function deleteGroup(groupId: string): void {
+  const gi = GROUPS.findIndex(g => g.id === groupId);
+  if (gi >= 0) GROUPS.splice(gi, 1);
+  for (let i = ALL_EVENTS.length - 1; i >= 0; i--) {
+    if (ALL_EVENTS[i]?.groupId === groupId) ALL_EVENTS.splice(i, 1);
+  }
+}
+
+export function saveGroup(nextGroup: Group): void {
+  const gi = GROUPS.findIndex(g => g.id === nextGroup.id);
+  if (gi >= 0) GROUPS[gi] = nextGroup;
 }
 
 // ── Notifications ─────────────────────────────────────────────────────────────
