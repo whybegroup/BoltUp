@@ -1,21 +1,40 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, SafeAreaView, Image } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { Colors, Fonts, Radius } from '../constants/theme';
-import { paletteOf } from '../utils/helpers';
-import { GROUPS, addEvent, uid, ME_ID, type Event } from '../data/mock';
-import { NavBar, Field, Toggle } from '../components/ui';
+import { Colors, Fonts, Radius } from '../../../constants/theme';
+import { paletteOf } from '../../../utils/helpers';
+import { GROUPS, ALL_EVENTS, updateEvent } from '../../../data/mock';
+import { NavBar, Field, Toggle } from '../../../components/ui';
 
-export default function CreateEventScreen() {
+export default function EditEventScreen() {
   const router = useRouter();
-  const today  = new Date().toISOString().slice(0, 10);
+  const { id } = useLocalSearchParams<{ id: string }>();
+  
+  const existingEvent = ALL_EVENTS.find(e => e.id === id);
+  if (!existingEvent) {
+    router.replace('/(tabs)/feed');
+    return null;
+  }
+
+  // Format date and times from existing event
+  const formatDate = (date: Date) => date.toISOString().slice(0, 10);
+  const formatTime = (date: Date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
   const [form, setForm] = useState({
-    title: '', subtitle: '', groupId: GROUPS[0].id,
-    date: today, startTime: '19:00', endTime: '21:00',
-    isAllDay: false, location: '', minAttendees: '', deadline: '',
-    allowMaybe: false, description: '', coverPhotos: [] as string[],
+    title: existingEvent.title,
+    subtitle: existingEvent.subtitle || '',
+    groupId: existingEvent.groupId,
+    date: formatDate(existingEvent.start),
+    startTime: formatTime(existingEvent.start),
+    endTime: formatTime(existingEvent.end),
+    isAllDay: existingEvent.isAllDay || false,
+    location: existingEvent.location || '',
+    minAttendees: existingEvent.minAttendees ? String(existingEvent.minAttendees) : '',
+    deadline: existingEvent.deadline ? formatTime(existingEvent.deadline) : '',
+    allowMaybe: existingEvent.allowMaybe || false,
+    description: existingEvent.description || '',
+    coverPhotos: existingEvent.coverPhotos || [],
   });
 
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
@@ -36,10 +55,10 @@ export default function CreateEventScreen() {
       const [dh, dm] = form.deadline.split(':').map(Number);
       deadline = new Date(form.date + 'T' + String(dh).padStart(2, '0') + ':' + String(dm || 0).padStart(2, '0') + ':00');
     }
-    const newEvent: Event = {
-      id: uid(),
+    
+    updateEvent(id!, {
+      ...existingEvent,
       groupId: form.groupId,
-      createdBy: ME_ID,
       title: form.title.trim(),
       subtitle: form.subtitle.trim() || undefined,
       description: form.description.trim() || undefined,
@@ -51,11 +70,9 @@ export default function CreateEventScreen() {
       minAttendees: form.minAttendees.trim() ? parseInt(form.minAttendees, 10) : undefined,
       deadline,
       allowMaybe: form.allowMaybe,
-      rsvps: [],
-      comments: [],
-    };
-    addEvent(newEvent);
-    router.replace('/(tabs)/feed');
+    });
+    
+    router.push(`/event/${id}`);
   };
 
   const pickPhotos = async () => {
@@ -65,10 +82,10 @@ export default function CreateEventScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <NavBar title="New Event" onBack={() => router.replace('/(tabs)/feed')}
+      <NavBar title="Edit Event" onBack={() => router.back()}
         right={
           <TouchableOpacity onPress={submit} style={[styles.headerBtn, !ok && styles.headerBtnDis]}>
-            <Text style={[styles.headerBtnText, !ok && { color: Colors.textMuted }]}>Create</Text>
+            <Text style={[styles.headerBtnText, !ok && { color: Colors.textMuted }]}>Save</Text>
           </TouchableOpacity>
         }
       />
@@ -155,7 +172,7 @@ export default function CreateEventScreen() {
         </Field>
 
         <TouchableOpacity onPress={submit} style={[styles.submitBtn, !ok && { backgroundColor: Colors.border }]} disabled={!ok}>
-          <Text style={[styles.submitBtnText, !ok && { color: Colors.textMuted }]}>Create Event</Text>
+          <Text style={[styles.submitBtnText, !ok && { color: Colors.textMuted }]}>Save Changes</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>

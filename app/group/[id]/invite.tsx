@@ -3,7 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, SafeAr
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Colors, Fonts, Radius } from '../../../constants/theme';
-import { GROUPS } from '../../../data/mock';
+import { GROUPS, ME_ID } from '../../../data/mock';
 import { NavBar } from '../../../components/ui';
 
 export default function GroupInviteScreen() {
@@ -68,7 +68,7 @@ export default function GroupInviteScreen() {
           <Text style={styles.codeLabelText}>INVITE CODE</Text>
           <Text style={styles.codeText}>{inviteCode}</Text>
           <Text style={styles.codeDesc}>
-            {group.isAdmin
+            {group.adminIds.includes(ME_ID)
               ? 'Share this code — requests will need your approval'
               : 'Share this code to let people request to join'}
           </Text>
@@ -106,7 +106,7 @@ export default function GroupInviteScreen() {
         </View>
 
         {/* Admin-only: add by username */}
-        {group.isAdmin && (
+        {group.adminIds.includes(ME_ID) && (
           <>
             <Text style={styles.sectionLabel}>ADD BY USERNAME</Text>
             <View style={[styles.card, { padding: 16 }]}>

@@ -3,7 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Mod
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
 import { paletteOf, dDiff } from '../../utils/helpers';
-import { GROUPS, ALL_EVENTS, MY_NAME } from '../../data/mock';
+import { GROUPS, ALL_EVENTS, getUser, ME_ID } from '../../data/mock';
 import { Avatar, AvatarStack, NavBar } from '../../components/ui';
 import { ListView } from '../../components/ListView';
 
@@ -14,38 +14,40 @@ export default function GroupDetailScreen() {
 
   const [group,       setGroup]       = useState({ ...initGroup });
   const [tab,         setTab]         = useState<'events' | 'members'>('events');
-  const [admins,      setAdmins]      = useState([group.superAdmin, MY_NAME].filter((v, i, a) => v && a.indexOf(v) === i));
-  const [memberMenu,  setMemberMenu]  = useState<{ name: string } | null>(null);
+  const [admins,      setAdmins]      = useState([...group.adminIds]);
+  const [memberMenu,  setMemberMenu]  = useState<{ userId: string } | null>(null);
   const [showLeave,   setShowLeave]   = useState(false);
   const [pendingReqs] = useState([
-    { name: 'Rachel · OC · 91', handle: 'rachel.oc.91' },
-    { name: 'Tommy · SGV · 89', handle: 'tommy.sgv.89' },
+    { userId: 'u26' },
+    { userId: 'u27' },
   ]);
 
   const p = paletteOf(group);
   const groupEvents = ALL_EVENTS.filter(e => e.groupId === group.id);
-  const superAdmin  = group.superAdmin || group.members[0];
+  const superAdminId = group.superAdminId;
 
   const leaveGroup = () => {
-    const remainingAdmins = admins.filter(a => a !== MY_NAME);
+    const remainingAdmins = admins.filter(a => a !== ME_ID);
     if (remainingAdmins.length === 0) { router.back(); return; }
-    if (superAdmin === MY_NAME) setGroup(g => ({ ...g, superAdmin: remainingAdmins[0] }));
-    setGroup(g => ({ ...g, members: g.members.filter(m => m !== MY_NAME) }));
+    if (superAdminId === ME_ID) setGroup(g => ({ ...g, superAdminId: remainingAdmins[0], adminIds: g.adminIds.filter(a => a !== ME_ID) }));
+    setGroup(g => ({ ...g, memberIds: g.memberIds.filter(m => m !== ME_ID), adminIds: g.adminIds.filter(a => a !== ME_ID) }));
     router.back();
   };
 
-  const removeMember = (name: string) => {
-    if (name === MY_NAME || name === superAdmin) return;
-    const remaining = admins.filter(a => a !== name);
+  const removeMember = (userId: string) => {
+    if (userId === ME_ID || userId === superAdminId) return;
+    const remaining = admins.filter(a => a !== userId);
     if (remaining.length === 0) { router.back(); return; }
-    setGroup(g => ({ ...g, members: g.members.filter(m => m !== name) }));
+    setGroup(g => ({ ...g, memberIds: g.memberIds.filter(m => m !== userId), adminIds: g.adminIds.filter(a => a !== userId) }));
     setAdmins(remaining);
     setMemberMenu(null);
   };
 
-  const toggleAdmin = (name: string) => {
-    if (name === superAdmin) return;
-    setAdmins(a => a.includes(name) ? a.filter(x => x !== name) : [...a, name]);
+  const toggleAdmin = (userId: string) => {
+    if (userId === superAdminId) return;
+    const next = admins.includes(userId) ? admins.filter(x => x !== userId) : [...admins, userId];
+    setAdmins(next);
+    setGroup(g => ({ ...g, adminIds: next }));
     setMemberMenu(null);
   };
 
@@ -55,7 +57,7 @@ export default function GroupDetailScreen() {
         title={group.name}
         onBack={() => router.back()}
         right={
-          group.isAdmin
+          group.adminIds.includes(ME_ID)
             ? <TouchableOpacity onPress={() => router.push(`/group/${id}/settings`)} style={styles.settingsBtn}>
                 <Text style={styles.settingsBtnText}>Settings</Text>
               </TouchableOpacity>
@@ -77,14 +79,14 @@ export default function GroupDetailScreen() {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <AvatarStack names={group.members} size={24} max={5} />
-              <Text style={styles.memberCount}>{group.members.length} members</Text>
+              <AvatarStack names={group.memberIds.map(uid => getUser(uid).displayName)} size={24} max={5} />
+              <Text style={styles.memberCount}>{group.memberIds.length} members</Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity onPress={() => router.push(`/group/${id}/invite`)} style={styles.inviteBtn}>
                 <Text style={styles.inviteBtnText}>Invite</Text>
               </TouchableOpacity>
-              {group.isAdmin && (
+              {group.adminIds.includes(ME_ID) && (
                 <TouchableOpacity onPress={() => router.push('/create-event')} style={styles.createBtn}>
                   <Text style={styles.createBtnText}>+ Event</Text>
                 </TouchableOpacity>
@@ -115,23 +117,24 @@ export default function GroupDetailScreen() {
 
           {tab === 'members' && (
             <View style={styles.card}>
-              {group.members.map((name, i) => {
-                const isAdmin     = admins.includes(name);
-                const isSuperAdmin= name === superAdmin;
-                const isMe        = name === MY_NAME;
-                const canAction   = group.isAdmin && !isMe && !isSuperAdmin;
+              {group.memberIds.map((memberId, i) => {
+                const isAdmin     = admins.includes(memberId);
+                const isSuperAdmin= memberId === superAdminId;
+                const isMe        = memberId === ME_ID;
+                const canAction   = group.adminIds.includes(ME_ID) && !isMe && !isSuperAdmin;
+                const displayName = getUser(memberId).displayName;
 
                 return (
                   <TouchableOpacity
-                    key={i}
-                    onPress={() => canAction && setMemberMenu({ name })}
-                    style={[styles.memberRow, i < group.members.length - 1 && styles.rowBorder]}
+                    key={memberId}
+                    onPress={() => canAction && setMemberMenu({ userId: memberId })}
+                    style={[styles.memberRow, i < group.memberIds.length - 1 && styles.rowBorder]}
                     activeOpacity={canAction ? 0.7 : 1}
                   >
-                    <Avatar name={name} size={38} />
+                    <Avatar name={displayName} size={38} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.memberName}>
-                        {name}{isMe ? <Text style={styles.youLabel}> · you</Text> : ''}
+                        {displayName}{isMe ? <Text style={styles.youLabel}> · you</Text> : ''}
                       </Text>
                       <Text style={styles.memberRole}>
                         {isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Member'}
@@ -159,13 +162,13 @@ export default function GroupDetailScreen() {
                   <TouchableOpacity style={styles.menuOverlay} onPress={() => setMemberMenu(null)} activeOpacity={1}>
                     <View style={styles.menuCard}>
                       <View style={styles.menuHeader}>
-                        <Text style={styles.menuHeaderText} numberOfLines={1}>{memberMenu.name}</Text>
+                        <Text style={styles.menuHeaderText} numberOfLines={1}>{getUser(memberMenu.userId).displayName}</Text>
                       </View>
-                      <TouchableOpacity onPress={() => toggleAdmin(memberMenu.name)} style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}>
-                        <Text style={{ fontSize: 16 }}>{admins.includes(memberMenu.name) ? '👤' : '⭐'}</Text>
-                        <Text style={styles.menuItemText}>{admins.includes(memberMenu.name) ? 'Remove admin' : 'Make admin'}</Text>
+                      <TouchableOpacity onPress={() => toggleAdmin(memberMenu.userId)} style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}>
+                        <Text style={{ fontSize: 16 }}>{admins.includes(memberMenu.userId) ? '👤' : '⭐'}</Text>
+                        <Text style={styles.menuItemText}>{admins.includes(memberMenu.userId) ? 'Remove admin' : 'Make admin'}</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => removeMember(memberMenu.name)} style={styles.menuItem}>
+                      <TouchableOpacity onPress={() => removeMember(memberMenu.userId)} style={styles.menuItem}>
                         <Text style={{ fontSize: 16 }}>🚫</Text>
                         <Text style={[styles.menuItemText, { color: Colors.notGoing }]}>Remove from group</Text>
                       </TouchableOpacity>
@@ -185,8 +188,8 @@ export default function GroupDetailScreen() {
             <View style={styles.confirmCard}>
               <Text style={styles.confirmTitle}>Leave {group.name}?</Text>
               <Text style={styles.confirmBody}>
-                {superAdmin === MY_NAME
-                  ? admins.filter(a => a !== MY_NAME).length > 0
+                {superAdminId === ME_ID
+                  ? admins.filter(a => a !== ME_ID).length > 0
                     ? "You're the Super Admin. The next admin will take over."
                     : "You're the only admin. Leaving will dissolve this group."
                   : "You'll need an invite to rejoin."

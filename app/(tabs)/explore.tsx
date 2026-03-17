@@ -2,15 +2,15 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, SafeAreaView } from 'react-native';
 import { Colors, Fonts, Radius } from '../../constants/theme';
 import { paletteOf } from '../../utils/helpers';
-import { PUBLIC_GROUPS } from '../../data/mock';
+import { GROUPS } from '../../data/mock';
 
 export default function ExploreScreen() {
   const [query,  setQuery]  = useState('');
   const [code,   setCode]   = useState('');
   const [joined, setJoined] = useState<string[]>([]);
 
-  const results = PUBLIC_GROUPS.filter(g =>
-    !query || g.name.toLowerCase().includes(query.toLowerCase()) || g.desc.toLowerCase().includes(query.toLowerCase())
+  const results = GROUPS.filter(g =>
+    g.isPublic && (!query || g.name.toLowerCase().includes(query.toLowerCase()) || g.desc.toLowerCase().includes(query.toLowerCase()))
   );
 
   return (
@@ -59,7 +59,7 @@ export default function ExploreScreen() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.groupName}>{g.name}</Text>
                   <Text style={styles.groupDesc} numberOfLines={1}>{g.desc}</Text>
-                  <Text style={styles.groupMeta}>{g.memberCount} members</Text>
+                  <Text style={styles.groupMeta}>{g.memberIds.length} members</Text>
                 </View>
                 <TouchableOpacity
                   onPress={() => setJoined(p => isJoined ? p.filter(x => x !== g.id) : [...p, g.id])}

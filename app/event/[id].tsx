@@ -8,7 +8,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
 import { paletteOf, fmtTime, fmtDateFull, timeAgo, dDiff } from '../../utils/helpers';
-import { ALL_EVENTS, GROUPS, MY_NAME, type Event, type Rsvp, uid } from '../../data/mock';
+import { ALL_EVENTS, GROUPS, getNoResponseIds, getUser, ME_ID, type Event, type Rsvp, uid } from '../../data/mock';
 import { Avatar, AvatarStack, Sheet } from '../../components/ui';
 
 // ── Description with clickable links ─────────────────────────────────────────
@@ -62,21 +62,25 @@ export default function EventDetailScreen() {
   const going   = ev.rsvps.filter(r => r.status === 'going');
   const notGoing= ev.rsvps.filter(r => r.status === 'notGoing');
   const maybe   = ev.rsvps.filter(r => r.status === 'maybe');
-  const myRsvp  = ev.rsvps.find(r => r.name === MY_NAME);
+  const myRsvp  = ev.rsvps.find(r => r.userId === ME_ID);
   const diff    = dDiff(ev.start);
   const isPast  = diff < 0;
-  const needsMore = ev.minAttendees && going.length < ev.minAttendees && !isPast;
+  const needsMore = ev.minAttendees! > 0 && going.length < ev.minAttendees! && !isPast;
   const hoursLeft = Math.max(0, Math.floor((ev.start.getTime() - Date.now()) / 3600000));
-  const allPhotos = comments.flatMap(c => c.photos.map(url => ({ url, name: c.name, ts: c.ts })));
+  const allPhotos = comments.flatMap(c => c.photos.map(url => ({ url, name: getUser(c.userId).displayName, ts: c.ts })));
+  
+  const canEdit = ev.createdBy === ME_ID || 
+                  group?.superAdminId === ME_ID || 
+                  group?.adminIds.includes(ME_ID);
 
   const applyRsvp = (status: 'going' | 'maybe' | 'notGoing', memo?: string) => {
     setEv(e => {
-      const existing = e.rsvps.find(r => r.name === MY_NAME);
-      const rest     = e.rsvps.filter(r => r.name !== MY_NAME);
+      const existing = e.rsvps.find(r => r.userId === ME_ID);
+      const rest     = e.rsvps.filter(r => r.userId !== ME_ID);
       if (memo === undefined && existing?.status === status) {
-        return { ...e, rsvps: rest, noResponse: [...e.noResponse, MY_NAME] };
+        return { ...e, rsvps: rest };
       }
-      return { ...e, rsvps: [...rest, { name: MY_NAME, status, memo: memo ?? '' }], noResponse: e.noResponse.filter(x => x !== MY_NAME) };
+      return { ...e, rsvps: [...rest, { userId: ME_ID, status, memo: memo ?? '' }] };
     });
   };
 
@@ -87,7 +91,7 @@ export default function EventDetailScreen() {
 
   const postComment = () => {
     if (!input.trim() && !pendingPhotos.length) return;
-    setComments(p => [...p, { id: uid(), name: MY_NAME, text: input.trim(), photos: [...pendingPhotos], ts: new Date() }]);
+    setComments(p => [...p, { id: uid(), userId: ME_ID, text: input.trim(), photos: [...pendingPhotos], ts: new Date() }]);
     setInput(''); setPendingPhotos([]);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
   };
@@ -101,9 +105,11 @@ export default function EventDetailScreen() {
   };
 
   const attendLabel = [
-    going.length > 0    && `${going.length} Going`,
-    notGoing.length > 0 && `${notGoing.length} Not Attending`,
+    going.length > 0     && `${going.length} Going`,
+    maybe.length > 0     && `${maybe.length} Maybe`,
+    notGoing.length > 0  && `${notGoing.length} Not Attending`,
   ].filter(Boolean).join(' · ');
+
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -116,6 +122,14 @@ export default function EventDetailScreen() {
           <Text style={styles.navBackText}>← Back</Text>
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
+        {canEdit && (
+          <TouchableOpacity
+            onPress={() => router.push(`/event/edit/${id}`)}
+            style={styles.navEditBtn}
+          >
+            <Text style={styles.navEditText}>Edit</Text>
+          </TouchableOpacity>
+        )}
         <View style={styles.navGroup}>
           <View style={[styles.groupDot, { backgroundColor: p.dot }]} />
           <Text style={styles.navGroupName}>{group?.name}</Text>
@@ -159,12 +173,7 @@ export default function EventDetailScreen() {
             <View style={{ gap: 8, marginBottom: 16 }}>
               <InfoRow icon="📅">{fmtDateFull(ev.start)} · {fmtTime(ev.start)} – {fmtTime(ev.end)}</InfoRow>
               {ev.location && <InfoRow icon="📍">{ev.location}</InfoRow>}
-              {ev.minAttendees && <InfoRow icon="👥">Min {ev.minAttendees} needed{ev.deadline ? ` · RSVP by ${fmtTime(ev.deadline)}` : ''}</InfoRow>}
-              {ev.tags && ev.tags.length > 0 && (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-                  {ev.tags.map(t => <View key={t} style={[styles.tag, { backgroundColor: p.row, borderColor: p.cal }]}><Text style={[styles.tagText, { color: p.text }]}>#{t}</Text></View>)}
-                </View>
-              )}
+              {ev.minAttendees! > 0 && <InfoRow icon="👥">Min {ev.minAttendees} needed{ev.deadline ? ` · RSVP by ${fmtTime(ev.deadline)}` : ''}</InfoRow>}
             </View>
 
             {/* Description */}
@@ -189,7 +198,7 @@ export default function EventDetailScreen() {
             {/* Attendance row */}
             <TouchableOpacity onPress={() => setShowAttend(true)} style={styles.attendRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {going.length > 0 && <AvatarStack names={going.map(r => r.name)} size={24} max={5} />}
+                {going.length > 0 && <AvatarStack names={going.map(r => getUser(r.userId).displayName)} size={24} max={5} />}
                 <Text style={styles.attendText}>{attendLabel || 'No responses yet'}</Text>
               </View>
               <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>
@@ -222,17 +231,17 @@ export default function EventDetailScreen() {
           )}
           {comments.map((c, i) => (
             <View key={c.id} style={[styles.commentRow, i < comments.length - 1 && styles.commentBorder]}>
-              <Avatar name={c.name} size={34} />
+              <Avatar name={getUser(c.userId).displayName} size={34} />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
-                  <Text style={[styles.commentName, c.name === MY_NAME && { color: Colors.going }]}>{c.name}</Text>
+                  <Text style={[styles.commentName, c.userId === ME_ID && { color: Colors.going }]}>{getUser(c.userId).displayName}</Text>
                   <Text style={styles.commentTime}>{timeAgo(c.ts)}</Text>
                 </View>
                 {!!c.text && <Text style={styles.commentText}>{c.text}</Text>}
                 {c.photos.length > 0 && (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: c.text ? 8 : 0 }}>
                     {c.photos.map((url, pi) => (
-                      <TouchableOpacity key={pi} onPress={() => setLightbox({ url, name: c.name, ts: c.ts })}
+                      <TouchableOpacity key={pi} onPress={() => setLightbox({ url, name: getUser(c.userId).displayName, ts: c.ts })}
                         style={[styles.commentPhoto, { width: c.photos.length === 1 ? 180 : 96, height: c.photos.length === 1 ? 120 : 96 }]}>
                         <Image source={{ uri: url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                       </TouchableOpacity>
@@ -348,16 +357,24 @@ function AttendanceSheet({ ev, visible, onClose }: { ev: Event; visible: boolean
   const going    = ev.rsvps.filter(r => r.status === 'going');
   const notGoing = ev.rsvps.filter(r => r.status === 'notGoing');
   const maybe    = ev.rsvps.filter(r => r.status === 'maybe');
+  const noResponseIds = getNoResponseIds(ev);
 
-  const RsvpRow = ({ r, faded }: { r: Rsvp; faded?: boolean }) => (
-    <TouchableOpacity onPress={() => r.memo ? setMemoPopup(r) : null} style={styles.attendRsvpRow} activeOpacity={r.memo ? 0.7 : 1}>
-      <Avatar name={r.name} size={38} dot={!!r.memo} onPress={r.memo ? () => setMemoPopup(r) : undefined} />
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.attendName, faded && { color: Colors.textMuted }]}>{r.name}</Text>
-        {r.memo && <Text style={styles.attendMemo} numberOfLines={1}>"{r.memo}"</Text>}
-      </View>
-    </TouchableOpacity>
-  );
+  const RsvpRow = ({ r, faded }: { r: Rsvp; faded?: boolean }) => {
+    const user = getUser(r.userId);
+    return (
+      <TouchableOpacity 
+        onPress={() => r.memo ? setMemoPopup(r) : null} 
+        style={styles.attendRsvpRow} 
+        activeOpacity={r.memo ? 0.7 : 1}
+      >
+        <Avatar name={user.displayName} size={38} dot={!!r.memo} onPress={r.memo ? () => setMemoPopup(r) : undefined} />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.attendName, faded && { color: Colors.textMuted }]}>{user.displayName}</Text>
+          {r.memo ? <Text style={styles.attendMemo} numberOfLines={1}>"{r.memo}"</Text> : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <>
@@ -366,28 +383,30 @@ function AttendanceSheet({ ev, visible, onClose }: { ev: Event; visible: boolean
         {going.length > 0 && (
           <>
             <Text style={styles.attendSection}>GOING · {going.length}</Text>
-            {going.map(r => <RsvpRow key={r.name} r={r} />)}
+            {going.map(r => <RsvpRow key={r.userId} r={r} />)}
           </>
         )}
         {maybe.length > 0 && (
           <>
             <Text style={styles.attendSection}>MAYBE · {maybe.length}</Text>
-            {maybe.map(r => <RsvpRow key={r.name} r={r} />)}
+            {maybe.map(r => <RsvpRow key={r.userId} r={r} />)}
           </>
         )}
         {notGoing.length > 0 && (
           <>
             <Text style={styles.attendSection}>NOT ATTENDING · {notGoing.length}</Text>
-            {notGoing.map(r => <RsvpRow key={r.name} r={r} faded />)}
+            {notGoing.map(r => <RsvpRow key={r.userId} r={r} faded />)}
           </>
         )}
-        {ev.noResponse.length > 0 && (
-          <>
-            <Text style={styles.attendSection}>NO RESPONSE · {ev.noResponse.length}</Text>
-            {ev.noResponse.map(n => (
-              <View key={n} style={styles.attendRsvpRow}>
-                <Avatar name={n} size={38} />
-                <Text style={[styles.attendName, { color: Colors.textMuted }]}>{n}</Text>
+        {noResponseIds.length > 0 && (
+            <>
+            <Text style={styles.attendSection}>NO RESPONSE · {noResponseIds.length}</Text>
+            {noResponseIds.map(uid => (
+              <View key={uid} style={styles.attendRsvpRow}>
+                <Avatar name={getUser(uid).displayName} size={38} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.attendName, { color: Colors.textMuted }]}>{getUser(uid).displayName}</Text>
+                </View>
               </View>
             ))}
           </>
@@ -400,8 +419,8 @@ function AttendanceSheet({ ev, visible, onClose }: { ev: Event; visible: boolean
           <TouchableOpacity style={styles.memoOverlay} onPress={() => setMemoPopup(null)} activeOpacity={1}>
             <View style={styles.memoPopup}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <Avatar name={memoPopup.name} size={34} />
-                <Text style={{ fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text }}>{memoPopup.name}</Text>
+                <Avatar name={getUser(memoPopup.userId).displayName} size={34} />
+                <Text style={{ fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text }}>{getUser(memoPopup.userId).displayName}</Text>
               </View>
               <View style={styles.memoTextBox}>
                 <Text style={styles.memoText}>"{memoPopup.memo}"</Text>
@@ -452,6 +471,8 @@ const styles = StyleSheet.create({
   nav:              { flexDirection: 'row', alignItems: 'center', padding: 13, paddingHorizontal: 20, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
   navBack:          { marginRight: 12 },
   navBackText:      { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.medium },
+  navEditBtn:       { marginRight: 12, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.md, backgroundColor: Colors.accent },
+  navEditText:      { fontSize: 14, color: Colors.accentFg, fontFamily: Fonts.semiBold },
   navGroup:         { flexDirection: 'row', alignItems: 'center', gap: 6 },
   groupDot:         { width: 8, height: 8, borderRadius: 4 },
   navGroupName:     { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.medium },
@@ -465,8 +486,6 @@ const styles = StyleSheet.create({
   eventTitle:       { fontSize: 21, fontFamily: Fonts.extraBold, color: Colors.text, lineHeight: 28, marginBottom: 4 },
   eventSubtitle:    { fontSize: 14, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 16 },
   infoText:         { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 20, flex: 1 },
-  tag:              { paddingHorizontal: 10, paddingVertical: 3, borderRadius: Radius.full, borderWidth: 1 },
-  tagText:          { fontSize: 12, fontFamily: Fonts.medium },
   descBox:          { backgroundColor: Colors.bg, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, padding: 12, marginBottom: 16 },
   descText:         { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, lineHeight: 22 },
   link:             { color: Colors.going, textDecorationLine: 'underline' },

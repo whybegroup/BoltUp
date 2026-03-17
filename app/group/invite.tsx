@@ -6,7 +6,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius } from '../../constants/theme';
-import { GROUPS } from '../../data/mock';
+import { GROUPS, ME_ID } from '../../data/mock';
 import { NavBar } from '../../components/ui';
 
 export default function GroupInviteScreen() {
@@ -62,7 +62,7 @@ export default function GroupInviteScreen() {
           <Text style={styles.codeSectionLabel}>INVITE CODE</Text>
           <Text style={styles.codeText}>{inviteCode}</Text>
           <Text style={styles.codeDesc}>
-            Share this code — {group.isAdmin ? "they'll need admin approval to join" : 'admin will approve requests'}
+            Share this code — {group.adminIds.includes(ME_ID) ? "they'll need admin approval to join" : 'admin will approve requests'}
           </Text>
         </View>
 
@@ -102,7 +102,7 @@ export default function GroupInviteScreen() {
         </View>
 
         {/* Admin only: add by username */}
-        {group.isAdmin && (
+        {group.adminIds.includes(ME_ID) && (
           <View style={[styles.card, { padding: 14 }]}>
             <Text style={styles.cardTitle}>Add by username</Text>
             <Text style={styles.addDesc}>Admin only — adds directly without approval</Text>

@@ -6,7 +6,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Shadows } from '../../../constants/theme';
 import { paletteOf } from '../../../utils/helpers';
-import { GROUPS } from '../../../data/mock';
+import { GROUPS, getUser, USERS } from '../../../data/mock';
 import { Avatar, NavBar } from '../../../components/ui';
 
 export default function GroupSettingsScreen() {
@@ -18,27 +18,29 @@ export default function GroupSettingsScreen() {
   const [newMember,      setNewMember]      = useState('');
   const [showDelete,     setShowDelete]     = useState(false);
   const [pendingReqs,    setPendingReqs]   = useState([
-    { name: 'Rachel · OC · 91', handle: 'rachel.oc.91' },
-    { name: 'Tommy · SGV · 89', handle: 'tommy.sgv.89' },
+    { userId: 'u26' },
+    { userId: 'u27' },
   ]);
-  const [admins, setAdmins] = useState([group.superAdmin]);
-  const superAdmin = group.superAdmin || group.members[0];
+  const [admins, setAdmins] = useState([...group.adminIds]);
+  const superAdminId = group.superAdminId;
 
-  const approveReq = (name: string) => {
-    setPendingReqs(p => p.filter(r => r.name !== name));
-    setGroup(g => ({ ...g, members: [...g.members, name] }));
+  const approveReq = (userId: string) => {
+    setPendingReqs(p => p.filter(r => r.userId !== userId));
+    setGroup(g => ({ ...g, memberIds: [...g.memberIds, userId] }));
   };
-  const declineReq = (name: string) => setPendingReqs(p => p.filter(r => r.name !== name));
+  const declineReq = (userId: string) => setPendingReqs(p => p.filter(r => r.userId !== userId));
 
-  const removeMember = (name: string) => {
-    setGroup(g => ({ ...g, members: g.members.filter(m => m !== name) }));
-    setAdmins(a => a.filter(x => x !== name));
+  const removeMember = (userId: string) => {
+    setGroup(g => ({ ...g, memberIds: g.memberIds.filter(m => m !== userId), adminIds: g.adminIds.filter(a => a !== userId) }));
+    setAdmins(a => a.filter(x => x !== userId));
   };
 
   const addMember = () => {
-    const n = newMember.trim();
-    if (!n || group.members.includes(n)) return;
-    setGroup(g => ({ ...g, members: [...g.members, n] }));
+    const n = newMember.trim().toLowerCase();
+    if (!n) return;
+    const user = USERS.find(u => u.handle.toLowerCase() === n || u.displayName.toLowerCase().includes(n));
+    if (!user || group.memberIds.includes(user.id)) { setNewMember(''); return; }
+    setGroup(g => ({ ...g, memberIds: [...g.memberIds, user.id] }));
     setNewMember('');
   };
 
@@ -58,7 +60,7 @@ export default function GroupSettingsScreen() {
             </View>
             <View>
               <Text style={styles.groupName}>{group.name}</Text>
-              <Text style={styles.groupMeta}>{group.members.length} members</Text>
+              <Text style={styles.groupMeta}>{group.memberIds.length} members</Text>
             </View>
           </View>
           <TouchableOpacity onPress={() => router.push(`/group/${id}/invite`)} style={styles.inviteBtn}>
@@ -72,17 +74,17 @@ export default function GroupSettingsScreen() {
             <Text style={styles.sectionLabel}>PENDING REQUESTS · {pendingReqs.length}</Text>
             <View style={[styles.card, styles.pendingCard]}>
               {pendingReqs.map((req, i) => (
-                <View key={i} style={[styles.row, i < pendingReqs.length - 1 && styles.rowBorder]}>
-                  <Avatar name={req.name} size={38} />
+                <View key={req.userId} style={[styles.row, i < pendingReqs.length - 1 && styles.rowBorder]}>
+                  <Avatar name={getUser(req.userId).displayName} size={38} />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.memberName}>{req.name}</Text>
-                    <Text style={styles.memberHandle}>@{req.handle} · wants to join</Text>
+                    <Text style={styles.memberName}>{getUser(req.userId).displayName}</Text>
+                    <Text style={styles.memberHandle}>@{getUser(req.userId).handle} · wants to join</Text>
                   </View>
                   <View style={{ flexDirection: 'row', gap: 6 }}>
-                    <TouchableOpacity onPress={() => approveReq(req.name)} style={styles.approveBtn}>
+                    <TouchableOpacity onPress={() => approveReq(req.userId)} style={styles.approveBtn}>
                       <Text style={styles.approveBtnText}>Approve</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => declineReq(req.name)} style={styles.declineBtn}>
+                    <TouchableOpacity onPress={() => declineReq(req.userId)} style={styles.declineBtn}>
                       <Text style={styles.declineBtnText}>Decline</Text>
                     </TouchableOpacity>
                   </View>
@@ -93,21 +95,21 @@ export default function GroupSettingsScreen() {
         )}
 
         {/* Members */}
-        <Text style={styles.sectionLabel}>MEMBERS · {group.members.length}</Text>
+        <Text style={styles.sectionLabel}>MEMBERS · {group.memberIds.length}</Text>
         <View style={[styles.card, { marginBottom: 16 }]}>
-          {group.members.map((name, i) => {
-            const isSuperAdmin = name === superAdmin;
-            const isAdmin      = admins.includes(name);
+          {group.memberIds.map((memberId, i) => {
+            const isSuperAdmin = memberId === superAdminId;
+            const isAdmin      = admins.includes(memberId);
             return (
-              <View key={i} style={[styles.row, i < group.members.length - 1 && styles.rowBorder]}>
-                <Avatar name={name} size={38} />
+              <View key={memberId} style={[styles.row, i < group.memberIds.length - 1 && styles.rowBorder]}>
+                <Avatar name={getUser(memberId).displayName} size={38} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.memberName}>{name}</Text>
+                  <Text style={styles.memberName}>{getUser(memberId).displayName}</Text>
                   <Text style={styles.memberRole}>{isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Member'}</Text>
                 </View>
                 {isSuperAdmin
                   ? <Text style={{ fontSize: 14 }}>👑</Text>
-                  : <TouchableOpacity onPress={() => removeMember(name)} style={styles.removeBtn}>
+                  : <TouchableOpacity onPress={() => removeMember(memberId)} style={styles.removeBtn}>
                       <Text style={styles.removeBtnText}>Remove</Text>
                     </TouchableOpacity>
                 }

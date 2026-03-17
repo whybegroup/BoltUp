@@ -115,11 +115,25 @@ export function CalendarView({ events, onSelectEvent }: CalendarViewProps) {
                   </Text>
                   {dayEvents.length > 0 && (
                     <View style={styles.dotWrap}>
-                      <View style={[
-                        styles.dot,
-                        selected && styles.dotSelected,
-                        { backgroundColor: selected ? Colors.accentFg : Colors.accent },
-                      ]} />
+                      {dayEvents.slice(0, 2).map(ev => {
+                        const group = GROUPS.find(g => g.id === ev.groupId);
+                        const p = paletteOf(group);
+                        return (
+                          <View
+                            key={ev.id}
+                            style={[
+                              styles.dot,
+                              selected && styles.dotSelected,
+                              { backgroundColor: p.dot },
+                            ]}
+                          />
+                        );
+                      })}
+                      {dayEvents.length > 2 && (
+                        <Text style={[styles.dotMore, selected && styles.dotMoreSelected]}>
+                          +{dayEvents.length - 2}
+                        </Text>
+                      )}
                     </View>
                   )}
                 </TouchableOpacity>
@@ -221,13 +235,30 @@ const styles = StyleSheet.create({
   cellText: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
   cellTextSelected: { color: Colors.accentFg },
   cellTextToday: { color: Colors.todayRed },
-  dotWrap: { position: 'absolute', bottom: 4 },
+  dotWrap: {
+    position: 'absolute',
+    bottom: 4,
+    height: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
   dot: {
     width: 4,
     height: 4,
     borderRadius: 2,
   },
   dotSelected: {},
+  dotMore: {
+    fontSize: 9,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+    marginLeft: 1,
+    lineHeight: 10,
+  },
+  dotMoreSelected: {
+    color: Colors.accentFg,
+  },
   eventsSection: {
     marginTop: 24,
     paddingTop: 16,

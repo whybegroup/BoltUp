@@ -1,0 +1,41 @@
+/* Remove dimming when react-datepicker renders via a portal */
+.react-datepicker__portal {
+  background-color: transparent !important;
+}
+
+/* Make the wrapper fit content width */
+.react-datepicker-wrapper,
+.react-datepicker__input-container {
+  width: auto !important;
+  display: inline-block !important;
+}
+
+/* Make the embedded input look like a button/chip and keep it visually stable */
+.react-datepicker__input-container input,
+.react-datepicker-wrapper input {
+  background-color: #FAFAF9 !important;
+  border: 1px solid #EBEBEA !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  width: 14ch !important;
+  min-width: 0 !important;
+  color: #18181B !important;
+}
+
+.react-datepicker__input-container input:focus,
+.react-datepicker-wrapper input:focus,
+.react-datepicker__input-container input:hover,
+.react-datepicker-wrapper input:hover,
+.react-datepicker__input-container input:active,
+.react-datepicker-wrapper input:active {
+  background-color: #FAFAF9 !important;
+  border-color: #EBEBEA !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+

@@ -54,21 +54,24 @@ interface PillProps {
   label: string;
   selected?: boolean;
   onPress?: () => void;
+  onLongPress?: () => void;
   activeColor?: string;
   activeBg?: string;
   activeText?: string;
+  inactiveBorderColor?: string;
 }
-export function Pill({ label, selected, onPress, activeColor, activeBg, activeText }: PillProps) {
+export function Pill({ label, selected, onPress, onLongPress, activeColor, activeBg, activeText, inactiveBorderColor }: PillProps) {
   return (
     <TouchableOpacity
       onPress={onPress}
+      onLongPress={onLongPress}
       style={[
         styles.pill,
         selected ? {
           borderColor: activeColor || Colors.accent,
           backgroundColor: activeBg || Colors.accent,
         } : {
-          borderColor: Colors.border,
+          borderColor: inactiveBorderColor || Colors.border,
           backgroundColor: 'transparent',
         },
       ]}

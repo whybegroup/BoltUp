@@ -1,12 +1,27 @@
 import React, { useState, useMemo } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, SafeAreaView, Modal,
+  View, Text, ScrollView, TouchableOpacity, Pressable,
+  StyleSheet, Modal, TextInput, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
+// Web datetime picker (react-datepicker) – only used on web
+let WebDatePicker: any = null;
+if (Platform.OS === 'web') {
+  // require at runtime so native builds don't try to bundle DOM-only code
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  WebDatePicker = require('react-datepicker').default;
+  // Load default react-datepicker styles on web so the popup calendar/time picker is visible and styled
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('react-datepicker/dist/react-datepicker.css');
+  // Lightly override the portal backdrop so it doesn't dim the whole app too strongly
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('./react-datepicker-overrides.css');
+}
 import { useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Spacing } from '../../constants/theme';
 import { paletteOf } from '../../utils/helpers';
-import { ALL_EVENTS, GROUPS, INIT_NOTIFICATIONS, TAGS, MY_NAME, type Event } from '../../data/mock';
+import { ALL_EVENTS, GROUPS, INIT_NOTIFICATIONS, ME, ME_ID, type Event } from '../../data/mock';
 import { ListView } from '../../components/ListView';
 import { CalendarView } from '../../components/CalendarView';
 import { Pill } from '../../components/ui';
@@ -14,28 +29,145 @@ import Svg, { Path } from 'react-native-svg';
 
 export default function FeedScreen() {
   const router = useRouter();
-  const [filterGroup, setFilterGroup] = useState<string | null>(null);
-  const [filterRsvp,  setFilterRsvp]  = useState<string | null>(null);
-  const [filterTags,  setFilterTags]  = useState<string[]>([]);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+  const [filterRsvp,  setFilterRsvp]  = useState<string[]>([]);
   const [filterNeeds, setFilterNeeds] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  // Date range filters (ISO date strings)
+  const todayIso = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, []);
+  const defaultStartSpecificText = useMemo(() => `${todayIso} 00:00`, [todayIso]);
+  const defaultEndSpecificText = useMemo(() => {
+    const today = new Date();
+    const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    const y = tomorrow.getFullYear();
+    const m = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const d = String(tomorrow.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d} 00:00`;
+  }, []);
+  const [startDateText, setStartDateText] = useState<string>(defaultStartSpecificText);
+  const [endDateText,   setEndDateText]   = useState<string>(defaultEndSpecificText);
+  const [startMode,     setStartMode]     = useState<'specific' | 'now' | 'allTime'>('now');
+  const [endMode,       setEndMode]       = useState<'specific' | 'now' | 'allTime'>('allTime');
+  const [showDateEditor, setShowDateEditor] = useState(false);
+  const [dateButtonLayout, setDateButtonLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker,   setShowEndPicker]   = useState(false);
+  const [activeDateField, setActiveDateField] = useState<'from' | 'to' | null>(null);
+  const [showRsvpDropdown, setShowRsvpDropdown] = useState(false);
+  const [rsvpButtonLayout, setRsvpButtonLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [rsvpDropdownLayout, setRsvpDropdownLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [dateDropdownLayout, setDateDropdownLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  const RSVP_OPTIONS = [
+    ['going', 'Going'],
+    ['maybe', 'Maybe'],
+    ['notGoing', "Can't go"],
+    ['none', 'No response'],
+  ] as const;
+
+  const parseDateTime = (txt: string): Date | null => {
+    const t = txt.trim();
+    if (!t) return null;
+    const [datePart, timePart] = t.split(' ');
+    const parts = datePart.split('-');
+    if (parts.length !== 3) return null;
+    const [ys, ms, ds] = parts;
+    const y = Number(ys);
+    const m = Number(ms);
+    const d = Number(ds);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+    let hh = 0;
+    let mm = 0;
+    if (timePart) {
+      const [hs, mins] = timePart.split(':');
+      hh = Number(hs) || 0;
+      mm = Number(mins) || 0;
+    }
+    const dt = new Date(y, m - 1, d, hh, mm);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt;
+  };
+  const [showPast,    setShowPast]    = useState(false);
   const [notifs, setNotifs] = useState(INIT_NOTIFICATIONS);
   const [showNotifs, setShowNotifs] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
 
   const unread = notifs.filter(n => !n.read).length;
 
-  const filtered = useMemo(() => ALL_EVENTS.filter(ev => {
-    if (filterGroup && ev.groupId !== filterGroup) return false;
-    if (filterRsvp === 'going'    && !ev.rsvps.find(r => r.name === MY_NAME && r.status === 'going'))    return false;
-    if (filterRsvp === 'notGoing' && !ev.rsvps.find(r => r.name === MY_NAME && r.status === 'notGoing')) return false;
-    if (filterRsvp === 'none'     &&  ev.rsvps.find(r => r.name === MY_NAME))                            return false;
-    if (filterNeeds && !(ev.minAttendees && ev.rsvps.filter(r => r.status === 'going').length < ev.minAttendees)) return false;
-    if (filterTags.length > 0 && !filterTags.some(t => ev.tags?.includes(t))) return false;
-    return true;
-  }), [filterGroup, filterRsvp, filterTags, filterNeeds, ALL_EVENTS.length]);
+  const filtered = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  const hasFilters = !!(filterRsvp || filterTags.length || filterNeeds);
+    const parseBound = (txt: string): Date | null => {
+      const t = txt.trim();
+      if (!t) return null;
+      const [datePart, timePart] = t.split(' ');
+      const parts = datePart.split('-');
+      if (parts.length !== 3) return null;
+      const [ys, ms, ds] = parts;
+      const y = Number(ys);
+      const m = Number(ms);
+      const d = Number(ds);
+      if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+      let hh = 0;
+      let mm = 0;
+      if (timePart) {
+        const [hs, mins] = timePart.split(':');
+        hh = Number(hs) || 0;
+        mm = Number(mins) || 0;
+      }
+      const dt = new Date(y, m - 1, d, hh, mm);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt;
+    };
+
+    const startBound =
+      startMode === 'now'
+        ? new Date()
+        : startMode === 'specific'
+          ? (parseBound(startDateText) ?? null)
+          : null; // allTime → no lower bound
+
+    const endBound =
+      endMode === 'now'
+        ? new Date()
+        : endMode === 'specific'
+          ? parseBound(endDateText)
+          : null; // allTime → no upper bound
+
+    return ALL_EVENTS.filter(ev => {
+      if (selectedGroupIds.length > 0 && !selectedGroupIds.includes(ev.groupId)) return false;
+
+      const t = ev.start.getTime();
+      if (startBound && t < startBound.getTime()) return false;
+      if (endBound && t >= endBound.getTime()) return false;
+
+      const myGoing    = !!ev.rsvps.find(r => r.userId === ME_ID && r.status === 'going');
+      const myNotGoing = !!ev.rsvps.find(r => r.userId === ME_ID && r.status === 'notGoing');
+      const myAnyRsvp  = !!ev.rsvps.find(r => r.userId === ME_ID);
+
+      if (filterRsvp.length) {
+        const myMaybe = !!ev.rsvps.find(r => r.userId === ME_ID && r.status === 'maybe');
+        const matchesRsvp =
+          (filterRsvp.includes('going')    && myGoing) ||
+          (filterRsvp.includes('maybe')    && myMaybe) ||
+          (filterRsvp.includes('notGoing') && myNotGoing) ||
+          (filterRsvp.includes('none')     && !myAnyRsvp);
+        if (!matchesRsvp) return false;
+      }
+
+      if (filterNeeds && !(ev.minAttendees && ev.rsvps.filter(r => r.status === 'going').length < ev.minAttendees)) return false;
+      return true;
+    });
+  }, [selectedGroupIds, filterRsvp, filterNeeds, startDateText, endDateText, startMode, endMode, ALL_EVENTS.length]);
+
+  const hasFilters = !!(selectedGroupIds.length || filterRsvp.length || filterNeeds);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -48,8 +180,8 @@ export default function FeedScreen() {
               <Text style={styles.avatarText}>J</Text>
             </View>
             <View>
-              <Text style={styles.userName}>Jenny</Text>
-              <Text style={styles.userHandle}>@jenny.ktown.92</Text>
+              <Text style={styles.userName}>{ME.name}</Text>
+              <Text style={styles.userHandle}>@{ME.handle}</Text>
             </View>
           </View>
 
@@ -68,14 +200,6 @@ export default function FeedScreen() {
                 </TouchableOpacity>
               ))}
             </View>
-
-            {/* Filter */}
-            <TouchableOpacity
-              onPress={() => setShowFilters(p => !p)}
-              style={[styles.iconBtn, hasFilters && styles.iconBtnActive]}
-            >
-              <Text style={{ fontSize: 14 }}>⚙</Text>
-            </TouchableOpacity>
 
             {/* Create */}
             <TouchableOpacity
@@ -101,61 +225,368 @@ export default function FeedScreen() {
 
         {/* Group filter pills */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsRow} contentContainerStyle={{ gap: 6, paddingRight: 20 }}>
-          <Pill label="All" selected={!filterGroup} onPress={() => setFilterGroup(null)} />
+          <Pill
+            label="All"
+            selected={selectedGroupIds.length === 0}
+            onPress={() => setSelectedGroupIds([])}
+          />
           {GROUPS.map(g => {
             const p = paletteOf(g);
+            const isSelected = selectedGroupIds.includes(g.id);
             return (
               <Pill
                 key={g.id}
                 label={`${g.emoji} ${g.name}`}
-                selected={filterGroup === g.id}
-                activeColor={p.dot} activeBg={p.row} activeText={p.text}
-                onPress={() => setFilterGroup(x => x === g.id ? null : g.id)}
+                selected={isSelected}
+                activeColor={p.dot}
+                activeBg={p.label}
+                activeText={p.text}
+                inactiveBorderColor={p.dot}
+                onPress={() => {
+                  const next = isSelected
+                    ? selectedGroupIds.filter(id => id !== g.id)
+                    : [...selectedGroupIds, g.id];
+                  setSelectedGroupIds(next);
+                }}
+                onLongPress={() => setSelectedGroupIds([g.id])}
               />
             );
           })}
         </ScrollView>
 
-        {/* Filter panel */}
-        {showFilters && (
-          <View style={styles.filterPanel}>
-            <Text style={styles.filterSectionLabel}>MY RSVP</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginBottom: 12 }}>
-              {([['going','✓ Going'],['notGoing',"✗ Can't go"],['none','No response']] as const).map(([v, l]) => (
-                <Pill key={v} label={l} selected={filterRsvp === v} onPress={() => setFilterRsvp(x => x === v ? null : v)} />
-              ))}
-              <Pill
-                label="⚠️ Needs people"
-                selected={filterNeeds}
-                onPress={() => setFilterNeeds(p => !p)}
-                activeColor="#FDE68A" activeBg="#FFFBEB" activeText="#92400E"
-              />
-            </ScrollView>
-            <Text style={styles.filterSectionLabel}>TAGS</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-              {TAGS.map(t => (
-                <Pill key={t} label={`#${t}`} selected={filterTags.includes(t)}
-                  onPress={() => setFilterTags(p => p.includes(t) ? p.filter(x => x !== t) : [...p, t])} />
-              ))}
+        {/* RSVP / needs filters (always visible) */}
+        <View style={[styles.filterPanel, { position: 'relative' }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingBottom: 10 }}
+          >
+            <TouchableOpacity
+              onPress={() => setShowAdvancedFilters(p => !p)}
+              style={[styles.iconBtn, showAdvancedFilters && { borderColor: Colors.text, backgroundColor: Colors.text }]}
+            >
+              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={showAdvancedFilters ? Colors.surface : Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>
+              </Svg>
+            </TouchableOpacity>
+            <Pill
+              label="⚠️ Needs people"
+              selected={filterNeeds}
+              onPress={() => setFilterNeeds(p => !p)}
+              activeColor="#FDE68A"
+              activeBg="#FFFBEB"
+              activeText="#92400E"
+            />
+          </ScrollView>
+
+          {showAdvancedFilters && (
+            <>
+            <View style={styles.filterExpandedRow}>
+              <Text style={styles.filterExpandedHeader}>RSVP</Text>
+              {RSVP_OPTIONS.map(([v, label]) => {
+                const isSelected = filterRsvp.includes(v);
+                const pillStyle =
+                  v === 'going'
+                    ? (isSelected ? styles.rsvpPillGoingActive : styles.rsvpPillGoing)
+                    : v === 'maybe'
+                      ? (isSelected ? styles.rsvpPillMaybeActive : styles.rsvpPillMaybe)
+                      : v === 'notGoing'
+                        ? (isSelected ? styles.rsvpPillNotGoingActive : styles.rsvpPillNotGoing)
+                        : (isSelected ? styles.rsvpPillNoneActive : styles.rsvpPillNone);
+
+                return (
+                  <TouchableOpacity
+                    key={v}
+                    style={[styles.rsvpDropdownItem, pillStyle]}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setFilterRsvp(isSelected ? [] : [v]);
+                    }}
+                  >
+                    <Text style={styles.rsvpDropdownLabel}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
-            {hasFilters && (
-              <TouchableOpacity onPress={() => { setFilterRsvp(null); setFilterTags([]); setFilterNeeds(false); }} style={{ marginTop: 10 }}>
-                <Text style={{ fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium }}>Clear all ✕</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
+
+            <View style={styles.filterExpandedRow}>
+              <Text style={styles.filterExpandedHeader}>Time Range</Text>
+              <View style={styles.dateFilterColumn}>
+                <View style={styles.dateFilterRow}>
+                  <Text style={styles.dateFilterFieldLabel}>From</Text>
+                  <View style={styles.dateFieldWithNow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.dateQuickButton,
+                        startMode === 'now' && styles.dateQuickButtonActive,
+                      ]}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setStartMode('now');
+                      }}
+                    >
+                      <Text style={styles.dateQuickButtonText}>Now</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.dateQuickButton,
+                        startMode === 'allTime' && styles.dateQuickButtonActive,
+                      ]}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setStartMode('allTime');
+                      }}
+                    >
+                      <Text style={styles.dateQuickButtonText}>All time</Text>
+                    </TouchableOpacity>
+                    {Platform.OS === 'web' && WebDatePicker ? (
+                      <View
+                        style={[
+                          styles.webPickerWrapper,
+                          startMode === 'specific' && styles.dateSpecificWrapperActive,
+                          activeDateField === 'from' && styles.webPickerActive,
+                          { alignSelf: 'flex-start' },
+                        ]}
+                      >
+                        <WebDatePicker
+                          selected={startDateText ? parseDateTime(startDateText) : null}
+                          onChange={(date: Date | null) => {
+                            if (!date) return;
+                            const y = date.getFullYear();
+                            const m = String(date.getMonth() + 1).padStart(2, '0');
+                            const d = String(date.getDate()).padStart(2, '0');
+                            const hh = String(date.getHours()).padStart(2, '0');
+                            const mm = String(date.getMinutes()).padStart(2, '0');
+                            setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                            setStartMode('specific');
+                          }}
+                          popperPlacement="bottom-start"
+                          withPortal
+                          onCalendarOpen={() => {
+                            if (!startDateText) {
+                              const now = new Date();
+                              const y = now.getFullYear();
+                              const m = String(now.getMonth() + 1).padStart(2, '0');
+                              const d = String(now.getDate()).padStart(2, '0');
+                              const hh = '00';
+                              const mm = '00';
+                              setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                            }
+                            setActiveDateField('from');
+                            setStartMode('specific');
+                          }}
+                          onCalendarClose={() => setActiveDateField(null)}
+                          showTimeSelect
+                          timeIntervals={15}
+                          dateFormat="yyyy-MM-dd HH:mm"
+                          placeholderText={defaultStartSpecificText}
+                        />
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (!startDateText) {
+                            const now = new Date();
+                            const y = now.getFullYear();
+                            const m = String(now.getMonth() + 1).padStart(2, '0');
+                            const d = String(now.getDate()).padStart(2, '0');
+                            const hh = '00';
+                            const mm = '00';
+                            setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                          }
+                          setStartMode('specific');
+                          setShowStartPicker(true);
+                        }}
+                        activeOpacity={0.7}
+                        style={[
+                          styles.dateValueChip,
+                          startMode === 'specific' && styles.dateSpecificWrapperActive,
+                        ]}
+                      >
+                        <Text style={styles.dateValueText}>
+                          {startMode === 'now'
+                            ? 'Now'
+                            : startMode === 'allTime'
+                              ? 'All time'
+                              : (startDateText || defaultStartSpecificText)}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                <View style={styles.dateFilterRow}>
+                  <Text style={styles.dateFilterFieldLabel}>To</Text>
+                  <View style={styles.dateFieldWithNow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.dateQuickButton,
+                        endMode === 'now' && styles.dateQuickButtonActive,
+                      ]}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setEndMode('now');
+                      }}
+                    >
+                      <Text style={styles.dateQuickButtonText}>Now</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.dateQuickButton,
+                        endMode === 'allTime' && styles.dateQuickButtonActive,
+                      ]}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setEndMode('allTime');
+                      }}
+                    >
+                      <Text style={styles.dateQuickButtonText}>All time</Text>
+                    </TouchableOpacity>
+                    {Platform.OS === 'web' && WebDatePicker ? (
+                      <View
+                        style={[
+                          styles.webPickerWrapper,
+                          endMode === 'specific' && styles.dateSpecificWrapperActive,
+                          activeDateField === 'to' && styles.webPickerActive,
+                          { alignSelf: 'flex-start' },
+                        ]}
+                      >
+                        <WebDatePicker
+                          selected={endDateText ? parseDateTime(endDateText) : null}
+                          onChange={(date: Date | null) => {
+                            if (!date) return;
+                            const y = date.getFullYear();
+                            const m = String(date.getMonth() + 1).padStart(2, '0');
+                            const d = String(date.getDate()).padStart(2, '0');
+                            const hh = String(date.getHours()).padStart(2, '0');
+                            const mm = String(date.getMinutes()).padStart(2, '0');
+                            setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                            setEndMode('specific');
+                          }}
+                          popperPlacement="bottom-start"
+                          withPortal
+                          onCalendarOpen={() => {
+                            if (!endDateText) {
+                              const now = new Date();
+                              const y = now.getFullYear();
+                              const m = String(now.getMonth() + 1).padStart(2, '0');
+                              const d = String(now.getDate()).padStart(2, '0');
+                              const hh = '00';
+                              const mm = '00';
+                              setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                            }
+                            setActiveDateField('to');
+                            setEndMode('specific');
+                          }}
+                          onCalendarClose={() => setActiveDateField(null)}
+                          showTimeSelect
+                          timeIntervals={15}
+                          dateFormat="yyyy-MM-dd HH:mm"
+                          placeholderText={defaultEndSpecificText}
+                        />
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (!endDateText) {
+                            const now = new Date();
+                            const y = now.getFullYear();
+                            const m = String(now.getMonth() + 1).padStart(2, '0');
+                            const d = String(now.getDate()).padStart(2, '0');
+                            const hh = '00';
+                            const mm = '00';
+                            setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                          }
+                          setEndMode('specific');
+                          setShowEndPicker(true);
+                        }}
+                        activeOpacity={0.7}
+                        style={[
+                          styles.dateValueChip,
+                          endMode === 'specific' && styles.dateSpecificWrapperActive,
+                        ]}
+                      >
+                        <Text style={styles.dateValueText}>
+                          {endMode === 'now'
+                            ? 'Now'
+                            : endMode === 'allTime'
+                              ? 'All time'
+                              : (endDateText || defaultEndSpecificText)}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              </View>
+            </View>
+            </>
+          )}
+        </View>
       </View>
 
       {/* Feed */}
       <View style={styles.feedContent}>
-        {filtered.length === 0
-          ? <View style={styles.empty}><Text style={{ fontSize: 32, marginBottom: 10 }}>📭</Text><Text style={styles.emptyText}>No events</Text></View>
-          : viewMode === 'list'
-            ? <ListView events={filtered} onSelect={ev => router.push(`/event/${ev.id}`)} />
-            : <CalendarView events={filtered} onSelectEvent={ev => router.push(`/event/${ev.id}`)} />
-        }
+        {filtered.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={{ fontSize: 32, marginBottom: 10 }}>📭</Text>
+            <Text style={styles.emptyText}>No events</Text>
+          </View>
+        ) : viewMode === 'list' ? (
+          <ListView
+            events={filtered}
+            onSelect={ev => router.push(`/event/${ev.id}`)}
+            onSelectGroup={groupId => router.push(`/group/${groupId}`)}
+          />
+        ) : (
+          <CalendarView
+            events={filtered}
+            onSelectEvent={ev => router.push(`/event/${ev.id}`)}
+          />
+        )}
       </View>
+
+      {/* Start / End native pickers (native platforms only) */}
+      {Platform.OS !== 'web' && showStartPicker && (
+        <DateTimePicker
+          mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
+          value={startMode === 'now'
+            ? new Date()
+            : (startDateText ? parseDateTime(startDateText) ?? new Date() : new Date())
+          }
+          onChange={(_, date) => {
+            setShowStartPicker(false);
+            if (date) {
+              const y = date.getFullYear();
+              const m = String(date.getMonth() + 1).padStart(2, '0');
+              const d = String(date.getDate()).padStart(2, '0');
+              const hh = String(date.getHours()).padStart(2, '0');
+              const mm = String(date.getMinutes()).padStart(2, '0');
+              setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+              setStartMode('specific');
+            }
+          }}
+        />
+      )}
+      {Platform.OS !== 'web' && showEndPicker && (
+        <DateTimePicker
+          mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
+          value={endMode === 'now'
+            ? new Date()
+            : (endDateText ? parseDateTime(endDateText) ?? new Date() : new Date())
+          }
+          onChange={(_, date) => {
+            setShowEndPicker(false);
+            if (date) {
+              const y = date.getFullYear();
+              const m = String(date.getMonth() + 1).padStart(2, '0');
+              const d = String(date.getDate()).padStart(2, '0');
+              const hh = String(date.getHours()).padStart(2, '0');
+              const mm = String(date.getMinutes()).padStart(2, '0');
+              setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+              setEndMode('specific');
+            }
+          }}
+        />
+      )}
 
       {/* Notif dropdown - Modal ensures it's always on top */}
       <Modal
@@ -219,7 +650,7 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   safe:        { flex: 1, backgroundColor: Colors.bg },
-  header:      { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  header:      { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border, position: 'relative', zIndex: 100 },
   headerTop:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 },
   userRow:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
   avatar:      { width: 34, height: 34, borderRadius: 17, backgroundColor: '#74A8E0', alignItems: 'center', justifyContent: 'center' },
@@ -236,8 +667,260 @@ const styles = StyleSheet.create({
   createBtnText:{ fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
   bellDot:     { position: 'absolute', top: 1, right: 1, width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.notGoing, borderWidth: 2, borderColor: Colors.surface },
   pillsRow:    { paddingLeft: 20, paddingBottom: 12 },
-  feedContent:   { flex: 1, paddingHorizontal: 16, paddingTop: 14, zIndex: 0 },
-  filterPanel: { paddingHorizontal: 20, paddingBottom: 14, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 12 },
+  feedContent:   { flex: 1, paddingHorizontal: 16, paddingTop: 8, zIndex: 0 },
+  dateFilterBetween: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    minWidth: 220,
+  },
+  dateFilterColumn: {
+    marginTop: 4,
+    gap: 6,
+  },
+  dateFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dateFilterLabel: {
+    fontSize: 11,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+  },
+  dateFilterInput: {
+    minWidth: 120,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    fontSize: 12,
+    fontFamily: Fonts.regular,
+    color: Colors.text,
+  },
+  dateFilterSeparator: {
+    fontSize: 12,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+  },
+  dateFilterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  dateFilterButtonActive: {
+    borderColor: Colors.accent,
+  },
+  dateFilterButtonText: {
+    fontSize: 12,
+    fontFamily: Fonts.medium,
+    color: Colors.textSub,
+  },
+  dateFilterButtonTextActive: {
+    color: Colors.text,
+  },
+  dateOverlay: {
+    flex: 1,
+  },
+  dateTooltip: {
+    position: 'absolute',
+    borderRadius: Radius['2xl'],
+    backgroundColor: Colors.surface,
+    padding: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    zIndex: 200,
+    elevation: 200,
+  },
+  dateClickAwayHitbox: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 50,
+    backgroundColor: 'transparent',
+  },
+  dateFilterFieldLabel: {
+    fontSize: 11,
+    fontFamily: Fonts.medium,
+    color: Colors.textMuted,
+    minWidth: 40, // align "From" / "To" columns
+  },
+  dateValueChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  dateValueText: {
+    fontSize: 11,
+    fontFamily: Fonts.medium,
+    color: Colors.accent,
+  },
+  webPickerWrapper: {
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  webPickerActive: {
+    borderColor: Colors.accent,
+  },
+  dateFieldWithNow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dateQuickButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  dateQuickButtonText: {
+    fontSize: 11,
+    fontFamily: Fonts.medium,
+    color: Colors.accent,
+  },
+  dateQuickButtonActive: {
+    backgroundColor: Colors.bg,
+    borderColor: Colors.accent,
+  },
+  dateSpecificWrapperActive: {
+    borderColor: Colors.accent,
+  },
+  pastToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+    marginTop: 4,
+  },
+  pastDividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
+  pastBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  pastBadgeActive: {
+    borderColor: Colors.textSub,
+    backgroundColor: Colors.bg,
+  },
+  pastBadgeText: {
+    fontSize: 11,
+    fontFamily: Fonts.medium,
+    color: Colors.textMuted,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  pastBadgeTextActive: {
+    color: Colors.textSub,
+  },
+  rsvpFilterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  rsvpFilterButtonText: {
+    fontSize: 12,
+    fontFamily: Fonts.medium,
+    color: Colors.textSub,
+  },
+  rsvpFilterChevron: {
+    fontSize: 10,
+    color: Colors.textMuted,
+  },
+  filterExpandedRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: Colors.bg,
+  },
+  filterExpandedHeader: {
+    width: '100%',
+    fontSize: 11,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  rsvpDropdownItem: {
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    marginRight: 6,
+    marginBottom: 6,
+  },
+  rsvpDropdownLabel: {
+    fontSize: 11,
+    fontFamily: Fonts.medium,
+    color: Colors.text,
+  },
+  rsvpPillGoing: {
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillGoingActive: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillMaybe: {
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillMaybeActive: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillNotGoing: {
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillNotGoingActive: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillNone: {
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  rsvpPillNoneActive: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.bg,
+  },
+  filterPanel: { paddingBottom: 6 },
   filterSectionLabel:{ fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, letterSpacing: 0.6, marginBottom: 8 },
   notifOverlay:  { flex: 1, opacity: 1 },
   notifBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.2)', opacity: 1 },

@@ -3,7 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView } fr
 import { useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Spacing } from '../../constants/theme';
 import { paletteOf } from '../../utils/helpers';
-import { GROUPS, ALL_EVENTS } from '../../data/mock';
+import { GROUPS, ALL_EVENTS, ME_ID } from '../../data/mock';
 import { AvatarStack } from '../../components/ui';
 
 export default function GroupsScreen() {
@@ -36,11 +36,11 @@ export default function GroupsScreen() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.groupName}>{g.name}</Text>
                   <Text style={styles.groupMeta}>
-                    {g.members.length} members{evCount > 0 ? ` · ${evCount} upcoming` : ''}{g.isAdmin ? ' · Admin' : ''}
+                    {g.memberIds.length} members{evCount > 0 ? ` · ${evCount} upcoming` : ''}{g.adminIds.includes(ME_ID) ? ' · Admin' : ''}
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {g.isAdmin && (
+                  {g.adminIds.includes(ME_ID) && (
                     <View style={styles.adminBadge}>
                       <Text style={styles.adminBadgeText}>Admin</Text>
                     </View>

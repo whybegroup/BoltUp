@@ -3,14 +3,14 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView } fr
 import { useRouter } from 'expo-router';
 import { Colors, Fonts, Radius } from '../../constants/theme';
 import { paletteOf, avatarColor } from '../../utils/helpers';
-import { GROUPS, ME, ALL_EVENTS, MY_NAME } from '../../data/mock';
+import { GROUPS, ME, ALL_EVENTS, ME_ID } from '../../data/mock';
 import { Toggle } from '../../components/ui';
 
 const REMINDER_OPTIONS = ['Never', '1 hour before', '1 day before', '1 week before'];
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const myEvents = ALL_EVENTS.filter(e => e.rsvps.some(r => r.name === MY_NAME && r.status === 'going'));
+  const myEvents = ALL_EVENTS.filter(e => e.rsvps.some(r => r.userId === ME_ID && r.status === 'going'));
 
   const [notifSettings, setNotifSettings] = useState(
     Object.fromEntries(GROUPS.map(g => [g.id, {
