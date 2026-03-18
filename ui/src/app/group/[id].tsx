@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, Image, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
@@ -9,6 +9,10 @@ import { ListView } from '../../components/ListView';
 import { useGroup, useEvents, useUsers } from '../../hooks/api';
 
 const ME_ID = 'u1';
+
+function defaultGroupAvatarUri(groupId: string): string {
+  return `https://api.dicebear.com/8.x/bottts/png?seed=${encodeURIComponent(groupId)}&size=256&backgroundType=gradientLinear`;
+}
 
 export default function GroupDetailScreen() {
   const { id }   = useLocalSearchParams<{ id: string }>();
@@ -27,6 +31,11 @@ export default function GroupDetailScreen() {
   const [tab,         setTab]         = useState<'events' | 'members'>('events');
   const [memberMenu,  setMemberMenu]  = useState<{ userId: string } | null>(null);
   const [showLeave,   setShowLeave]   = useState(false);
+  const [newMember,   setNewMember]   = useState('');
+  const [pendingReqs, setPendingReqs] = useState([
+    { userId: 'u26' },
+    { userId: 'u27' },
+  ]);
 
   const usersMap = useMemo(() => {
     const map: Record<string, any> = {};
@@ -46,6 +55,7 @@ export default function GroupDetailScreen() {
   const groupEvents = events.filter(e => e.groupId === group.id);
   const superAdminId = group.superAdminId;
   const admins = group.adminIds;
+  const hasPendingApprovals = pendingReqs.length > 0;
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -63,6 +73,16 @@ export default function GroupDetailScreen() {
     handleBack();
   };
 
+  const approveReq = (userId: string) => {
+    // TODO: Call API to approve request
+    setPendingReqs(p => p.filter(r => r.userId !== userId));
+  };
+
+  const declineReq = (userId: string) => {
+    // TODO: Call API to decline request
+    setPendingReqs(p => p.filter(r => r.userId !== userId));
+  };
+
   const removeMember = (userId: string) => {
     if (userId === ME_ID || userId === superAdminId) return;
     // TODO: Call API to remove member
@@ -75,6 +95,16 @@ export default function GroupDetailScreen() {
     // TODO: Call API to toggle admin
     console.log('Toggle admin', userId);
     setMemberMenu(null);
+  };
+
+  const addMember = () => {
+    const n = newMember.trim().toLowerCase();
+    if (!n) return;
+    const user = users.find(u => u.handle.toLowerCase() === n || u.displayName.toLowerCase().includes(n));
+    if (!user || group.memberIds.includes(user.id)) { setNewMember(''); return; }
+    // TODO: Call API to add member
+    console.log('Add member', user.id);
+    setNewMember('');
   };
 
   return (
@@ -95,9 +125,7 @@ export default function GroupDetailScreen() {
         {/* Group header */}
         <View style={[styles.headerBlock, { borderBottomColor: Colors.border }]}>
           <View style={{ flexDirection: 'row', gap: 16, marginBottom: 16 }}>
-            <View style={[styles.groupIcon, { backgroundColor: p.row, borderColor: p.cal }]}>
-              <Text style={{ fontSize: 28 }}>{group.emoji}</Text>
-            </View>
+            <Image source={{ uri: group.thumbnail || defaultGroupAvatarUri(group.id) }} style={styles.groupThumb} />
             <View style={{ flex: 1 }}>
               <Text style={styles.groupName}>{group.name}</Text>
               <Text style={styles.groupDesc}>{group.desc}</Text>
@@ -125,9 +153,12 @@ export default function GroupDetailScreen() {
         <View style={styles.tabs}>
           {(['events', 'members'] as const).map(t => (
             <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]}>
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </Text>
+                {t === 'members' && hasPendingApprovals && <View style={styles.tabDot} />}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -141,46 +172,93 @@ export default function GroupDetailScreen() {
               : <ListView events={groupEvents} groups={[group]} onSelect={ev => router.push(`/event/${ev.id}`)} showGroup={false} />
           )}
 
-          {tab === 'members' && (
-            <View style={styles.card}>
-              {group.memberIds.map((memberId, i) => {
-                const isAdmin     = admins.includes(memberId);
-                const isSuperAdmin= memberId === superAdminId;
-                const isMe        = memberId === ME_ID;
-                const canAction   = group.adminIds.includes(ME_ID) && !isMe && !isSuperAdmin;
-                const displayName = getUser(memberId).displayName;
+          {tab === 'members' && group.adminIds.includes(ME_ID) && (
+            <>
+              {/* Pending requests */}
+              {pendingReqs.length > 0 && (
+                <>
+                  <Text style={styles.sectionLabel}>PENDING REQUESTS · {pendingReqs.length}</Text>
+                  <View style={[styles.card, styles.pendingCard]}>
+                    {pendingReqs.map((req, i) => (
+                      <View key={i} style={[styles.memberRow, i < pendingReqs.length - 1 && styles.rowBorder]}>
+                        <Avatar name={getUser(req.userId).displayName} size={38} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.memberName}>{getUser(req.userId).displayName}</Text>
+                          <Text style={styles.memberHandle}>@{getUser(req.userId).handle} · wants to join</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          <TouchableOpacity onPress={() => approveReq(req.userId)} style={styles.approveBtn}>
+                            <Text style={styles.approveBtnText}>Approve</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => declineReq(req.userId)} style={styles.declineBtn}>
+                            <Text style={styles.declineBtnText}>Decline</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
 
-                return (
+              {/* Members */}
+              <Text style={styles.sectionLabel}>MEMBERS · {group.memberIds.length}</Text>
+              <View style={[styles.card, { marginBottom: 16 }]}>
+                {group.memberIds.map((memberId, i) => {
+                  const isAdmin     = admins.includes(memberId);
+                  const isSuperAdmin= memberId === superAdminId;
+                  const isMe        = memberId === ME_ID;
+                  const canAction   = !isMe && !isSuperAdmin;
+                  const displayName = getUser(memberId).displayName;
+
+                  return (
+                    <TouchableOpacity
+                      key={memberId}
+                      onPress={() => canAction && setMemberMenu({ userId: memberId })}
+                      style={[styles.memberRow, i < group.memberIds.length - 1 && styles.rowBorder]}
+                      activeOpacity={canAction ? 0.7 : 1}
+                    >
+                      <Avatar name={displayName} size={38} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.memberName}>
+                          {displayName}{isMe ? <Text style={styles.youLabel}> · you</Text> : ''}
+                        </Text>
+                        <Text style={styles.memberRole}>
+                          {isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Member'}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        {isSuperAdmin && <Text style={{ fontSize: 14 }}>👑</Text>}
+                        {!isSuperAdmin && isAdmin && (
+                          <View style={styles.adminBadge}><Text style={styles.adminBadgeText}>Admin</Text></View>
+                        )}
+                        {canAction && <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Add member */}
+              <Text style={styles.sectionLabel}>ADD MEMBER</Text>
+              <View style={[styles.card, { padding: 14 }]}>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TextInput
+                    value={newMember}
+                    onChangeText={setNewMember}
+                    onSubmitEditing={addMember}
+                    placeholder="@handle or username"
+                    placeholderTextColor={Colors.textMuted}
+                    style={styles.addInput}
+                  />
                   <TouchableOpacity
-                    key={memberId}
-                    onPress={() => canAction && setMemberMenu({ userId: memberId })}
-                    style={[styles.memberRow, i < group.memberIds.length - 1 && styles.rowBorder]}
-                    activeOpacity={canAction ? 0.7 : 1}
+                    onPress={addMember}
+                    style={[styles.addBtn, !newMember.trim() && { backgroundColor: Colors.border }]}
+                    disabled={!newMember.trim()}
                   >
-                    <Avatar name={displayName} size={38} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.memberName}>
-                        {displayName}{isMe ? <Text style={styles.youLabel}> · you</Text> : ''}
-                      </Text>
-                      <Text style={styles.memberRole}>
-                        {isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Member'}
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      {isSuperAdmin && <Text style={{ fontSize: 14 }}>👑</Text>}
-                      {!isSuperAdmin && isAdmin && (
-                        <View style={styles.adminBadge}><Text style={styles.adminBadgeText}>Admin</Text></View>
-                      )}
-                      {isMe && (
-                        <TouchableOpacity onPress={() => setShowLeave(true)} style={styles.leaveBtn}>
-                          <Text style={styles.leaveBtnText}>Leave</Text>
-                        </TouchableOpacity>
-                      )}
-                      {canAction && <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>}
-                    </View>
+                    <Text style={[styles.addBtnText, !newMember.trim() && { color: Colors.textMuted }]}>Add</Text>
                   </TouchableOpacity>
-                );
-              })}
+                </View>
+              </View>
 
               {/* Context menu */}
               {memberMenu && (
@@ -202,7 +280,43 @@ export default function GroupDetailScreen() {
                   </TouchableOpacity>
                 </Modal>
               )}
+            </>
+          )}
+
+          {tab === 'members' && !group.adminIds.includes(ME_ID) && (
+            <View style={styles.card}>
+              {group.memberIds.map((memberId, i) => {
+                const isSuperAdmin = memberId === superAdminId;
+                const isAdmin = admins.includes(memberId);
+                const displayName = getUser(memberId).displayName;
+                return (
+                  <View key={i} style={[styles.memberRow, i < group.memberIds.length - 1 && styles.rowBorder]}>
+                    <Avatar name={displayName} size={38} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.memberName}>{displayName}</Text>
+                      <Text style={styles.memberRole}>{isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Member'}</Text>
+                    </View>
+                    {isSuperAdmin && <Text style={{ fontSize: 14 }}>👑</Text>}
+                  </View>
+                );
+              })}
             </View>
+          )}
+
+          {tab === 'members' && (
+            <>
+              <View style={{ height: 16 }} />
+              <Text style={styles.sectionLabel}>LEAVE</Text>
+              <View style={[styles.card, { borderColor: '#FECACA' }]}>
+                <TouchableOpacity onPress={() => setShowLeave(true)} style={styles.memberRow} activeOpacity={0.8}>
+                  <Text style={{ fontSize: 18 }}>🚪</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.leaveTitle}>Leave Group</Text>
+                    <Text style={styles.leaveDesc}>You'll need an invite to rejoin</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </>
           )}
         </View>
       </ScrollView>
@@ -233,16 +347,17 @@ export default function GroupDetailScreen() {
           </TouchableOpacity>
         </Modal>
       )}
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe:             { flex: 1, backgroundColor: Colors.bg },
-  settingsBtn:      { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
-  settingsBtnText:  { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSub },
+  settingsBtn:      { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.md, backgroundColor: Colors.accent },
+  settingsBtnText:  { fontSize: 14, color: Colors.accentFg, fontFamily: Fonts.semiBold },
   headerBlock:      { backgroundColor: Colors.surface, padding: 20, borderBottomWidth: 1 },
-  groupIcon:        { width: 56, height: 56, borderRadius: 16, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  groupThumb:       { width: 56, height: 56, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg },
   groupName:        { fontSize: 19, fontFamily: Fonts.extraBold, color: Colors.text, marginBottom: 4 },
   groupDesc:        { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 18 },
   memberCount:      { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
@@ -255,16 +370,27 @@ const styles = StyleSheet.create({
   tabActive:        { borderBottomColor: Colors.text },
   tabText:          { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted },
   tabTextActive:    { fontFamily: Fonts.bold, color: Colors.text },
+  tabDot:           { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#EF4444', marginTop: 1 },
   card:             { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
+  pendingCard:      { borderColor: '#FDE68A', marginBottom: 16 },
   memberRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
   rowBorder:        { borderBottomWidth: 1, borderBottomColor: Colors.border },
   memberName:       { fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
+  memberHandle:     { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular },
   youLabel:         { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular },
   memberRole:       { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 1 },
   adminBadge:       { paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radius.full, backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.border },
   adminBadgeText:   { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textSub },
-  leaveBtn:         { paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.lg, borderWidth: 1, borderColor: '#FECACA', backgroundColor: Colors.notGoingBg },
-  leaveBtnText:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.notGoing },
+  approveBtn:       { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.lg, backgroundColor: Colors.going },
+  approveBtnText:   { fontSize: 12, fontFamily: Fonts.semiBold, color: '#fff' },
+  declineBtn:       { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
+  declineBtnText:   { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
+  addInput:         { flex: 1, padding: 9, paddingHorizontal: 14, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
+  addBtn:           { paddingHorizontal: 16, paddingVertical: 9, borderRadius: Radius.lg, backgroundColor: Colors.accent },
+  addBtnText:       { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  leaveTitle:       { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.notGoing },
+  leaveDesc:        { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 1 },
   menuOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   menuCard:         { backgroundColor: Colors.surface, borderRadius: 16, width: 220, overflow: 'hidden', ...Shadows.lg },
   menuHeader:       { padding: 10, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
