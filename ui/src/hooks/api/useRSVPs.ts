@@ -1,0 +1,27 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { EventsService, type RSVPInput } from '@boltup/client';
+import { queryKeys } from '../../config/queryClient';
+
+export function useCreateOrUpdateRSVP(eventId: string) {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: (data: RSVPInput) => EventsService.upsertRsvp(eventId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.all });
+    },
+  });
+}
+
+export function useDeleteRSVP(eventId: string) {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: (userId: string) => EventsService.deleteRsvp(eventId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.events.all });
+    },
+  });
+}

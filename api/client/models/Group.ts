@@ -1,0 +1,54 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * Group model - represents a social group
+ */
+export type Group = {
+    /**
+     * Unique group identifier
+     */
+    id: string;
+    /**
+     * Group name
+     */
+    name: string;
+    /**
+     * Group emoji icon
+     */
+    emoji: string;
+    /**
+     * Group color hex code
+     */
+    colorHex: string;
+    /**
+     * Group description
+     */
+    desc: string;
+    /**
+     * Whether the group is publicly visible
+     */
+    isPublic: boolean;
+    /**
+     * ID of the group's super admin
+     */
+    superAdminId: string;
+    /**
+     * Array of admin user IDs
+     */
+    adminIds: Array<string>;
+    /**
+     * Array of member user IDs
+     */
+    memberIds: Array<string>;
+    /**
+     * Timestamp when the group was created
+     */
+    createdAt: string;
+    /**
+     * Timestamp when the group was last updated
+     */
+    updatedAt: string;
+};
+

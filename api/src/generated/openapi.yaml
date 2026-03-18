@@ -1,0 +1,1230 @@
+openapi: 3.0.0
+components:
+  examples: {}
+  headers: {}
+  parameters: {}
+  requestBodies: {}
+  responses: {}
+  schemas:
+    User:
+      description: User model - represents a user in the system
+      properties:
+        id:
+          type: string
+          description: Unique user identifier
+        name:
+          type: string
+          description: User's name
+        displayName:
+          type: string
+          description: User's display name with location and year
+        handle:
+          type: string
+          description: User's unique handle
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the user was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the user was last updated
+      required:
+        - id
+        - name
+        - displayName
+        - handle
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    UserInput:
+      description: Input for creating a new user
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        handle:
+          type: string
+      required:
+        - id
+        - name
+        - displayName
+        - handle
+      type: object
+      additionalProperties: false
+    UserUpdate:
+      description: Input for updating a user
+      properties:
+        name:
+          type: string
+        displayName:
+          type: string
+        handle:
+          type: string
+      type: object
+      additionalProperties: false
+    Notification:
+      description: Notification model
+      properties:
+        id:
+          type: string
+          description: Unique notification identifier
+        type:
+          type: string
+          description: Notification type
+        read:
+          type: boolean
+          description: Whether the notification has been read
+        ts:
+          type: string
+          format: date-time
+          description: Timestamp of the notification
+        icon:
+          type: string
+          description: Icon identifier
+        title:
+          type: string
+          description: Notification title
+        body:
+          type: string
+          description: Notification body text
+        groupId:
+          type: string
+          nullable: true
+          description: Related group ID (if applicable)
+        eventId:
+          type: string
+          nullable: true
+          description: Related event ID (if applicable)
+        navigable:
+          type: boolean
+          description: Whether this notification is navigable/clickable
+        dest:
+          type: string
+          enum:
+            - group
+            - event
+            - null
+          nullable: true
+          description: Navigation destination
+        userId:
+          type: string
+          nullable: true
+          description: User ID this notification is for
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when updated
+      required:
+        - id
+        - type
+        - read
+        - ts
+        - icon
+        - title
+        - body
+        - navigable
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    NotificationInput:
+      description: Input for creating a notification
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        read:
+          type: boolean
+        ts:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        icon:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        groupId:
+          type: string
+        eventId:
+          type: string
+        navigable:
+          type: boolean
+        dest:
+          type: string
+          enum:
+            - group
+            - event
+        userId:
+          type: string
+      required:
+        - id
+        - type
+        - icon
+        - title
+        - body
+      type: object
+      additionalProperties: false
+    Group:
+      description: Group model - represents a social group
+      properties:
+        id:
+          type: string
+          description: Unique group identifier
+        name:
+          type: string
+          description: Group name
+        emoji:
+          type: string
+          description: Group emoji icon
+        colorHex:
+          type: string
+          description: Group color hex code
+        desc:
+          type: string
+          description: Group description
+        isPublic:
+          type: boolean
+          description: Whether the group is publicly visible
+        superAdminId:
+          type: string
+          description: ID of the group's super admin
+        adminIds:
+          items:
+            type: string
+          type: array
+          description: Array of admin user IDs
+        memberIds:
+          items:
+            type: string
+          type: array
+          description: Array of member user IDs
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the group was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the group was last updated
+      required:
+        - id
+        - name
+        - emoji
+        - colorHex
+        - desc
+        - isPublic
+        - superAdminId
+        - adminIds
+        - memberIds
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    GroupInput:
+      description: Input for creating a new group
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        emoji:
+          type: string
+        colorHex:
+          type: string
+        desc:
+          type: string
+        isPublic:
+          type: boolean
+        superAdminId:
+          type: string
+        adminIds:
+          items:
+            type: string
+          type: array
+        memberIds:
+          items:
+            type: string
+          type: array
+      required:
+        - id
+        - name
+        - emoji
+        - colorHex
+        - desc
+        - isPublic
+        - superAdminId
+      type: object
+      additionalProperties: false
+    GroupUpdate:
+      description: Input for updating a group
+      properties:
+        name:
+          type: string
+        emoji:
+          type: string
+        colorHex:
+          type: string
+        desc:
+          type: string
+        isPublic:
+          type: boolean
+        superAdminId:
+          type: string
+        adminIds:
+          items:
+            type: string
+          type: array
+        memberIds:
+          items:
+            type: string
+          type: array
+      type: object
+      additionalProperties: false
+    RSVP:
+      description: RSVP model
+      properties:
+        userId:
+          type: string
+          description: User ID who made the RSVP
+        status:
+          type: string
+          enum:
+            - going
+            - maybe
+            - notGoing
+          description: RSVP status
+        memo:
+          type: string
+          description: Optional memo or note
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when updated
+      required:
+        - userId
+        - status
+        - memo
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    Comment:
+      description: Comment model
+      properties:
+        id:
+          type: string
+          description: Unique comment identifier
+        userId:
+          type: string
+          description: ID of the user who made the comment
+        text:
+          type: string
+          description: Comment text
+        photos:
+          items:
+            type: string
+          type: array
+          description: Array of photo URLs attached to comment
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when updated
+      required:
+        - id
+        - userId
+        - text
+        - photos
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    EventDetailed:
+      description: Event with RSVPs and comments (detailed view)
+      properties:
+        id:
+          type: string
+          description: Unique event identifier
+        groupId:
+          type: string
+          description: ID of the group this event belongs to
+        createdBy:
+          type: string
+          description: ID of the user who created this event
+        title:
+          type: string
+          description: Event title
+        subtitle:
+          type: string
+          nullable: true
+          description: Event subtitle
+        description:
+          type: string
+          nullable: true
+          description: Event description
+        coverPhotos:
+          items:
+            type: string
+          type: array
+          description: Array of cover photo URLs
+        start:
+          type: string
+          format: date-time
+          description: Event start date/time
+        end:
+          type: string
+          format: date-time
+          description: Event end date/time
+        isAllDay:
+          type: boolean
+          nullable: true
+          description: Whether this is an all-day event
+        location:
+          type: string
+          nullable: true
+          description: Event location
+        minAttendees:
+          type: number
+          format: double
+          nullable: true
+          description: Minimum number of attendees required
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: RSVP deadline
+        allowMaybe:
+          type: boolean
+          description: Whether 'maybe' RSVPs are allowed
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the event was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the event was last updated
+        rsvps:
+          items:
+            $ref: "#/components/schemas/RSVP"
+          type: array
+          description: Array of RSVPs for this event
+        comments:
+          items:
+            $ref: "#/components/schemas/Comment"
+          type: array
+          description: Array of comments on this event
+      required:
+        - id
+        - groupId
+        - createdBy
+        - title
+        - coverPhotos
+        - start
+        - end
+        - allowMaybe
+        - createdAt
+        - updatedAt
+        - rsvps
+        - comments
+      type: object
+      additionalProperties: false
+    Event:
+      description: Event model - represents a scheduled event
+      properties:
+        id:
+          type: string
+          description: Unique event identifier
+        groupId:
+          type: string
+          description: ID of the group this event belongs to
+        createdBy:
+          type: string
+          description: ID of the user who created this event
+        title:
+          type: string
+          description: Event title
+        subtitle:
+          type: string
+          nullable: true
+          description: Event subtitle
+        description:
+          type: string
+          nullable: true
+          description: Event description
+        coverPhotos:
+          items:
+            type: string
+          type: array
+          description: Array of cover photo URLs
+        start:
+          type: string
+          format: date-time
+          description: Event start date/time
+        end:
+          type: string
+          format: date-time
+          description: Event end date/time
+        isAllDay:
+          type: boolean
+          nullable: true
+          description: Whether this is an all-day event
+        location:
+          type: string
+          nullable: true
+          description: Event location
+        minAttendees:
+          type: number
+          format: double
+          nullable: true
+          description: Minimum number of attendees required
+        deadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: RSVP deadline
+        allowMaybe:
+          type: boolean
+          description: Whether 'maybe' RSVPs are allowed
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the event was created
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the event was last updated
+      required:
+        - id
+        - groupId
+        - createdBy
+        - title
+        - coverPhotos
+        - start
+        - end
+        - allowMaybe
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    EventInput:
+      description: Input for creating a new event
+      properties:
+        id:
+          type: string
+        groupId:
+          type: string
+        createdBy:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        description:
+          type: string
+        coverPhotos:
+          items:
+            type: string
+          type: array
+        start:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        end:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        isAllDay:
+          type: boolean
+        location:
+          type: string
+        minAttendees:
+          type: number
+          format: double
+        deadline:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        allowMaybe:
+          type: boolean
+      required:
+        - id
+        - groupId
+        - createdBy
+        - title
+        - start
+        - end
+      type: object
+      additionalProperties: false
+    EventUpdate:
+      description: Input for updating an event
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+        description:
+          type: string
+        coverPhotos:
+          items:
+            type: string
+          type: array
+        start:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        end:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        isAllDay:
+          type: boolean
+        location:
+          type: string
+        minAttendees:
+          type: number
+          format: double
+        deadline:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: string
+        allowMaybe:
+          type: boolean
+      type: object
+      additionalProperties: false
+    RSVPInput:
+      description: Input for creating/updating an RSVP
+      properties:
+        userId:
+          type: string
+        status:
+          type: string
+          enum:
+            - going
+            - maybe
+            - notGoing
+        memo:
+          type: string
+      required:
+        - userId
+        - status
+      type: object
+      additionalProperties: false
+    CommentInput:
+      description: Input for creating a comment
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        text:
+          type: string
+        photos:
+          items:
+            type: string
+          type: array
+      required:
+        - id
+        - userId
+      type: object
+      additionalProperties: false
+  securitySchemes: {}
+info:
+  title: BoltUp API
+  version: 1.0.0
+  description: REST API for BoltUp - A social event planning platform for groups
+  license:
+    name: ISC
+  contact:
+    name: BoltUp Team
+paths:
+  /users:
+    get:
+      operationId: GetUsers
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/User"
+                type: array
+      description: Get all users
+      summary: Retrieves a list of all users in the system
+      tags:
+        - Users
+      security: []
+      parameters: []
+    post:
+      operationId: CreateUser
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+      description: Create a new user
+      summary: Creates a new user in the system
+      tags:
+        - Users
+      security: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+  /users/{id}:
+    get:
+      operationId: GetUser
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+      description: Get user by ID
+      summary: Retrieves a single user by their unique identifier
+      tags:
+        - Users
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+    put:
+      operationId: UpdateUser
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+      description: Update a user
+      summary: Updates an existing user's information
+      tags:
+        - Users
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+    delete:
+      operationId: DeleteUser
+      responses:
+        "204":
+          description: No Content
+      description: Delete a user
+      summary: Deletes a user from the system
+      tags:
+        - Users
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /notifications:
+    get:
+      operationId: GetNotifications
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Notification"
+                type: array
+      description: Get all notifications
+      summary: Retrieves notifications, optionally filtered by user
+      tags:
+        - Notifications
+      security: []
+      parameters:
+        - in: query
+          name: userId
+          required: false
+          schema:
+            type: string
+    post:
+      operationId: CreateNotification
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+      description: Create a notification
+      summary: Creates a new notification
+      tags:
+        - Notifications
+      security: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationInput"
+  /notifications/{id}:
+    get:
+      operationId: GetNotification
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+      description: Get notification by ID
+      summary: Retrieves a single notification
+      tags:
+        - Notifications
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+    put:
+      operationId: UpdateNotification
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+      description: Update notification read status
+      summary: Marks a notification as read or unread
+      tags:
+        - Notifications
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                read:
+                  type: boolean
+              required:
+                - read
+              type: object
+  /groups:
+    get:
+      operationId: GetGroups
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Group"
+                type: array
+      description: Get all groups
+      summary: Retrieves a list of all groups with their admin and member IDs
+      tags:
+        - Groups
+      security: []
+      parameters: []
+    post:
+      operationId: CreateGroup
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+      description: Create a new group
+      summary: Creates a new group with initial members
+      tags:
+        - Groups
+      security: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupInput"
+  /groups/{id}:
+    get:
+      operationId: GetGroup
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+      description: Get group by ID
+      summary: Retrieves a single group with member information
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+    put:
+      operationId: UpdateGroup
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+      description: Update a group
+      summary: Updates an existing group's information and/or members
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupUpdate"
+    delete:
+      operationId: DeleteGroup
+      responses:
+        "204":
+          description: No Content
+      description: Delete a group
+      summary: Deletes a group and all its associated data
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /groups/{id}/members:
+    get:
+      operationId: GetGroupMembers
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/User"
+                type: array
+      description: Get group members
+      summary: Retrieves all members of a specific group
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /events:
+    get:
+      operationId: GetEvents
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/EventDetailed"
+                type: array
+      description: Get all events
+      summary: Retrieves a list of events with optional filtering, including RSVPs and
+        comments
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: query
+          name: groupId
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: startAfter
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: startBefore
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            format: double
+            type: number
+    post:
+      operationId: CreateEvent
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+      description: Create a new event
+      summary: Creates a new event in a group
+      tags:
+        - Events
+      security: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventInput"
+  /events/{id}:
+    get:
+      operationId: GetEvent
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventDetailed"
+      description: Get event by ID
+      summary: Retrieves a single event with RSVPs and comments
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+    put:
+      operationId: UpdateEvent
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+      description: Update an event
+      summary: Updates an existing event's information
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventUpdate"
+    delete:
+      operationId: DeleteEvent
+      responses:
+        "204":
+          description: No Content
+      description: Delete an event
+      summary: Deletes an event and all associated data
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /events/{id}/rsvps:
+    post:
+      operationId: UpsertRSVP
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RSVP"
+      description: Create or update RSVP
+      summary: Creates or updates a user's RSVP for an event
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RSVPInput"
+  /events/{id}/rsvps/{userId}:
+    delete:
+      operationId: DeleteRSVP
+      responses:
+        "204":
+          description: No Content
+      description: Delete RSVP
+      summary: Removes a user's RSVP from an event
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+  /events/{id}/comments:
+    get:
+      operationId: GetComments
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Comment"
+                type: array
+      description: Get event comments
+      summary: Retrieves all comments for an event
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+    post:
+      operationId: CreateComment
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+      description: Create a comment
+      summary: Adds a new comment to an event
+      tags:
+        - Events
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentInput"
+  /comments/{id}:
+    delete:
+      operationId: DeleteComment
+      responses:
+        "204":
+          description: No Content
+      description: Delete a comment
+      summary: Deletes a comment from an event
+      tags:
+        - Comments
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+servers:
+  - url: http://localhost:3000/api

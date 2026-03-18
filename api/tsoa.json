@@ -1,0 +1,25 @@
+{
+  "entryFile": "src/server.ts",
+  "noImplicitAdditionalProperties": "throw-on-extras",
+  "controllerPathGlobs": ["src/controllers/**/*.ts"],
+  "spec": {
+    "outputDirectory": "src/generated",
+    "specVersion": 3,
+    "specFileBaseName": "openapi",
+    "yaml": true,
+    "name": "BoltUp API",
+    "version": "1.0.0",
+    "description": "REST API for BoltUp - A social event planning platform for groups",
+    "contact": {
+      "name": "BoltUp Team"
+    },
+    "host": "localhost:3000",
+    "schemes": ["http"],
+    "basePath": "/api"
+  },
+  "routes": {
+    "routesDir": "src/generated",
+    "middleware": "express",
+    "basePath": "/api"
+  }
+}

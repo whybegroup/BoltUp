@@ -1,0 +1,190 @@
+// Prisma Schema - Single source of truth for database
+// Run: npm run db:migrate to create and apply migrations
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./boltup.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================
+// User Model
+// ============================================
+
+model User {
+  id          String   @id @default(uuid())
+  name        String
+  displayName String
+  handle      String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  createdEvents    Event[]
+  groupMemberships GroupMember[]
+  rsvps            RSVP[]
+  comments         Comment[]
+
+  @@map("users")
+}
+
+// ============================================
+// Group Models
+// ============================================
+
+model Group {
+  id        String   @id @default(uuid())
+  name      String
+  emoji     String
+  colorHex  String
+  desc      String
+  isPublic  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  members GroupMember[]
+  events  Event[]
+
+  @@map("groups")
+}
+
+model GroupMember {
+  id        Int      @id @default(autoincrement())
+  groupId   String
+  userId    String
+  role      String   @default("member") // member, admin, superadmin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("group_members")
+}
+
+// ============================================
+// Event Models
+// ============================================
+
+model Event {
+  id           String    @id @default(uuid())
+  groupId      String
+  createdBy    String
+  title        String
+  subtitle     String?
+  description  String?
+  start        DateTime
+  end          DateTime
+  isAllDay     Boolean?  @default(false)
+  location     String?
+  minAttendees Int?
+  deadline     DateTime?
+  allowMaybe   Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  creator     User         @relation(fields: [createdBy], references: [id])
+  coverPhotos EventPhoto[]
+  rsvps       RSVP[]
+  comments    Comment[]
+
+  @@map("events")
+}
+
+model EventPhoto {
+  id        Int      @id @default(autoincrement())
+  eventId   String
+  photoUrl  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("event_photos")
+}
+
+// ============================================
+// RSVP Model
+// ============================================
+
+model RSVP {
+  id        Int      @id @default(autoincrement())
+  eventId   String
+  userId    String
+  status    String   @default("notGoing") // going, maybe, notGoing
+  memo      String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@map("rsvps")
+}
+
+// ============================================
+// Comment Models
+// ============================================
+
+model Comment {
+  id        String         @id @default(uuid())
+  eventId   String
+  userId    String
+  text      String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  // Relations
+  event  Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user   User           @relation(fields: [userId], references: [id])
+  photos CommentPhoto[]
+
+  @@map("comments")
+}
+
+model CommentPhoto {
+  id        Int      @id @default(autoincrement())
+  commentId String
+  photoUrl  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@map("comment_photos")
+}
+
+// ============================================
+// Notification Model
+// ============================================
+
+model Notification {
+  id         String   @id @default(uuid())
+  type       String
+  read       Boolean  @default(false)
+  ts         DateTime @default(now())
+  icon       String
+  title      String
+  body       String
+  groupId    String?
+  eventId    String?
+  navigable  Boolean  @default(false)
+  dest       String?  // group, event
+  userId     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("notifications")
+}

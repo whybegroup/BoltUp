@@ -1,0 +1,51 @@
+{
+  "name": "boltup-api",
+  "version": "1.0.0",
+  "description": "BoltUp REST API with SQLite",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "npm run generate && tsc",
+    "start": "node dist/server.js",
+    "dev": "concurrently \"npm run generate:watch\" \"nodemon --exec ts-node src/server.ts\"",
+    "seed": "ts-node prisma/seed.ts",
+    "generate": "npm run generate:routes && npm run generate:client",
+    "generate:routes": "tsoa spec-and-routes",
+    "generate:client": "npx openapi-typescript-codegen --input src/generated/openapi.yaml --output client --client axios",
+    "generate:watch": "nodemon --watch src/controllers --watch src/models --ext ts --exec \"npm run generate:routes\"",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset",
+    "postinstall": "prisma generate"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "^7.5.0",
+    "@prisma/client": "^5.22.0",
+    "@scalar/express-api-reference": "^0.9.3",
+    "axios": "^1.13.6",
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^4.22.1",
+    "form-data": "^4.0.5",
+    "js-yaml": "^4.1.1",
+    "sqlite3": "^6.0.1",
+    "tsoa": "^7.0.0-alpha.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.5.0",
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.14",
+    "openapi-typescript-codegen": "^0.30.0",
+    "prisma": "^5.22.0",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

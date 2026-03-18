@@ -1,0 +1,289 @@
+import React from 'react';
+import {
+  View, Text, TouchableOpacity, StyleSheet,
+  ScrollView, Modal, TextInput,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Colors, Radius, Shadows, Fonts } from '../constants/theme';
+import { avatarColor } from '../utils/helpers';
+
+// ── Avatar ────────────────────────────────────────────────────────────────────
+interface AvatarProps {
+  name: string;
+  size?: number;
+  dot?: boolean;
+  onPress?: () => void;
+}
+export function Avatar({ name, size = 36, dot = false, onPress }: AvatarProps) {
+  const bg = avatarColor(name);
+  const content = (
+    <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2, backgroundColor: bg }]}>
+      <Text style={{ color: '#fff', fontSize: size * 0.38, fontFamily: Fonts.bold }}>
+        {name[0].toUpperCase()}
+      </Text>
+      {dot && (
+        <View style={[styles.avatarDot, { borderRadius: 10 }]}/>
+      )}
+    </View>
+  );
+  if (onPress) return <TouchableOpacity onPress={onPress}>{content}</TouchableOpacity>;
+  return content;
+}
+
+export function AvatarStack({ names, size = 22, max = 5 }: { names: string[]; size?: number; max?: number }) {
+  const shown = names.slice(0, max);
+  const extra = names.length - max;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {shown.map((n, i) => (
+        <View key={i} style={{ marginLeft: i > 0 ? -(size * 0.3) : 0, zIndex: shown.length - i, borderRadius: size / 2, borderWidth: 2, borderColor: Colors.surface }}>
+          <Avatar name={n} size={size} />
+        </View>
+      ))}
+      {extra > 0 && (
+        <View style={[styles.avatarExtra, { width: size, height: size, borderRadius: size / 2, marginLeft: -(size * 0.3) }]}>
+          <Text style={{ fontSize: size * 0.3, fontFamily: Fonts.semiBold, color: Colors.textSub }}>+{extra}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ── Pill / Chip ───────────────────────────────────────────────────────────────
+interface PillProps {
+  label: string;
+  selected?: boolean;
+  onPress?: () => void;
+  onLongPress?: () => void;
+  activeColor?: string;
+  activeBg?: string;
+  activeText?: string;
+  inactiveBorderColor?: string;
+}
+export function Pill({ label, selected, onPress, onLongPress, activeColor, activeBg, activeText, inactiveBorderColor }: PillProps) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={[
+        styles.pill,
+        selected ? {
+          borderColor: activeColor || Colors.accent,
+          backgroundColor: activeBg || Colors.accent,
+        } : {
+          borderColor: inactiveBorderColor || Colors.border,
+          backgroundColor: 'transparent',
+        },
+      ]}
+    >
+      <Text style={[styles.pillText, { color: selected ? (activeText || Colors.accentFg) : Colors.textSub, fontFamily: selected ? Fonts.semiBold : Fonts.regular }]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// ── Button ────────────────────────────────────────────────────────────────────
+interface BtnProps {
+  label: string;
+  onPress?: () => void;
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  disabled?: boolean;
+  full?: boolean;
+  small?: boolean;
+}
+export function Btn({ label, onPress, variant = 'primary', disabled, full, small }: BtnProps) {
+  const bg = disabled ? Colors.border :
+    variant === 'primary' ? Colors.accent :
+    variant === 'danger'  ? Colors.notGoingBg :
+    Colors.surface;
+  const fg = disabled ? Colors.textMuted :
+    variant === 'primary' ? Colors.accentFg :
+    variant === 'danger'  ? Colors.notGoing :
+    Colors.text;
+  const border = variant === 'secondary' || variant === 'ghost' || variant === 'danger'
+    ? Colors.border : 'transparent';
+
+  return (
+    <TouchableOpacity
+      onPress={disabled ? undefined : onPress}
+      style={[styles.btn, { backgroundColor: bg, borderColor: border, width: full ? '100%' : undefined, paddingHorizontal: small ? 12 : 20, paddingVertical: small ? 7 : 10 }]}
+      activeOpacity={disabled ? 1 : 0.7}
+    >
+      <Text style={{ color: fg, fontSize: small ? 13 : 14, fontFamily: Fonts.semiBold }}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+// ── Toggle ────────────────────────────────────────────────────────────────────
+export function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <TouchableOpacity onPress={() => onChange(!value)} style={styles.toggleRow} activeOpacity={0.8}>
+      <Text style={[styles.toggleLabel]}>{label}</Text>
+      <View style={[styles.toggleTrack, { backgroundColor: value ? Colors.accent : Colors.border }]}>
+        <View style={[styles.toggleThumb, { left: value ? 22 : 2 }]} />
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ── NavBar ────────────────────────────────────────────────────────────────────
+interface NavBarProps {
+  title: string;
+  onBack?: () => void;
+  right?: React.ReactNode;
+}
+export function NavBar({ title, onBack, right }: NavBarProps) {
+  return (
+    <View style={styles.navBar}>
+      {onBack ? (
+        <TouchableOpacity onPress={onBack} style={styles.navBack}>
+          <Text style={styles.navBackText}>← Back</Text>
+        </TouchableOpacity>
+      ) : <View style={{ width: 70 }} />}
+      <Text style={styles.navTitle} numberOfLines={1}>{title}</Text>
+      <View style={styles.navRight}>{right}</View>
+    </View>
+  );
+}
+
+// ── Bottom Sheet ──────────────────────────────────────────────────────────────
+interface SheetProps {
+  visible: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}
+export function Sheet({ visible, onClose, children }: SheetProps) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.sheetOverlay} onPress={onClose} activeOpacity={1}>
+        <TouchableOpacity activeOpacity={1} style={[styles.sheetContainer, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.sheetHandle} />
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {children}
+          </ScrollView>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+// ── Section Label ─────────────────────────────────────────────────────────────
+export function SectionLabel({ label }: { label: string }) {
+  return (
+    <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>
+  );
+}
+
+// ── Field wrapper ─────────────────────────────────────────────────────────────
+export function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <View style={{ marginBottom: 18 }}>
+      <Text style={styles.fieldLabel}>{label}{required ? ' *' : ''}</Text>
+      {children}
+    </View>
+  );
+}
+
+// ── Text Input ────────────────────────────────────────────────────────────────
+interface TInputProps {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+  rows?: number;
+  maxLength?: number;
+  keyboardType?: any;
+}
+export function TInput({ value, onChange, placeholder, multiline, rows = 3, maxLength, keyboardType }: TInputProps) {
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor={Colors.textMuted}
+      multiline={multiline}
+      numberOfLines={multiline ? rows : 1}
+      maxLength={maxLength}
+      keyboardType={keyboardType}
+      style={[styles.tInput, multiline && { height: rows * 22, textAlignVertical: 'top' }]}
+    />
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const styles = StyleSheet.create({
+  avatar: { alignItems: 'center', justifyContent: 'center' },
+  avatarDot: {
+    position: 'absolute', top: -2, right: -2,
+    width: 9, height: 9,
+    backgroundColor: Colors.notGoing,
+    borderWidth: 2, borderColor: Colors.surface,
+  },
+  avatarExtra: {
+    backgroundColor: Colors.border,
+    borderWidth: 2, borderColor: Colors.surface,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  pill: {
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: Radius.full, borderWidth: 1,
+    flexShrink: 0,
+  },
+  pillText: { fontSize: 12 },
+  btn: {
+    borderRadius: Radius.lg, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  toggleLabel: { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, flex: 1 },
+  toggleTrack: { width: 44, height: 24, borderRadius: 12, position: 'relative' },
+  toggleThumb: {
+    position: 'absolute', top: 2, width: 20, height: 20,
+    borderRadius: 10, backgroundColor: '#fff',
+    ...Shadows.sm,
+  },
+  navBar: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 13,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  navBack: { width: 70 },
+  navBackText: { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.medium },
+  navTitle: { flex: 1, fontSize: 16, fontFamily: Fonts.bold, color: Colors.text, textAlign: 'center' },
+  navRight: { width: 70, alignItems: 'flex-end' },
+  sheetOverlay: { flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end' },
+  sheetContainer: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    maxHeight: '85%', paddingHorizontal: 20,
+  },
+  sheetHandle: {
+    width: 32, height: 3, borderRadius: 2,
+    backgroundColor: Colors.border, alignSelf: 'center',
+    marginTop: 10, marginBottom: 4,
+  },
+  sectionLabel: {
+    fontSize: 11, fontFamily: Fonts.semiBold,
+    color: Colors.textMuted, letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  fieldLabel: {
+    fontSize: 12, fontFamily: Fonts.semiBold,
+    color: Colors.textSub, textTransform: 'uppercase',
+    letterSpacing: 0.6, marginBottom: 6,
+  },
+  tInput: {
+    padding: 10, paddingHorizontal: 14,
+    borderRadius: Radius.lg, borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    fontSize: 14, color: Colors.text,
+    fontFamily: Fonts.regular,
+  },
+});

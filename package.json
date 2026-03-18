@@ -1,0 +1,15 @@
+{
+  "name": "boltup-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "api",
+    "api/client",
+    "ui"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=api",
+    "dev:ui": "npm start --workspace=ui",
+    "build": "npm run build --workspace=api"
+  }
+}
