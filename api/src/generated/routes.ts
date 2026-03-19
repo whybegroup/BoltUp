@@ -26,7 +26,7 @@ const models: TsoaRoute.Models = {
             "id": {"dataType":"string","required":true},
             "name": {"dataType":"string","required":true},
             "displayName": {"dataType":"string","required":true},
-            "handle": {"dataType":"string","required":true},
+            "avatar": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
             "createdAt": {"dataType":"datetime","required":true},
             "updatedAt": {"dataType":"datetime","required":true},
         },
@@ -39,7 +39,7 @@ const models: TsoaRoute.Models = {
             "id": {"dataType":"string","required":true},
             "name": {"dataType":"string","required":true},
             "displayName": {"dataType":"string","required":true},
-            "handle": {"dataType":"string","required":true},
+            "avatar": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
         },
         "additionalProperties": false,
     },
@@ -49,7 +49,7 @@ const models: TsoaRoute.Models = {
         "properties": {
             "name": {"dataType":"string"},
             "displayName": {"dataType":"string"},
-            "handle": {"dataType":"string"},
+            "avatar": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
         },
         "additionalProperties": false,
     },
@@ -94,6 +94,37 @@ const models: TsoaRoute.Models = {
         "additionalProperties": false,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "MembershipStatus": {
+        "dataType": "refAlias",
+        "type": {"dataType":"union","subSchemas":[{"dataType":"enum","enums":["none"]},{"dataType":"enum","enums":["pending"]},{"dataType":"enum","enums":["member"]},{"dataType":"enum","enums":["admin"]}],"validators":{}},
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    "GroupScoped": {
+        "dataType": "refObject",
+        "properties": {
+            "id": {"dataType":"string","required":true},
+            "name": {"dataType":"string","required":true},
+            "desc": {"dataType":"string","required":true},
+            "thumbnail": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "avatarSeed": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "isPublic": {"dataType":"boolean","required":true},
+            "memberCount": {"dataType":"double","required":true},
+            "membershipStatus": {"ref":"MembershipStatus","required":true},
+            "inviteCode": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "superAdminId": {"dataType":"string"},
+            "adminIds": {"dataType":"array","array":{"dataType":"string"}},
+            "memberIds": {"dataType":"array","array":{"dataType":"string"}},
+            "pendingMemberIds": {"dataType":"array","array":{"dataType":"string"}},
+            "createdBy": {"dataType":"string"},
+            "updatedBy": {"dataType":"string"},
+            "createdAt": {"dataType":"datetime"},
+            "updatedAt": {"dataType":"datetime"},
+            "deletedAt": {"dataType":"union","subSchemas":[{"dataType":"datetime"},{"dataType":"enum","enums":[null]}]},
+            "deletedBy": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+        },
+        "additionalProperties": false,
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     "Group": {
         "dataType": "refObject",
         "properties": {
@@ -101,6 +132,8 @@ const models: TsoaRoute.Models = {
             "name": {"dataType":"string","required":true},
             "desc": {"dataType":"string","required":true},
             "thumbnail": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "avatarSeed": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "inviteCode": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
             "isPublic": {"dataType":"boolean","required":true},
             "superAdminId": {"dataType":"string","required":true},
             "adminIds": {"dataType":"array","array":{"dataType":"string"},"required":true},
@@ -121,6 +154,8 @@ const models: TsoaRoute.Models = {
             "name": {"dataType":"string","required":true},
             "desc": {"dataType":"string","required":true},
             "thumbnail": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "avatarSeed": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "inviteCode": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
             "isPublic": {"dataType":"boolean","required":true},
             "superAdminId": {"dataType":"string","required":true},
             "adminIds": {"dataType":"array","array":{"dataType":"string"}},
@@ -136,6 +171,7 @@ const models: TsoaRoute.Models = {
             "name": {"dataType":"string"},
             "desc": {"dataType":"string"},
             "thumbnail": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
+            "avatarSeed": {"dataType":"union","subSchemas":[{"dataType":"string"},{"dataType":"enum","enums":[null]}]},
             "isPublic": {"dataType":"boolean"},
             "superAdminId": {"dataType":"string"},
             "adminIds": {"dataType":"array","array":{"dataType":"string"}},
@@ -674,6 +710,8 @@ export function RegisterRoutes(app: Router) {
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_getGroups: Record<string, TsoaRoute.ParameterSchema> = {
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
+                includeDeleted: {"in":"query","name":"includeDeleted","dataType":"boolean"},
         };
         app.get('/api/groups',
             ...(fetchMiddlewares<RequestHandler>(GroupController)),
@@ -704,6 +742,7 @@ export function RegisterRoutes(app: Router) {
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_getGroup: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
         };
         app.get('/api/groups/:id',
             ...(fetchMiddlewares<RequestHandler>(GroupController)),
@@ -734,6 +773,7 @@ export function RegisterRoutes(app: Router) {
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_getGroupMembers: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
         };
         app.get('/api/groups/:id/members',
             ...(fetchMiddlewares<RequestHandler>(GroupController)),
@@ -794,6 +834,7 @@ export function RegisterRoutes(app: Router) {
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_updateGroup: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
                 body: {"in":"body","name":"body","required":true,"ref":"GroupUpdate"},
         };
         app.put('/api/groups/:id',
@@ -825,6 +866,7 @@ export function RegisterRoutes(app: Router) {
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_deleteGroup: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
         };
         app.delete('/api/groups/:id',
             ...(fetchMiddlewares<RequestHandler>(GroupController)),
@@ -853,8 +895,163 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_softDeleteGroup: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"userId":{"dataType":"string","required":true}}},
+        };
+        app.post('/api/groups/:id/soft-delete',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.softDeleteGroup)),
+
+            async function GroupController_softDeleteGroup(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_softDeleteGroup, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'softDeleteGroup',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_recoverGroup: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"userId":{"dataType":"string","required":true}}},
+        };
+        app.post('/api/groups/:id/recover',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.recoverGroup)),
+
+            async function GroupController_recoverGroup(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_recoverGroup, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'recoverGroup',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_joinByInviteCode: Record<string, TsoaRoute.ParameterSchema> = {
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"userId":{"dataType":"string","required":true},"inviteCode":{"dataType":"string","required":true}}},
+        };
+        app.post('/api/groups/join-by-code',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.joinByInviteCode)),
+
+            async function GroupController_joinByInviteCode(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_joinByInviteCode, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'joinByInviteCode',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_leaveGroup: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"userId":{"dataType":"string","required":true}}},
+        };
+        app.post('/api/groups/:id/leave',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.leaveGroup)),
+
+            async function GroupController_leaveGroup(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_leaveGroup, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'leaveGroup',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_joinGroup: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"userId":{"dataType":"string","required":true}}},
+        };
+        app.post('/api/groups/:id/join',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.joinGroup)),
+
+            async function GroupController_joinGroup(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_joinGroup, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'joinGroup',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_getPendingRequests: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
         };
         app.get('/api/groups/:id/requests/pending',
             ...(fetchMiddlewares<RequestHandler>(GroupController)),
@@ -883,8 +1080,104 @@ export function RegisterRoutes(app: Router) {
             }
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_removeMember: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                memberId: {"in":"path","name":"memberId","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"performedBy":{"dataType":"string","required":true}}},
+        };
+        app.post('/api/groups/:id/members/:memberId/remove',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.removeMember)),
+
+            async function GroupController_removeMember(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_removeMember, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'removeMember',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_setMemberRole: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                memberId: {"in":"path","name":"memberId","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"role":{"dataType":"union","subSchemas":[{"dataType":"enum","enums":["admin"]},{"dataType":"enum","enums":["member"]}],"required":true},"performedBy":{"dataType":"string","required":true}}},
+        };
+        app.put('/api/groups/:id/members/:memberId/role',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.setMemberRole)),
+
+            async function GroupController_setMemberRole(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_setMemberRole, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'setMemberRole',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+        const argsGroupController_setSuperAdmin: Record<string, TsoaRoute.ParameterSchema> = {
+                id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                body: {"in":"body","name":"body","required":true,"dataType":"nestedObjectLiteral","nestedProperties":{"userId":{"dataType":"string","required":true},"performedBy":{"dataType":"string","required":true}}},
+        };
+        app.put('/api/groups/:id/superadmin',
+            ...(fetchMiddlewares<RequestHandler>(GroupController)),
+            ...(fetchMiddlewares<RequestHandler>(GroupController.prototype.setSuperAdmin)),
+
+            async function GroupController_setSuperAdmin(request: ExRequest, response: ExResponse, next: any) {
+
+            // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+
+            let validatedArgs: any[] = [];
+            try {
+                validatedArgs = templateService.getValidatedArgs({ args: argsGroupController_setSuperAdmin, request, response });
+
+                const controller = new GroupController();
+
+              await templateService.apiHandler({
+                methodName: 'setSuperAdmin',
+                controller,
+                response,
+                next,
+                validatedArgs,
+                successStatus: 200,
+              });
+            } catch (err) {
+                return next(err);
+            }
+        });
+        // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsGroupController_handleMembershipRequest: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
                 body: {"in":"body","name":"body","required":true,"ref":"MembershipRequestAction"},
         };
         app.post('/api/groups/:id/requests/handle',
@@ -1008,6 +1301,7 @@ export function RegisterRoutes(app: Router) {
         });
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsEventController_getEvents: Record<string, TsoaRoute.ParameterSchema> = {
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
                 groupId: {"in":"query","name":"groupId","dataType":"string"},
                 startAfter: {"in":"query","name":"startAfter","dataType":"string"},
                 startBefore: {"in":"query","name":"startBefore","dataType":"string"},
@@ -1042,6 +1336,7 @@ export function RegisterRoutes(app: Router) {
         // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
         const argsEventController_getEvent: Record<string, TsoaRoute.ParameterSchema> = {
                 id: {"in":"path","name":"id","required":true,"dataType":"string"},
+                userId: {"in":"query","name":"userId","required":true,"dataType":"string"},
         };
         app.get('/api/events/:id',
             ...(fetchMiddlewares<RequestHandler>(EventController)),

@@ -2,11 +2,11 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { EventRow } from './EventRow';
-import type { EventDetailed, Group } from '@boltup/client';
+import type { EventDetailed, GroupScoped } from '@boltup/client';
 
 interface ListViewProps {
   events: EventDetailed[];
-  groups?: Group[];
+  groups?: GroupScoped[];
   groupColors?: Record<string, string>;
   onSelect: (ev: EventDetailed) => void;
   onSelectGroup?: (groupId: string) => void;
@@ -27,7 +27,7 @@ export function ListView({
   showGroup = true,
 }: ListViewProps) {
   const groupsMap = useMemo(() => {
-    const map: Record<string, Group> = {};
+    const map: Record<string, GroupScoped> = {};
     groups.forEach(g => map[g.id] = g);
     return map;
   }, [groups]);

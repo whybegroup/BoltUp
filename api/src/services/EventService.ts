@@ -51,9 +51,11 @@ export class EventService {
   }
 
   /**
-   * Get all events with optional filtering, including RSVPs and comments
+   * Get all events with optional filtering, scoped by user's group membership.
+   * userId required - returns only events from groups where user is an active member.
    */
-  public async getAllDetailed(params?: {
+  public async getAllDetailed(params: {
+    userId: string;
     groupId?: string;
     startAfter?: Date;
     startBefore?: Date;
@@ -61,14 +63,23 @@ export class EventService {
   }): Promise<EventDetailed[]> {
     const where: any = {};
 
-    if (params?.groupId) {
+    if (params.groupId) {
+      if (!(await this.userCanAccessGroup(params.groupId, params.userId))) {
+        return [];
+      }
       where.groupId = params.groupId;
+    } else {
+      const memberGroupIds = await prisma.groupMember.findMany({
+        where: { userId: params.userId, status: 'active' },
+        select: { groupId: true },
+      }).then((rows) => rows.map((r) => r.groupId));
+      where.groupId = { in: memberGroupIds };
     }
 
     if (params?.startAfter || params?.startBefore) {
-      where.start = {};
-      if (params.startAfter) where.start.gte = params.startAfter;
-      if (params.startBefore) where.start.lte = params.startBefore;
+      where.start = where.start || {};
+      if (params!.startAfter) where.start.gte = params!.startAfter;
+      if (params!.startBefore) where.start.lte = params!.startBefore;
     }
 
     const events = await prisma.event.findMany({
@@ -94,10 +105,18 @@ export class EventService {
     return events.map((e) => this.mapEventDetailed(e));
   }
 
+  private async userCanAccessGroup(groupId: string, userId: string): Promise<boolean> {
+    const m = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+      select: { status: true },
+    });
+    return m?.status === 'active';
+  }
+
   /**
-   * Get event by ID with all details
+   * Get event by ID with all details. Returns null if not found or user cannot access.
    */
-  public async getById(id: string): Promise<EventDetailed | null> {
+  public async getById(id: string, userId?: string): Promise<EventDetailed | null> {
     const event = await prisma.event.findUnique({
       where: { id },
       include: {
@@ -114,7 +133,11 @@ export class EventService {
       },
     });
 
-    return event ? this.mapEventDetailed(event) : null;
+    if (!event) return null;
+    if (userId && !(await this.userCanAccessGroup(event.groupId, userId))) {
+      return null;
+    }
+    return this.mapEventDetailed(event);
   }
 
   /**

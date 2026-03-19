@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 import {
   useFonts,
   DMSans_400Regular,
@@ -16,8 +17,60 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { store } from '../store';
 import { queryClient } from '../config/queryClient';
 import { Colors } from '../constants/theme';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { CurrentUserProvider } from '../contexts/CurrentUserContext';
 
 SplashScreen.preventAutoHideAsync();
+
+function RootLayoutNav() {
+  const { user, loading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading) {
+      console.log('[Layout] Auth loading...');
+      return;
+    }
+
+    const inAuthGroup = segments[0] === 'login';
+    console.log('[Layout] Navigation check - User:', user?.email, 'In login:', inAuthGroup, 'Segments:', segments);
+
+    // Small delay to ensure navigation is ready
+    const timeout = setTimeout(() => {
+      if (!user && !inAuthGroup) {
+        console.log('[Layout] No user, redirecting to login...');
+        router.replace('/login');
+      } else if (user && inAuthGroup) {
+        console.log('[Layout] User logged in, redirecting to app...');
+        router.replace('/(tabs)/feed');
+      }
+    }, 100);
+
+    return () => clearTimeout(timeout);
+  }, [user, loading, segments]);
+
+  // Show nothing while auth is loading to prevent flash
+  if (loading) {
+    return null;
+  }
+
+  return (
+    <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+      <Stack.Screen name="login" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="event/[id]" />
+      <Stack.Screen name="event/edit/[id]" />
+      <Stack.Screen name="group/[id]" />
+      <Stack.Screen name="group/[id]/preferences" />
+      <Stack.Screen name="create-event" />
+      <Stack.Screen
+        name="create-group"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
+    </Stack>
+  );
+}
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
@@ -50,23 +103,17 @@ export default function RootLayout() {
   return (
     <ReduxProvider store={store}>
       <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <SafeAreaProvider>
-            <StatusBar style="dark" />
-            <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="event/[id]" />
-              <Stack.Screen name="group/[id]" />
-              <Stack.Screen name="group/[id]/settings" />
-              <Stack.Screen name="group/[id]/invite" />
-              <Stack.Screen name="create-event" />
-              <Stack.Screen
-                name="create-group"
-                options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-              />
-            </Stack>
-          </SafeAreaProvider>
-        </GestureHandlerRootView>
+        <AuthProvider>
+          <CurrentUserProvider>
+            <GestureHandlerRootView style={{ flex: 1 }}>
+              <SafeAreaProvider>
+                <StatusBar style="dark" />
+                <RootLayoutNav />
+                <Toast />
+              </SafeAreaProvider>
+            </GestureHandlerRootView>
+          </CurrentUserProvider>
+        </AuthProvider>
       </QueryClientProvider>
     </ReduxProvider>
   );

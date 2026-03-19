@@ -6,17 +6,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
-import * as MediaLibrary from 'expo-media-library';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtDateFull, timeAgo, dDiff } from '../../utils/helpers';
 import { Avatar, AvatarStack, Sheet } from '../../components/ui';
 import { useEvent, useGroup, useUsers, useCreateOrUpdateRSVP, useCreateComment, useGroupMemberColor } from '../../hooks/api';
 import { uid, getNoResponseIds } from '../../utils/api-helpers';
-import type { EventDetailed, User, Group, RSVP } from '@boltup/client';
+import type { EventDetailed, User, GroupScoped, RSVP } from '@boltup/client';
 import { RSVPInput } from '@boltup/client';
-
-const ME_ID = 'u1';
+import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 
 // ── Photo Carousel ───────────────────────────────────────────────────────────
 function PhotoCarousel({ photos, onPhotoPress }: { photos: string[]; onPhotoPress: (url: string) => void }) {
@@ -121,13 +118,14 @@ function DescText({ text }: { text: string }) {
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router  = useRouter();
+  const { userId: currentUserId } = useCurrentUserContext();
 
   const eventId = Array.isArray(id) ? id[0] : id;
 
-  const { data: ev, isLoading: eventLoading } = useEvent(eventId || '');
-  const { data: group, isLoading: groupLoading } = useGroup(ev?.groupId || '');
+  const { data: ev, isLoading: eventLoading } = useEvent(eventId || '', currentUserId ?? '');
+  const { data: group, isLoading: groupLoading } = useGroup(ev?.groupId || '', currentUserId ?? '');
   const { data: allUsers = [] } = useUsers();
-  const { data: memberColorData } = useGroupMemberColor(ev?.groupId || '', ME_ID);
+  const { data: memberColorData } = useGroupMemberColor(ev?.groupId || '', currentUserId);
   const createOrUpdateRSVPMutation = useCreateOrUpdateRSVP(eventId || '');
   const createCommentMutation = useCreateComment(eventId || '');
 
@@ -135,6 +133,8 @@ export default function EventDetailScreen() {
   const [memoFor,     setMemoFor]     = useState<RSVPInput.status | null>(null);
   const [input,       setInput]       = useState('');
   const [pendingPhotos, setPendingPhotos] = useState<string[]>([]);
+  const [showCommentPhotoModal, setShowCommentPhotoModal] = useState(false);
+  const [commentPhotoUrl, setCommentPhotoUrl] = useState('');
   const [lightbox,    setLightbox]    = useState<{ url: string; name: string; ts: Date } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -174,7 +174,6 @@ export default function EventDetailScreen() {
       id: userId, 
       name: 'Loading...', 
       displayName: 'Loading...', 
-      handle: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -190,7 +189,7 @@ export default function EventDetailScreen() {
   const going   = rsvps.filter(r => r.status === 'going');
   const notGoing= rsvps.filter(r => r.status === 'notGoing');
   const maybe   = rsvps.filter(r => r.status === 'maybe');
-  const myRsvp  = rsvps.find(r => r.userId === ME_ID);
+  const myRsvp  = rsvps.find(r => r.userId === currentUserId);
   const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
   const diff    = dDiff(evStart);
   const isPast  = diff < 0;
@@ -201,15 +200,15 @@ export default function EventDetailScreen() {
     return (c.photos || []).map(url => ({ url, name: 'Unknown', ts }));
   });
   
-  const canEdit = ev.createdBy === ME_ID || 
-                  group.superAdminId === ME_ID || 
-                  group.adminIds.includes(ME_ID);
+  const canEdit = ev.createdBy === currentUserId || 
+                  group.superAdminId === currentUserId || 
+                  group.adminIds.includes(currentUserId);
 
   const applyRsvp = async (status: RSVPInput.status, memo?: string) => {
     if (!ev) return;
     try {
       await createOrUpdateRSVPMutation.mutateAsync({
-        userId: ME_ID,
+        userId: currentUserId,
         status: status,
         memo: memo ?? '',
       });
@@ -219,24 +218,16 @@ export default function EventDetailScreen() {
     }
   };
 
-  const pickPhotos = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ 
-      allowsMultipleSelection: true, 
-      mediaTypes: ImagePicker.MediaTypeOptions.Images, 
-      quality: 0.8,
-      base64: true,
-    });
-    
-    if (!result.canceled) {
-      const uris = result.assets.map(asset => {
-        // On web, convert to base64 data URI for persistence
-        if (asset.base64 && asset.uri.startsWith('blob:')) {
-          return `data:image/jpeg;base64,${asset.base64}`;
-        }
-        return asset.uri;
-      });
-      setPendingPhotos(p => [...p, ...uris]);
+  const handleAddCommentPhoto = () => {
+    const url = commentPhotoUrl.trim();
+    if (!url) return;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      Alert.alert('Invalid URL', 'Please enter a valid image URL (e.g. https://example.com/image.jpg)');
+      return;
     }
+    setPendingPhotos(p => [...p, url]);
+    setCommentPhotoUrl('');
+    setShowCommentPhotoModal(false);
   };
 
   const postComment = async () => {
@@ -244,7 +235,7 @@ export default function EventDetailScreen() {
     try {
       const newComment: any = {
         id: uid(),
-        userId: ME_ID,
+        userId: currentUserId,
         photos: [...pendingPhotos],
       };
       
@@ -260,14 +251,6 @@ export default function EventDetailScreen() {
       console.error('Failed to post comment:', error);
       console.error('Error details:', JSON.stringify(error, null, 2));
       Alert.alert('Error', error?.body?.message || error?.message || 'Failed to post comment');
-    }
-  };
-
-  const savePhoto = async (url: string) => {
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status === 'granted') {
-      await MediaLibrary.saveToLibraryAsync(url);
-      Alert.alert('Saved', 'Photo saved to your library.');
     }
   };
 
@@ -414,7 +397,7 @@ export default function EventDetailScreen() {
               <Avatar name={getUserSafe(c.userId).displayName} size={34} />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
-                  <Text style={[styles.commentName, c.userId === ME_ID && { color: Colors.going }]}>{getUserSafe(c.userId).displayName}</Text>
+                  <Text style={[styles.commentName, c.userId === currentUserId && { color: Colors.going }]}>{getUserSafe(c.userId).displayName}</Text>
                   <Text style={styles.commentTime}>{timeAgo(commentTs)}</Text>
                 </View>
                 {!!c.text && <Text style={styles.commentText}>{c.text}</Text>}
@@ -449,15 +432,15 @@ export default function EventDetailScreen() {
             ))}
           </ScrollView>
         )}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <TouchableOpacity onPress={pickPhotos} style={styles.photoBtn}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <TouchableOpacity onPress={() => setShowCommentPhotoModal(true)} style={styles.photoBtn}>
             <Text style={{ fontSize: 18 }}>📷</Text>
           </TouchableOpacity>
           <TextInput
             value={input} onChangeText={setInput}
             placeholder={isPast ? 'Add a memory or photo…' : 'Add a comment…'}
             placeholderTextColor={Colors.textMuted}
-            style={styles.commentInput}
+            style={[styles.commentInput, { flex: 1, minWidth: 120 }]}
             onSubmitEditing={postComment}
           />
           <TouchableOpacity onPress={postComment} style={[styles.postBtn, !(input.trim() || pendingPhotos.length) && styles.postBtnDisabled]}>
@@ -465,6 +448,36 @@ export default function EventDetailScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Comment photo URL modal */}
+      {showCommentPhotoModal && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setShowCommentPhotoModal(false)}>
+          <View style={styles.urlModalOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowCommentPhotoModal(false)} activeOpacity={1} />
+            <View style={styles.urlModalCard}>
+              <Text style={styles.urlModalTitle}>Add image from URL</Text>
+              <TextInput
+                value={commentPhotoUrl}
+                onChangeText={setCommentPhotoUrl}
+                placeholder="https://example.com/image.jpg"
+                placeholderTextColor={Colors.textMuted}
+                style={styles.urlModalInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+              />
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                <TouchableOpacity onPress={() => setShowCommentPhotoModal(false)} style={styles.urlModalSecondaryBtn} activeOpacity={0.8}>
+                  <Text style={styles.urlModalSecondaryBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleAddCommentPhoto} style={[styles.urlModalSecondaryBtn, { borderColor: Colors.accent, backgroundColor: Colors.accent }]} activeOpacity={0.8}>
+                  <Text style={[styles.urlModalSecondaryBtnText, { color: Colors.accentFg }]}>Add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* Attendance sheet */}
       <AttendanceSheet ev={ev} group={group} users={users} visible={showAttend} onClose={() => setShowAttend(false)} />
@@ -491,14 +504,9 @@ export default function EventDetailScreen() {
                   <Text style={styles.lightboxTime}>{timeAgo(lightbox.ts)}</Text>
                 </View>
               </View>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <TouchableOpacity onPress={() => savePhoto(lightbox.url)} style={styles.lightboxBtn}>
-                  <Text style={styles.lightboxBtnText}>↓ Save</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setLightbox(null)} style={styles.lightboxBtn}>
-                  <Text style={styles.lightboxBtnText}>✕</Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity onPress={() => setLightbox(null)} style={styles.lightboxBtn}>
+                <Text style={styles.lightboxBtnText}>✕</Text>
+              </TouchableOpacity>
             </View>
             <Image source={{ uri: lightbox.url }} style={styles.lightboxImg} resizeMode="contain" />
           </View>
@@ -531,7 +539,7 @@ function RsvpBtn({ status, active, onPress, onLongPress }: { status: string; act
   );
 }
 
-function AttendanceSheet({ ev, group, users, visible, onClose }: { ev: EventDetailed; group: Group; users: Record<string, User>; visible: boolean; onClose: () => void }) {
+function AttendanceSheet({ ev, group, users, visible, onClose }: { ev: EventDetailed; group: GroupScoped; users: Record<string, User>; visible: boolean; onClose: () => void }) {
   const [memoPopup, setMemoPopup] = useState<RSVP | null>(null);
   
   const going    = (ev.rsvps || []).filter(r => r.status === 'going');
@@ -540,7 +548,7 @@ function AttendanceSheet({ ev, group, users, visible, onClose }: { ev: EventDeta
   const noResponseIds = getNoResponseIds(ev, group);
 
   const RsvpRow = ({ r, faded }: { r: RSVP; faded?: boolean }) => {
-    const user = users[r.userId] || { id: r.userId, name: 'Loading...', displayName: 'Loading...', handle: '' };
+    const user = users[r.userId] || { id: r.userId, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     return (
       <TouchableOpacity 
         onPress={() => r.memo ? setMemoPopup(r) : null} 
@@ -582,7 +590,7 @@ function AttendanceSheet({ ev, group, users, visible, onClose }: { ev: EventDeta
             <>
             <Text style={styles.attendSection}>NO RESPONSE · {noResponseIds.length}</Text>
             {noResponseIds.map(uid => {
-              const user = users[uid] || { id: uid, name: 'Loading...', displayName: 'Loading...', handle: '' };
+              const user = users[uid] || { id: uid, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
               return (
                 <View key={uid} style={styles.attendRsvpRow}>
                   <Avatar name={user.displayName} size={38} />
@@ -722,6 +730,12 @@ const styles = StyleSheet.create({
   inputBar:         { backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, padding: 10, paddingHorizontal: 16 },
   photoBtn:         { width: 36, height: 36, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   commentInput:     { flex: 1, padding: 9, paddingHorizontal: 14, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
+  urlModalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  urlModalCard:     { backgroundColor: Colors.surface, borderRadius: 18, borderWidth: 1, borderColor: Colors.border, padding: 16, width: '100%', maxWidth: 360 },
+  urlModalTitle:    { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 12 },
+  urlModalInput:    { paddingHorizontal: 10, paddingVertical: 10, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
+  urlModalSecondaryBtn:    { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
+  urlModalSecondaryBtnText:{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.text },
   postBtn:          { paddingHorizontal: 18, paddingVertical: 9, borderRadius: Radius.lg, backgroundColor: Colors.accent },
   postBtnDisabled:  { backgroundColor: Colors.border },
   postBtnText:      { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },

@@ -1,24 +1,22 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, Image, TextInput } from 'react-native';
+import React, { useState, useMemo, useEffect } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput, Alert, ActivityIndicator, Platform } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
-import { getGroupColor, getDefaultGroupThemeFromName } from '../../utils/helpers';
-import { Avatar, AvatarStack, NavBar } from '../../components/ui';
-import { ListView } from '../../components/ListView';
-import { useGroup, useEvents, useUsers, usePendingRequests, useHandleMembershipRequest, useGroupMemberColor, useUpdateGroupMemberColor } from '../../hooks/api';
+import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../../utils/helpers';
+import { Avatar, NavBar, Toggle } from '../../components/ui';
+import { useGroup, useUsers, useGroupMemberColor, usePendingRequests, useHandleMembershipRequest, useUpdateGroup, useLeaveGroup, useSoftDeleteGroup, useDeleteGroup, useRecoverGroup, useRemoveMember, useSetMemberRole, useSetSuperAdmin } from '../../hooks/api';
 import { MembershipRequestAction } from '@boltup/client';
-import ColorPicker, { Panel1, HueSlider, OpacitySlider } from 'reanimated-color-picker';
-
-const ME_ID = 'u1';
-
-function defaultGroupAvatarUri(groupId: string): string {
-  return `https://api.dicebear.com/8.x/bottts/png?seed=${encodeURIComponent(groupId)}&size=256&backgroundType=gradientLinear`;
-}
+import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
+import Svg, { Path, Rect } from 'react-native-svg';
+import { GroupAvatar } from '../../components/GroupAvatar';
+import { GroupAvatarPicker } from '../../components/GroupAvatarPicker';
 
 export default function GroupDetailScreen() {
   const { id }   = useLocalSearchParams<{ id: string }>();
   const router   = useRouter();
+  const { userId: currentUserId } = useCurrentUserContext();
   
   const groupId = Array.isArray(id) ? id[0] : id;
 
@@ -26,20 +24,51 @@ export default function GroupDetailScreen() {
     return null;
   }
 
-  const { data: group, isLoading: groupLoading } = useGroup(groupId);
-  const { data: events = [], isLoading: eventsLoading } = useEvents({ groupId });
+  const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
+  const { data: memberColorData } = useGroupMemberColor(groupId, currentUserId ?? '');
   const { data: users = [] } = useUsers();
-  const { data: pendingRequestUsers = [] } = usePendingRequests(groupId);
-  const handleMembershipRequest = useHandleMembershipRequest(groupId);
-  const { data: memberColorData } = useGroupMemberColor(groupId, ME_ID);
-  const updateMemberColor = useUpdateGroupMemberColor(groupId, ME_ID);
+  const { data: pendingRequestUsers = [] } = usePendingRequests(groupId, currentUserId ?? '');
+  const handleMembershipRequest = useHandleMembershipRequest(groupId, currentUserId ?? '');
+  const removeMemberMutation = useRemoveMember(groupId, currentUserId ?? '');
+  const setMemberRole = useSetMemberRole(groupId, currentUserId ?? '');
+  const setSuperAdmin = useSetSuperAdmin(groupId, currentUserId ?? '');
+  const updateGroup = useUpdateGroup(groupId, currentUserId ?? '');
+  const leaveGroupMutation = useLeaveGroup();
+  const softDeleteMutation = useSoftDeleteGroup(currentUserId ?? '');
+  const hardDeleteMutation = useDeleteGroup(currentUserId ?? '');
+  const recoverMutation = useRecoverGroup(currentUserId ?? '');
 
-  const [tab,         setTab]         = useState<'events' | 'members'>('events');
+  const [editingName, setEditingName] = useState(false);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [draftName,   setDraftName]   = useState('');
+  const [draftDesc,   setDraftDesc]   = useState('');
+
+  useEffect(() => {
+    if (group) {
+      if (!editingName) setDraftName(group.name);
+      if (!editingDesc) setDraftDesc(group.desc || '');
+    }
+  }, [group?.name, group?.desc, editingName, editingDesc]);
+
+  useEffect(() => {
+    if (isError || (group && group.membershipStatus === 'none')) {
+      router.replace('/(tabs)/groups');
+    }
+  }, [isError, group?.membershipStatus, router]);
   const [memberMenu,  setMemberMenu]  = useState<{ userId: string } | null>(null);
   const [showLeave,   setShowLeave]   = useState(false);
-  const [newMember,   setNewMember]   = useState('');
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [draftHex, setDraftHex] = useState<string | null>(null);
+  const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [avatarSeedDraft, setAvatarSeedDraft] = useState('');
+  const [avatarThumbnailDraft, setAvatarThumbnailDraft] = useState<string | null>(null);
+  useEffect(() => {
+    if (showAvatarPicker && group) {
+      setAvatarSeedDraft(group.avatarSeed ?? '');
+      setAvatarThumbnailDraft(group.thumbnail ?? null);
+    }
+  }, [showAvatarPicker, group?.avatarSeed, group?.thumbnail]);
 
   const usersMap = useMemo(() => {
     const map: Record<string, any> = {};
@@ -48,29 +77,19 @@ export default function GroupDetailScreen() {
   }, [users]);
 
   const getUser = (userId: string) => {
-    return usersMap[userId] || { id: userId, name: 'Loading...', displayName: 'Loading...', handle: '' };
+    return usersMap[userId] || { id: userId, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   };
 
   if (!group) {
     return null;
   }
 
-  const userColorHex = memberColorData?.colorHex || getDefaultGroupThemeFromName(group.name);
-  const p = getGroupColor(userColorHex);
-  const groupEvents = events.filter(e => e.groupId === group.id);
-  const superAdminId = group.superAdminId;
-  const admins = group.adminIds;
-  const isAdmin = admins.includes(ME_ID);
-  const hasPendingApprovals = isAdmin && pendingRequestUsers.length > 0;
-
-  const selectColor = async (colorHex: string) => {
-    try {
-      await updateMemberColor.mutateAsync(colorHex);
-      setShowColorPicker(false);
-    } catch (error) {
-      console.error('Failed to update color:', error);
-    }
-  };
+  const superAdminId = group.superAdminId ?? '';
+  const admins = group.adminIds ?? [];
+  const isAdmin = group.membershipStatus === 'admin';
+  const isSuperAdmin = superAdminId === currentUserId;
+  const isPending = group.membershipStatus === 'pending';
+  const isSoftDeleted = !!group.deletedAt;
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -80,12 +99,51 @@ export default function GroupDetailScreen() {
     }
   };
 
-  const leaveGroup = () => {
-    const remainingAdmins = admins.filter(a => a !== ME_ID);
-    if (remainingAdmins.length === 0) { handleBack(); return; }
-    // TODO: Call API to leave group
-    console.log('Leave group', groupId);
-    handleBack();
+  const leaveGroup = async () => {
+    if (!currentUserId) return;
+    try {
+      await leaveGroupMutation.mutateAsync({ groupId, userId: currentUserId });
+      handleBack();
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to leave group';
+      console.error('Leave group error:', e?.status, e?.body, e);
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
+  };
+
+  const doSoftDelete = async () => {
+    setShowDeactivateConfirm(false);
+    try {
+      await softDeleteMutation.mutateAsync(groupId);
+      handleBack();
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to deactivate';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
+  };
+
+  const doHardDelete = async () => {
+    setShowDeleteConfirm(false);
+    try {
+      await hardDeleteMutation.mutateAsync(groupId);
+      handleBack();
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to delete';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
+  };
+
+  const doRecover = async () => {
+    try {
+      await recoverMutation.mutateAsync(groupId);
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to recover';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
   };
 
   const approveReq = async (userId: string) => {
@@ -110,108 +168,251 @@ export default function GroupDetailScreen() {
     }
   };
 
-  const removeMember = (userId: string) => {
-    if (userId === ME_ID || userId === superAdminId) return;
-    // TODO: Call API to remove member
-    console.log('Remove member', userId);
+  const removeMember = async (userId: string) => {
+    if (userId === currentUserId || userId === superAdminId) return;
     setMemberMenu(null);
+    try {
+      await removeMemberMutation.mutateAsync(userId);
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to remove member';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
   };
 
-  const toggleAdmin = (userId: string) => {
-    if (userId === superAdminId) return;
-    // TODO: Call API to toggle admin
-    console.log('Toggle admin', userId);
+  const toggleAdmin = async (userId: string) => {
+    if (userId === superAdminId || !group) return;
     setMemberMenu(null);
+    const isCurrentlyAdmin = (group.adminIds ?? []).includes(userId);
+    const newRole = isCurrentlyAdmin ? 'member' : 'admin';
+    try {
+      await setMemberRole.mutateAsync({ memberId: userId, role: newRole });
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to update admin';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
   };
 
-  const addMember = () => {
-    const n = newMember.trim().toLowerCase();
-    if (!n) return;
-    const user = users.find(u => u.handle.toLowerCase() === n || u.displayName.toLowerCase().includes(n));
-    if (!user || group.memberIds.includes(user.id)) { setNewMember(''); return; }
-    // TODO: Call API to add member
-    console.log('Add member', user.id);
-    setNewMember('');
+  const transferSuperAdmin = async (userId: string) => {
+    if (userId === superAdminId || !group) return;
+    setMemberMenu(null);
+    try {
+      await setSuperAdmin.mutateAsync(userId);
+    } catch (e: any) {
+      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to transfer ownership';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
+  };
+
+  const inviteCode = group?.inviteCode || (groupId || '').toUpperCase().slice(0, 6);
+
+  const copyInviteCode = async () => {
+    await Clipboard.setStringAsync(inviteCode).catch(() => {});
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2000);
   };
 
   return (
     <SafeAreaView style={styles.safe}>
-      <NavBar
-        title={group.name}
-        onBack={handleBack}
-        right={
-          group.adminIds.includes(ME_ID)
-            ? <TouchableOpacity onPress={() => router.push(`/group/${groupId}/settings`)} style={styles.settingsBtn}>
-                <Text style={styles.settingsBtnText}>Settings</Text>
-              </TouchableOpacity>
-            : null
-        }
-      />
+      <NavBar title={group.name} onBack={handleBack} />
 
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
         {/* Group header */}
         <View style={[styles.headerBlock, { borderBottomColor: Colors.border }]}>
           <View style={{ flexDirection: 'row', gap: 16, marginBottom: 16 }}>
-            <Image source={{ uri: group.thumbnail || defaultGroupAvatarUri(group.id) }} style={styles.groupThumb} />
-            <View style={{ flex: 1 }}>
+            <TouchableOpacity
+              onPress={() => isAdmin && setShowAvatarPicker(true)}
+              style={[
+                styles.groupThumb,
+                {
+                  backgroundColor: getGroupColor(memberColorData?.colorHex || getDefaultGroupThemeFromName(group.name)).row,
+                  borderColor: getGroupColor(memberColorData?.colorHex || getDefaultGroupThemeFromName(group.name)).cal,
+                  borderRadius: groupAvatarBorderRadius(56),
+                },
+              ]}
+              activeOpacity={isAdmin ? 0.8 : 1}
+              disabled={!isAdmin}
+            >
+              <GroupAvatar group={group} size={56} style={{ width: 56, height: 56 }} />
+            </TouchableOpacity>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <Text style={styles.groupName}>{group.name}</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDraftHex(memberColorData?.colorHex || getDefaultGroupThemeFromName(group.name));
-                    setShowColorPicker(true);
-                  }}
-                  style={styles.colorBtn}
-                >
-                  <View style={[styles.colorDot, { backgroundColor: p.dot }]} />
-                </TouchableOpacity>
+                {isAdmin ? (
+                  <View style={styles.inlineEditRow}>
+                    {editingName ? (
+                      <TextInput
+                        value={draftName}
+                        onChangeText={setDraftName}
+                        placeholder="Group name"
+                        placeholderTextColor={Colors.textMuted}
+                        style={styles.inlineNameInput}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        autoFocus
+                      />
+                    ) : (
+                      <Text style={[styles.groupName, { flex: 1 }]} numberOfLines={1}>{group.name}</Text>
+                    )}
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (!editingName) {
+                          setEditingName(true);
+                          return;
+                        }
+                        const next = draftName.trim();
+                        if (!next) return;
+                        try {
+                          await updateGroup.mutateAsync({ name: next, updatedBy: currentUserId });
+                          setEditingName(false);
+                        } catch (e) {
+                          console.error('Failed to update group name', e);
+                          if (Platform.OS === 'web') window.alert('Failed to update group name');
+                          else Alert.alert('Error', 'Failed to update group name');
+                        }
+                      }}
+                      disabled={editingName ? (!draftName.trim() || updateGroup.isPending) : false}
+                      style={[styles.inlineEditBtn, editingName && styles.inlineEditBtnSave, editingName && (!draftName.trim() || updateGroup.isPending) && { opacity: 0.6 }]}
+                      activeOpacity={0.7}
+                    >
+                      {updateGroup.isPending && editingName ? (
+                        <ActivityIndicator size="small" color={Colors.accentFg} />
+                      ) : (
+                        <Text style={styles.inlineEditBtnText}>{editingName ? 'Save' : 'Change name'}</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <Text style={styles.groupName} numberOfLines={1}>{group.name}</Text>
+                )}
               </View>
-              <Text style={styles.groupDesc}>{group.desc}</Text>
-              <Text style={styles.groupCreator}>Created by {getUser(group.createdBy).displayName}</Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <AvatarStack names={group.memberIds.map(uid => getUser(uid).displayName)} size={24} max={5} />
-              <Text style={styles.memberCount}>{group.memberIds.length} members</Text>
-            </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity onPress={() => router.push(`/group/${groupId}/invite`)} style={styles.inviteBtn}>
-                <Text style={styles.inviteBtnText}>Invite</Text>
-              </TouchableOpacity>
-              {group.adminIds.includes(ME_ID) && (
-                <TouchableOpacity onPress={() => router.push('/create-event')} style={styles.createBtn}>
-                  <Text style={styles.createBtnText}>+ Event</Text>
-                </TouchableOpacity>
+              {isAdmin ? (
+                <View style={[styles.inlineEditRow, { alignItems: 'flex-start' }]}>
+                  {editingDesc ? (
+                    <TextInput
+                      value={draftDesc}
+                      onChangeText={setDraftDesc}
+                      placeholder="Description"
+                      placeholderTextColor={Colors.textMuted}
+                      style={[styles.inlineDescInput]}
+                      multiline
+                      autoFocus
+                    />
+                  ) : (
+                    <Text style={[styles.groupDesc, { flex: 1 }]} numberOfLines={3}>{group.desc || 'No description'}</Text>
+                  )}
+                  <TouchableOpacity
+                    onPress={async () => {
+                      if (!editingDesc) {
+                        setEditingDesc(true);
+                        return;
+                      }
+                      try {
+                        await updateGroup.mutateAsync({ desc: draftDesc.trim(), updatedBy: currentUserId });
+                        setEditingDesc(false);
+                      } catch (e) {
+                        console.error('Failed to update group description', e);
+                        if (Platform.OS === 'web') window.alert('Failed to update group description');
+                        else Alert.alert('Error', 'Failed to update group description');
+                      }
+                    }}
+                    disabled={editingDesc && updateGroup.isPending}
+                    style={[styles.inlineEditBtn, styles.inlineEditBtnDesc, editingDesc && styles.inlineEditBtnSave, editingDesc && updateGroup.isPending && { opacity: 0.6 }]}
+                    activeOpacity={0.7}
+                  >
+                    {updateGroup.isPending && editingDesc ? (
+                      <ActivityIndicator size="small" color={Colors.accentFg} />
+                    ) : (
+                      <Text style={styles.inlineEditBtnText}>{editingDesc ? 'Save' : 'Change description'}</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text style={styles.groupDesc}>{group.desc}</Text>
               )}
             </View>
           </View>
-        </View>
-
-        {/* Tabs */}
-        <View style={styles.tabs}>
-          {(['events', 'members'] as const).map(t => (
-            <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </Text>
-                {t === 'members' && hasPendingApprovals && <View style={styles.tabDot} />}
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={{ padding: 16, paddingBottom: 100 }}>
-          {tab === 'events' && (
-            groupEvents.length === 0
-              ? <View style={{ alignItems: 'center', paddingTop: 60 }}>
-                  <Text style={{ fontSize: 14, color: Colors.textMuted }}>No events yet</Text>
+          {(!isPending && inviteCode) || (isAdmin || isSuperAdmin) ? (
+            <View style={styles.inviteSection}>
+              {(isAdmin || isSuperAdmin) && (
+                <View style={[styles.inviteRow, styles.inviteToggleRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Toggle
+                      value={!group.isPublic}
+                      style={{ borderBottomWidth: 1 }}
+                      onChange={async (v) => {
+                        if (updateGroup.isPending) return;
+                        try {
+                          await updateGroup.mutateAsync({ isPublic: !v, updatedBy: currentUserId ?? '' });
+                        } catch (e) {
+                          console.error('Failed to update visibility', e);
+                          if (Platform.OS === 'web') window.alert('Failed to update visibility');
+                          else Alert.alert('Error', 'Failed to update visibility');
+                        }
+                      }}
+                      label="Private group (invite only)"
+                    />
+                  </View>
                 </View>
-              : <ListView events={groupEvents} groups={[group]} onSelect={ev => router.push(`/event/${ev.id}`)} showGroup={false} />
-          )}
+              )}
+              {!isPending && inviteCode && (
+                <View style={[styles.inviteRow, (isAdmin || isSuperAdmin) && { borderTopWidth: 0, paddingVertical: 4 }]}>
+                  <Text style={styles.inviteLabel}>Invite code</Text>
+                  <View style={styles.inviteValueRow}>
+                    <Text style={styles.inviteValue}>{inviteCode}</Text>
+                    <TouchableOpacity
+                      onPress={copyInviteCode}
+                      style={styles.copyIconBtn}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <View style={styles.copyIconWrap}>
+                        {inviteCopied ? (
+                          <Text style={[styles.copyIconText, { color: Colors.going }]}>✓</Text>
+                        ) : (
+                          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={Colors.textMuted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                            <Rect x="9" y="9" width="13" height="13" rx="2" />
+                            <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </Svg>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          ) : null}
+        </View>
 
-          {tab === 'members' && group.adminIds.includes(ME_ID) && (
+        {isPending ? (
+          <View style={{ padding: 16, paddingBottom: 100 }}>
+            <View style={[styles.card, { borderColor: '#FDE68A', backgroundColor: '#FFFBEB', padding: 24, alignItems: 'center' }]}>
+              <Text style={{ fontSize: 18, marginBottom: 8 }}>⏳</Text>
+              <Text style={{ fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 8 }}>
+                Request pending
+              </Text>
+              <Text style={{ fontSize: 14, color: Colors.textSub, textAlign: 'center', marginBottom: 16 }}>
+                Your request to join {group.name} is pending approval. You'll see events and members once an admin approves.
+              </Text>
+              <TouchableOpacity onPress={() => setShowLeave(true)}>
+                <Text style={{ fontSize: 14, color: Colors.textSub, textDecorationLine: 'underline' }}>Cancel request</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ height: 16 }} />
+            <Text style={styles.sectionLabel}>LEAVE</Text>
+            <View style={[styles.card, { borderColor: '#FECACA' }]}>
+              <TouchableOpacity onPress={() => setShowLeave(true)} style={styles.memberRow} activeOpacity={0.8}>
+                <Text style={{ fontSize: 18 }}>🚪</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.leaveTitle}>Cancel Request</Text>
+                  <Text style={styles.leaveDesc}>Withdraw your request to join this group</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+        <View style={{ padding: 16, paddingBottom: 100 }}>
+          {isAdmin && (
             <>
               {/* Pending requests */}
               {pendingRequestUsers.length > 0 && (
@@ -223,7 +424,7 @@ export default function GroupDetailScreen() {
                         <Avatar name={user.displayName} size={38} />
                         <View style={{ flex: 1 }}>
                           <Text style={styles.memberName}>{user.displayName}</Text>
-                          <Text style={styles.memberHandle}>@{user.handle} · wants to join</Text>
+                          <Text style={styles.memberHandle}>{user.name} · wants to join</Text>
                         </View>
                         <View style={{ flexDirection: 'row', gap: 6 }}>
                           <TouchableOpacity onPress={() => approveReq(user.id)} style={styles.approveBtn}>
@@ -240,12 +441,12 @@ export default function GroupDetailScreen() {
               )}
 
               {/* Members */}
-              <Text style={styles.sectionLabel}>MEMBERS · {group.memberIds.length}</Text>
+              <Text style={styles.sectionLabel}>MEMBERS · {(group.memberIds ?? []).length}</Text>
               <View style={[styles.card, { marginBottom: 16 }]}>
-                {group.memberIds.map((memberId, i) => {
+                {(group.memberIds ?? []).map((memberId, i) => {
                   const isAdmin     = admins.includes(memberId);
                   const isSuperAdmin= memberId === superAdminId;
-                  const isMe        = memberId === ME_ID;
+                  const isMe        = memberId === currentUserId;
                   const canAction   = !isMe && !isSuperAdmin;
                   const displayName = getUser(memberId).displayName;
 
@@ -253,7 +454,7 @@ export default function GroupDetailScreen() {
                     <TouchableOpacity
                       key={memberId}
                       onPress={() => canAction && setMemberMenu({ userId: memberId })}
-                      style={[styles.memberRow, i < group.memberIds.length - 1 && styles.rowBorder]}
+                      style={[styles.memberRow, i < (group.memberIds ?? []).length - 1 && styles.rowBorder]}
                       activeOpacity={canAction ? 0.7 : 1}
                     >
                       <Avatar name={displayName} size={38} />
@@ -277,28 +478,6 @@ export default function GroupDetailScreen() {
                 })}
               </View>
 
-              {/* Add member */}
-              <Text style={styles.sectionLabel}>ADD MEMBER</Text>
-              <View style={[styles.card, { padding: 14 }]}>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <TextInput
-                    value={newMember}
-                    onChangeText={setNewMember}
-                    onSubmitEditing={addMember}
-                    placeholder="@handle or username"
-                    placeholderTextColor={Colors.textMuted}
-                    style={styles.addInput}
-                  />
-                  <TouchableOpacity
-                    onPress={addMember}
-                    style={[styles.addBtn, !newMember.trim() && { backgroundColor: Colors.border }]}
-                    disabled={!newMember.trim()}
-                  >
-                    <Text style={[styles.addBtnText, !newMember.trim() && { color: Colors.textMuted }]}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
               {/* Context menu */}
               {memberMenu && (
                 <Modal visible transparent animationType="fade" onRequestClose={() => setMemberMenu(null)}>
@@ -307,6 +486,12 @@ export default function GroupDetailScreen() {
                       <View style={styles.menuHeader}>
                         <Text style={styles.menuHeaderText} numberOfLines={1}>{getUser(memberMenu.userId).displayName}</Text>
                       </View>
+                      {isSuperAdmin && (
+                        <TouchableOpacity onPress={() => transferSuperAdmin(memberMenu.userId)} style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}>
+                          <Text style={{ fontSize: 16 }}>👑</Text>
+                          <Text style={styles.menuItemText}>Transfer super admin</Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity onPress={() => toggleAdmin(memberMenu.userId)} style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}>
                         <Text style={{ fontSize: 16 }}>{admins.includes(memberMenu.userId) ? '👤' : '⭐'}</Text>
                         <Text style={styles.menuItemText}>{admins.includes(memberMenu.userId) ? 'Remove admin' : 'Make admin'}</Text>
@@ -322,14 +507,14 @@ export default function GroupDetailScreen() {
             </>
           )}
 
-          {tab === 'members' && !group.adminIds.includes(ME_ID) && (
+          {!isAdmin && (
             <View style={styles.card}>
-              {group.memberIds.map((memberId, i) => {
+              {(group.memberIds ?? []).map((memberId, i) => {
                 const isSuperAdmin = memberId === superAdminId;
                 const isAdmin = admins.includes(memberId);
                 const displayName = getUser(memberId).displayName;
                 return (
-                  <View key={i} style={[styles.memberRow, i < group.memberIds.length - 1 && styles.rowBorder]}>
+                  <View key={i} style={[styles.memberRow, i < (group.memberIds ?? []).length - 1 && styles.rowBorder]}>
                     <Avatar name={displayName} size={38} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.memberName}>{displayName}</Text>
@@ -342,35 +527,92 @@ export default function GroupDetailScreen() {
             </View>
           )}
 
-          {tab === 'members' && (
-            <>
-              <View style={{ height: 16 }} />
-              <Text style={styles.sectionLabel}>LEAVE</Text>
+          <>
+            <View style={{ height: 16 }} />
+              <Text style={styles.sectionLabel}>DANGER ZONE</Text>
               <View style={[styles.card, { borderColor: '#FECACA' }]}>
-                <TouchableOpacity onPress={() => setShowLeave(true)} style={styles.memberRow} activeOpacity={0.8}>
-                  <Text style={{ fontSize: 18 }}>🚪</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.leaveTitle}>Leave Group</Text>
-                    <Text style={styles.leaveDesc}>You'll need an invite to rejoin</Text>
-                  </View>
-                </TouchableOpacity>
+                {isSuperAdmin ? (
+                  <>
+                    {isSoftDeleted ? (
+                      <TouchableOpacity onPress={doRecover} style={styles.memberRow} activeOpacity={0.8} disabled={recoverMutation.isPending}>
+                        <Text style={{ fontSize: 18 }}>↩</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.leaveTitle}>Recover Group</Text>
+                          <Text style={styles.leaveDesc}>Restore this deactivated group</Text>
+                        </View>
+                        {recoverMutation.isPending && <ActivityIndicator size="small" color={Colors.text} />}
+                      </TouchableOpacity>
+                    ) : (
+                      <>
+                        <TouchableOpacity onPress={() => setShowDeactivateConfirm(true)} style={[styles.memberRow, styles.rowBorder]} activeOpacity={0.8} disabled={softDeleteMutation.isPending}>
+                          <View style={styles.dangerIconWrap}><Text style={{ fontSize: 18 }}>⏸</Text></View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.leaveTitle, { color: '#B45309' }]}>Deactivate Group</Text>
+                            <Text style={styles.leaveDesc}>Temporarily deactivate the group - you can recover it later</Text>
+                          </View>
+                          {softDeleteMutation.isPending && <ActivityIndicator size="small" color={Colors.text} />}
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setShowDeleteConfirm(true)} style={styles.memberRow} activeOpacity={0.8} disabled={hardDeleteMutation.isPending}>
+                          <View style={styles.dangerIconWrap}><Text style={{ fontSize: 18 }}>🗑</Text></View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.leaveTitle}>Delete Group</Text>
+                            <Text style={styles.leaveDesc}>Permanently remove the group and all members</Text>
+                          </View>
+                          {hardDeleteMutation.isPending && <ActivityIndicator size="small" color={Colors.text} />}
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <TouchableOpacity onPress={() => setShowLeave(true)} style={styles.memberRow} activeOpacity={0.8}>
+                    <Text style={{ fontSize: 18 }}>🚪</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.leaveTitle}>Leave Group</Text>
+                      <Text style={styles.leaveDesc}>You'll need an invite to rejoin</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
               </View>
-            </>
-          )}
+          </>
         </View>
+        )}
       </ScrollView>
+
+      <GroupAvatarPicker
+        visible={showAvatarPicker}
+        onClose={() => setShowAvatarPicker(false)}
+        seed={avatarSeedDraft}
+        onSeedChange={setAvatarSeedDraft}
+        thumbnail={avatarThumbnailDraft}
+        onThumbnailChange={setAvatarThumbnailDraft}
+        onSave={async (avatarSeed, thumbnail) => {
+          try {
+            await updateGroup.mutateAsync({
+              avatarSeed: avatarSeed.trim() || null,
+              thumbnail: thumbnail ?? null,
+              updatedBy: currentUserId ?? '',
+            });
+          } catch (e) {
+            console.error('Failed to update avatar', e);
+            if (Platform.OS === 'web') window.alert('Failed to update avatar');
+            else Alert.alert('Error', 'Failed to update avatar');
+            throw e;
+          }
+        }}
+        isSaving={updateGroup.isPending}
+      />
 
       {/* Leave confirm */}
       {showLeave && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowLeave(false)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowLeave(false)} activeOpacity={1}>
             <View style={styles.confirmCard}>
-              <Text style={styles.confirmTitle}>Leave {group.name}?</Text>
+              <Text style={styles.confirmTitle}>
+                {isPending ? `Cancel request to join ${group.name}?` : `Leave ${group.name}?`}
+              </Text>
               <Text style={styles.confirmBody}>
-                {superAdminId === ME_ID
-                  ? admins.filter(a => a !== ME_ID).length > 0
-                    ? "You're the Super Admin. The next admin will take over."
-                    : "You're the only admin. Leaving will dissolve this group."
+                {isPending
+                  ? "You'll need an invite to request again."
                   : "You'll need an invite to rejoin."
                 }
               </Text>
@@ -379,7 +621,7 @@ export default function GroupDetailScreen() {
                   <Text style={{ fontFamily: Fonts.semiBold, color: Colors.text }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => { setShowLeave(false); leaveGroup(); }} style={[styles.confirmBtn, { backgroundColor: Colors.notGoing, borderColor: Colors.notGoing }]}>
-                  <Text style={{ fontFamily: Fonts.bold, color: '#fff' }}>Leave</Text>
+                  <Text style={{ fontFamily: Fonts.bold, color: '#fff' }}>{isPending ? 'Cancel Request' : 'Leave'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -387,43 +629,46 @@ export default function GroupDetailScreen() {
         </Modal>
       )}
 
-      {/* Color picker */}
-      {showColorPicker && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowColorPicker(false)}>
-          <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowColorPicker(false)} activeOpacity={1}>
-            <TouchableOpacity style={styles.colorPickerCard} activeOpacity={1} onPress={() => {}}>
-              <Text style={styles.colorPickerTitle}>Choose your color for</Text>
-              <Text style={styles.colorPickerGroupName}>{group.name}</Text>
-              <ColorPicker
-                style={{ width: '100%' }}
-                value={draftHex || userColorHex}
-                onComplete={({ hex }) => {
-                  setDraftHex(hex);
-                }}
-              >
-                <Panel1 />
-                <HueSlider />
-                <OpacitySlider />
-              </ColorPicker>
-              <Text style={styles.hexReadout}>
-                {(draftHex || userColorHex).toUpperCase()}
+      {/* Deactivate confirm (superadmin) */}
+      {showDeactivateConfirm && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeactivateConfirm(false)}>
+          <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowDeactivateConfirm(false)} activeOpacity={1}>
+            <View style={styles.confirmCard}>
+              <Text style={styles.confirmTitle}>Deactivate {group.name}?</Text>
+              <Text style={styles.confirmBody}>
+                You can recover this group at any time.
               </Text>
-              <TouchableOpacity
-                style={[
-                  styles.colorApplyBtn,
-                  { backgroundColor: Colors.accent, marginTop: 16, opacity: draftHex ? 1 : 0.6 },
-                ]}
-                onPress={() => {
-                  if (draftHex) {
-                    selectColor(draftHex);
-                  }
-                }}
-                activeOpacity={0.8}
-                disabled={!draftHex}
-              >
-                <Text style={styles.colorApplyBtnText}>Save color</Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity onPress={() => setShowDeactivateConfirm(false)} style={[styles.confirmBtn, { borderColor: Colors.border, backgroundColor: Colors.surface }]}>
+                  <Text style={{ fontFamily: Fonts.semiBold, color: Colors.text }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={doSoftDelete} style={[styles.confirmBtn, { backgroundColor: '#F59E0B', borderColor: '#F59E0B' }]} disabled={softDeleteMutation.isPending}>
+                  <Text style={{ fontFamily: Fonts.bold, color: '#fff' }}>Deactivate</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
+      {/* Delete confirm (superadmin) */}
+      {showDeleteConfirm && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
+          <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowDeleteConfirm(false)} activeOpacity={1}>
+            <View style={styles.confirmCard}>
+              <Text style={styles.confirmTitle}>Delete {group.name}?</Text>
+              <Text style={styles.confirmBody}>
+                This will permanently remove the group. This cannot be undone.
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity onPress={() => setShowDeleteConfirm(false)} style={[styles.confirmBtn, { borderColor: Colors.border, backgroundColor: Colors.surface }]}>
+                  <Text style={{ fontFamily: Fonts.semiBold, color: Colors.text }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={doHardDelete} style={[styles.confirmBtn, { backgroundColor: Colors.notGoing, borderColor: Colors.notGoing }]} disabled={hardDeleteMutation.isPending}>
+                  <Text style={{ fontFamily: Fonts.bold, color: '#fff' }}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </TouchableOpacity>
         </Modal>
       )}
@@ -434,24 +679,26 @@ export default function GroupDetailScreen() {
 
 const styles = StyleSheet.create({
   safe:             { flex: 1, backgroundColor: Colors.bg },
-  settingsBtn:      { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.md, backgroundColor: Colors.accent },
-  settingsBtnText:  { fontSize: 14, color: Colors.accentFg, fontFamily: Fonts.semiBold },
   headerBlock:      { backgroundColor: Colors.surface, padding: 20, borderBottomWidth: 1 },
-  groupThumb:       { width: 56, height: 56, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg },
+  inlineEditRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  inlineNameInput:  { flex: 1, minWidth: 0, paddingVertical: 0, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: 'transparent', fontSize: 19, fontFamily: Fonts.extraBold, color: Colors.text, ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null) },
+  inlineDescInput:  { flex: 1, minWidth: 0, paddingVertical: 4, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: 'transparent', fontSize: 13, fontFamily: Fonts.regular, color: Colors.text, minHeight: 40, textAlignVertical: 'top', ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null) },
+  inlineEditBtn:    { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.lg, backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', flexShrink: 0 },
+  inlineEditBtnSave:{ paddingHorizontal: 10 },
+  inlineEditBtnDesc:{ alignSelf: 'flex-start' },
+  inlineEditBtnText:{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
+  groupThumb:       { width: 56, height: 56, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   groupName:        { fontSize: 19, fontFamily: Fonts.extraBold, color: Colors.text },
   groupDesc:        { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 18 },
-  groupCreator:     { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 4 },
-  memberCount:      { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
-  inviteBtn:        { paddingHorizontal: 14, paddingVertical: 7, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
-  inviteBtnText:    { fontSize: 13, fontFamily: Fonts.medium, color: Colors.text },
-  createBtn:        { paddingHorizontal: 16, paddingVertical: 7, borderRadius: Radius.lg, backgroundColor: Colors.accent },
-  createBtnText:    { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
-  tabs:             { flexDirection: 'row', backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  tab:              { flex: 1, paddingVertical: 11, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabActive:        { borderBottomColor: Colors.text },
-  tabText:          { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted },
-  tabTextActive:    { fontFamily: Fonts.bold, color: Colors.text },
-  tabDot:           { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#EF4444', marginTop: 1 },
+  inviteSection:    { marginTop: 12, paddingBottom: 8 },
+  inviteRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 0, borderTopWidth: 1, borderTopColor: Colors.border },
+  inviteToggleRow:  { paddingVertical: 4 },
+  inviteLabel:      { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, opacity: 0.65 },
+  inviteValueRow:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inviteValue:      { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, opacity: 0.65 },
+  copyIconBtn:      { padding: 4 },
+  copyIconWrap:     { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  copyIconText:     { fontSize: 16, fontFamily: Fonts.bold },
   card:             { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
   sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
   pendingCard:      { borderColor: '#FDE68A', marginBottom: 16 },
@@ -467,9 +714,6 @@ const styles = StyleSheet.create({
   approveBtnText:   { fontSize: 12, fontFamily: Fonts.semiBold, color: '#fff' },
   declineBtn:       { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
   declineBtnText:   { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
-  addInput:         { flex: 1, padding: 9, paddingHorizontal: 14, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
-  addBtn:           { paddingHorizontal: 16, paddingVertical: 9, borderRadius: Radius.lg, backgroundColor: Colors.accent },
-  addBtnText:       { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
   leaveTitle:       { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.notGoing },
   leaveDesc:        { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 1 },
   menuOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', alignItems: 'center', justifyContent: 'center', padding: 24 },
@@ -482,20 +726,5 @@ const styles = StyleSheet.create({
   confirmTitle:     { fontSize: 17, fontFamily: Fonts.extraBold, color: Colors.text, marginBottom: 8 },
   confirmBody:      { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 22, marginBottom: 20 },
   confirmBtn:       { flex: 1, paddingVertical: 10, borderRadius: Radius.lg, borderWidth: 1, alignItems: 'center' },
-  colorBtn:         { padding: 4, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg },
-  colorDot:         { width: 16, height: 16, borderRadius: 8 },
-  colorPickerCard:  { backgroundColor: Colors.surface, borderRadius: 20, padding: 20, width: '100%', maxWidth: 320, ...Shadows.lg },
-  colorPickerTitle: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textSub, marginBottom: 4 },
-  colorPickerGroupName: { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text, marginBottom: 8 },
-  colorPickerDesc:  { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 18, marginBottom: 12 },
-  colorPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
-  colorOptionLarge: { width: 48, height: 48, borderRadius: 24 },
-  colorHexInput:    { flex: 1, padding: 10, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
-  colorPickerHueLabel: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 8 },
-  colorGrid:        { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginBottom: 16 },
-  colorOption:      { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: 'transparent' },
-  colorOptionSelected: { borderColor: Colors.text, transform: [{ scale: 1.1 }] },
-  colorApplyBtn:    { paddingVertical: 12, borderRadius: Radius.lg, alignItems: 'center' },
-  colorApplyBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: '#fff' },
-  hexReadout:       { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text, textAlign: 'center', marginTop: 12 },
+  dangerIconWrap:   { width: 28, alignItems: 'center', justifyContent: 'center' },
 });

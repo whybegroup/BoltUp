@@ -1,24 +1,23 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, Image, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, Image, Alert, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
 import { Colors, Fonts, Radius } from '../../../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../../../utils/helpers';
 import { useEvent, useGroups, useUpdateEvent, useAllGroupMemberColors } from '../../../hooks/api';
 import { NavBar, Field, Toggle } from '../../../components/ui';
-
-const ME_ID = 'u1';
+import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 
 export default function EditEventScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { userId: currentUserId } = useCurrentUserContext();
   
   const eventId = Array.isArray(id) ? id[0] : id;
 
-  const { data: existingEvent, isLoading: eventLoading } = useEvent(eventId || '');
-  const { data: groups = [], isLoading: groupsLoading } = useGroups();
-  const { data: groupColors = {} } = useAllGroupMemberColors(ME_ID);
+  const { data: existingEvent, isLoading: eventLoading } = useEvent(eventId || '', currentUserId ?? '');
+  const { data: groups = [], isLoading: groupsLoading } = useGroups(currentUserId ?? '');
+  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId);
   const updateEventMutation = useUpdateEvent(eventId || '');
 
   // Format date and times from existing event
@@ -106,8 +105,8 @@ export default function EditEventScreen() {
         location: form.location.trim() || undefined,
         minAttendees: form.minAttendees.trim() ? parseInt(form.minAttendees, 10) : undefined,
         deadline,
+        updatedBy: currentUserId,
         allowMaybe: form.allowMaybe,
-        updatedBy: ME_ID,
       });
       
       router.push(`/event/${eventId}`);
@@ -117,24 +116,19 @@ export default function EditEventScreen() {
     }
   };
 
-  const pickPhotos = async () => {
-    const r = await ImagePicker.launchImageLibraryAsync({ 
-      allowsMultipleSelection: true, 
-      mediaTypes: ImagePicker.MediaTypeOptions.Images, 
-      quality: 0.8,
-      base64: true,
-    });
-    
-    if (!r.canceled) {
-      const uris = r.assets.map(asset => {
-        // On web, convert to base64 data URI for persistence
-        if (asset.base64 && asset.uri.startsWith('blob:')) {
-          return `data:image/jpeg;base64,${asset.base64}`;
-        }
-        return asset.uri;
-      });
-      set('coverPhotos', [...form.coverPhotos, ...uris]);
+  const [showCoverPhotoModal, setShowCoverPhotoModal] = useState(false);
+  const [coverPhotoUrl, setCoverPhotoUrl] = useState('');
+
+  const handleAddCoverPhoto = () => {
+    const url = coverPhotoUrl.trim();
+    if (!url) return;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      Alert.alert('Invalid URL', 'Please enter a valid image URL (e.g. https://example.com/image.jpg)');
+      return;
     }
+    set('coverPhotos', [...form.coverPhotos, url]);
+    setCoverPhotoUrl('');
+    setShowCoverPhotoModal(false);
   };
 
   const handleBack = () => {
@@ -158,7 +152,7 @@ export default function EditEventScreen() {
 
         <Field label="Group" required>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {groups.map(g => {
+            {groups.filter((g) => g.membershipStatus === 'admin').map((g) => {
               const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
               const p = getGroupColor(userColorHex);
               const sel = form.groupId === g.id;
@@ -223,11 +217,40 @@ export default function EditEventScreen() {
               placeholderTextColor={Colors.textMuted}
               multiline numberOfLines={5} style={styles.descInput} />
             <View style={styles.descToolbar}>
-              <TouchableOpacity onPress={pickPhotos} style={styles.photoBtn}>
+              <TouchableOpacity onPress={() => setShowCoverPhotoModal(true)} style={styles.photoBtn}>
                 <Text style={{ fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium }}>📷 Add photo</Text>
               </TouchableOpacity>
               <Text style={{ fontSize: 11, color: Colors.textMuted }}>{form.description.length}/500</Text>
             </View>
+
+        {showCoverPhotoModal && (
+          <Modal visible transparent animationType="fade" onRequestClose={() => setShowCoverPhotoModal(false)}>
+            <View style={styles.urlModalOverlay}>
+              <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowCoverPhotoModal(false)} activeOpacity={1} />
+              <View style={styles.urlModalCard}>
+                <Text style={styles.urlModalTitle}>Add image from URL</Text>
+                <TextInput
+                  value={coverPhotoUrl}
+                  onChangeText={setCoverPhotoUrl}
+                  placeholder="https://example.com/image.jpg"
+                  placeholderTextColor={Colors.textMuted}
+                  style={styles.photoUrlInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoFocus
+                />
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <TouchableOpacity onPress={() => setShowCoverPhotoModal(false)} style={styles.secondaryBtn} activeOpacity={0.8}>
+                    <Text style={styles.secondaryBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={handleAddCoverPhoto} style={[styles.secondaryBtn, { borderColor: Colors.accent, backgroundColor: Colors.accent }]} activeOpacity={0.8}>
+                    <Text style={[styles.secondaryBtnText, { color: Colors.accentFg }]}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        )}
           </View>
         </Field>
 
@@ -257,7 +280,13 @@ const styles = StyleSheet.create({
   descBox:       { backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1.5, borderColor: Colors.border, overflow: 'hidden' },
   descInput:     { padding: 12, paddingHorizontal: 14, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, minHeight: 100, textAlignVertical: 'top' },
   descToolbar:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 8, paddingHorizontal: 12, borderTopWidth: 1, borderTopColor: Colors.border },
+  photoUrlInput: { paddingHorizontal: 10, paddingVertical: 10, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
   photoBtn:      { paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg },
+  urlModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  urlModalCard:    { backgroundColor: Colors.surface, borderRadius: 18, borderWidth: 1, borderColor: Colors.border, padding: 16, width: '100%', maxWidth: 360 },
+  urlModalTitle:   { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 12 },
+  secondaryBtn:    { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
+  secondaryBtnText:{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.text },
   removeThumb:   { position: 'absolute', top: -5, right: -5, width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.text, borderWidth: 2, borderColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
   submitBtn:     { padding: 13, borderRadius: Radius.lg, backgroundColor: Colors.accent, alignItems: 'center', marginTop: 8 },
   submitBtnText: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.accentFg },

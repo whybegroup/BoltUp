@@ -26,30 +26,31 @@ import { ListView } from '../../components/ListView';
 import { CalendarView } from '../../components/CalendarView';
 import { Pill } from '../../components/ui';
 import Svg, { Path } from 'react-native-svg';
-import { useEvents, useGroups, useNotifications, useUser, useAllGroupMemberColors, useUpdateNotification, useMarkAllNotificationsRead } from '../../hooks/api';
+import { useEvents, useGroups, useNotifications, useAllGroupMemberColors, useUpdateNotification, useMarkAllNotificationsRead } from '../../hooks/api';
 import { queryKeys } from '../../config/queryClient';
-
-const ME_ID = 'u1';
+import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 
 export default function FeedScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { userId: currentUserId, user: me } = useCurrentUserContext();
   
-  const { data: events = [], isLoading: eventsLoading } = useEvents();
-  const { data: groups = [], isLoading: groupsLoading } = useGroups();
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(ME_ID);
-  const { data: me = null, isLoading: meLoading } = useUser(ME_ID);
-  const { data: groupColors = {}, isLoading: colorsLoading } = useAllGroupMemberColors(ME_ID);
+  const { data: events = [], isLoading: eventsLoading } = useEvents({ userId: currentUserId ?? '', groupId: undefined });
+  const { data: allGroups = [], isLoading: groupsLoading } = useGroups(currentUserId ?? '');
+  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
+  const { data: groupColors = {}, isLoading: colorsLoading } = useAllGroupMemberColors(currentUserId || '');
   const updateNotification = useUpdateNotification();
   const markAllAsRead = useMarkAllNotificationsRead();
   
-  const loading = eventsLoading || groupsLoading || notifsLoading || meLoading || colorsLoading;
+  const groups = allGroups.filter(g => g.membershipStatus === 'member' || g.membershipStatus === 'admin');
+  
+  const loading = eventsLoading || groupsLoading || notifsLoading || colorsLoading;
   
   // Manual polling for notifications every 5 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       console.log('[Feed] Invalidating notifications at', new Date().toLocaleTimeString());
-      queryClient.invalidateQueries({ queryKey: queryKeys.notifications.user(ME_ID) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications.user(currentUserId) });
     }, 5000);
     
     return () => clearInterval(interval);
@@ -168,6 +169,7 @@ export default function FeedScreen() {
           : null; // allTime → no upper bound
 
     return events.filter(ev => {
+      if (!groups.some(g => g.id === ev.groupId)) return false;
       if (selectedGroupIds.length > 0 && !selectedGroupIds.includes(ev.groupId)) return false;
 
       const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
@@ -176,12 +178,12 @@ export default function FeedScreen() {
       if (endBound && t >= endBound.getTime()) return false;
 
       const rsvps = ev.rsvps || [];
-      const myGoing    = !!rsvps.find(r => r.userId === ME_ID && r.status === 'going');
-      const myNotGoing = !!rsvps.find(r => r.userId === ME_ID && r.status === 'notGoing');
-      const myAnyRsvp  = !!rsvps.find(r => r.userId === ME_ID);
+      const myGoing    = !!rsvps.find(r => r.userId === currentUserId && r.status === 'going');
+      const myNotGoing = !!rsvps.find(r => r.userId === currentUserId && r.status === 'notGoing');
+      const myAnyRsvp  = !!rsvps.find(r => r.userId === currentUserId);
 
       if (filterRsvp.length) {
-        const myMaybe = !!rsvps.find(r => r.userId === ME_ID && r.status === 'maybe');
+        const myMaybe = !!rsvps.find(r => r.userId === currentUserId && r.status === 'maybe');
         const matchesRsvp =
           (filterRsvp.includes('going')    && myGoing) ||
           (filterRsvp.includes('maybe')    && myMaybe) ||
@@ -193,7 +195,7 @@ export default function FeedScreen() {
       if (filterNeeds && !(ev.minAttendees && rsvps.filter(r => r.status === 'going').length < ev.minAttendees)) return false;
       return true;
     });
-  }, [selectedGroupIds, filterRsvp, filterNeeds, startDateText, endDateText, startMode, endMode, events]);
+  }, [groups, selectedGroupIds, filterRsvp, filterNeeds, startDateText, endDateText, startMode, endMode, events]);
 
   const hasFilters = !!(selectedGroupIds.length || filterRsvp.length || filterNeeds);
 
@@ -203,56 +205,49 @@ export default function FeedScreen() {
     <SafeAreaView style={styles.safe}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerTop}>
-          {/* User */}
-          <View style={styles.userRow}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{me?.name?.charAt(0) || '?'}</Text>
-            </View>
-            <View>
-              <Text style={styles.userName}>{me?.name || 'User'}</Text>
-              <Text style={styles.userHandle}>@{me?.handle || ''}</Text>
-            </View>
+        {/* Title */}
+        <Text style={styles.pageTitle}>My Events</Text>
+
+        {/* Actions */}
+        <View style={styles.actions}>
+          {/* View toggle */}
+          <View style={styles.viewToggle}>
+            {([['list','☰'],['calendar','📅']] as const).map(([v, icon]) => (
+              <TouchableOpacity
+                key={v}
+                style={[styles.viewBtn, viewMode === v && styles.viewBtnActive]}
+                onPress={() => setViewMode(v)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 13, color: viewMode === v ? Colors.text : Colors.textMuted }}>{icon}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Actions */}
-          <View style={styles.actions}>
-            {/* View toggle */}
-            <View style={styles.viewToggle}>
-              {([['list','☰'],['calendar','📅']] as const).map(([v, icon]) => (
-                <TouchableOpacity
-                  key={v}
-                  style={[styles.viewBtn, viewMode === v && styles.viewBtnActive]}
-                  onPress={() => setViewMode(v)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ fontSize: 13, color: viewMode === v ? Colors.text : Colors.textMuted }}>{icon}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+          {/* Create */}
+          <TouchableOpacity
+            onPress={() => router.push('/create-event')}
+            style={styles.createBtn}
+          >
+            <Text style={styles.createBtnText}>+ Event</Text>
+          </TouchableOpacity>
 
-            {/* Create */}
-            <TouchableOpacity
-              onPress={() => router.push('/create-event')}
-              style={styles.createBtn}
-            >
-              <Text style={styles.createBtnText}>+ Event</Text>
-            </TouchableOpacity>
-
-            {/* Bell */}
-            <TouchableOpacity
-              onPress={() => setShowNotifs(p => !p)}
-              style={[styles.iconBtn, showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg }]}
-            >
-              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-                <Path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-              </Svg>
-              {unread > 0 && <View style={styles.bellDot} />}
-            </TouchableOpacity>
-          </View>
+          {/* Bell */}
+          <TouchableOpacity
+            onPress={() => setShowNotifs(p => !p)}
+            style={[styles.iconBtn, showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg }]}
+          >
+            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <Path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </Svg>
+            {unread > 0 && <View style={styles.bellDot} />}
+          </TouchableOpacity>
         </View>
+      </View>
 
+      {/* Filters container */}
+      <View style={styles.filtersContainer}>
         {/* Group filter pills */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsRow} contentContainerStyle={{ gap: 6, paddingRight: 20 }}>
           <Pill
@@ -290,13 +285,13 @@ export default function FeedScreen() {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingBottom: 10 }}
+            contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingVertical: 8 }}
           >
             <TouchableOpacity
               onPress={() => setShowAdvancedFilters(p => !p)}
-              style={[styles.iconBtn, showAdvancedFilters && { borderColor: Colors.text, backgroundColor: Colors.text }]}
+              style={[styles.filterIconBtn, showAdvancedFilters && { borderColor: Colors.text, backgroundColor: Colors.text }]}
             >
-              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={showAdvancedFilters ? Colors.surface : Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={showAdvancedFilters ? Colors.surface : Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>
               </Svg>
             </TouchableOpacity>
@@ -557,9 +552,20 @@ export default function FeedScreen() {
       {/* Feed */}
       <View style={styles.feedContent}>
         {filtered.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={{ fontSize: 32, marginBottom: 10 }}>📭</Text>
-            <Text style={styles.emptyText}>No events</Text>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>📭</Text>
+            <Text style={styles.emptyTitle}>No events</Text>
+            <Text style={styles.emptyDesc}>
+              {hasFilters ? 'Try adjusting your filters' : 'Create an event to get started'}
+            </Text>
+            {!hasFilters && (
+              <TouchableOpacity 
+                onPress={() => router.push('/create-event')} 
+                style={styles.emptyBtn}
+              >
+                <Text style={styles.emptyBtnText}>Create Event</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : viewMode === 'list' ? (
           <ListView
@@ -641,7 +647,7 @@ export default function FeedScreen() {
               <Text style={styles.notifTitle}>Notifications</Text>
               {unread > 0 && (
                 <TouchableOpacity onPress={() => {
-                  markAllAsRead.mutate(ME_ID);
+                  markAllAsRead.mutate(currentUserId);
                 }}>
                   <Text style={styles.notifMarkAll}>Mark all read</Text>
                 </TouchableOpacity>
@@ -693,13 +699,9 @@ export default function FeedScreen() {
 
 const styles = StyleSheet.create({
   safe:        { flex: 1, backgroundColor: Colors.bg },
-  header:      { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border, position: 'relative', zIndex: 100 },
-  headerTop:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 },
-  userRow:     { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  avatar:      { width: 34, height: 34, borderRadius: 17, backgroundColor: '#74A8E0', alignItems: 'center', justifyContent: 'center' },
-  avatarText:  { color: '#fff', fontSize: 14, fontFamily: Fonts.bold },
-  userName:    { fontSize: 15, fontFamily: Fonts.bold, color: Colors.text },
-  userHandle:  { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular },
+  header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  pageTitle:   { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text },
+  filtersContainer: { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
   actions:     { flexDirection: 'row', alignItems: 'center', gap: 8 },
   viewToggle:  { flexDirection: 'row', backgroundColor: Colors.bg, borderRadius: 10, borderWidth: 1, borderColor: Colors.border, padding: 3, gap: 2 },
   viewBtn:     { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
@@ -709,8 +711,9 @@ const styles = StyleSheet.create({
   createBtn:   { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 10, backgroundColor: Colors.accent },
   createBtnText:{ fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
   bellDot:     { position: 'absolute', top: 1, right: 1, width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.notGoing, borderWidth: 2, borderColor: Colors.surface },
-  pillsRow:    { paddingLeft: 20, paddingBottom: 12 },
+  pillsRow:    { flexGrow: 0, paddingLeft: 20, paddingVertical: 8 },
   feedContent:   { flex: 1, paddingHorizontal: 16, paddingTop: 8, zIndex: 0 },
+  filterIconBtn:{ width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
   dateFilterBetween: {
     paddingVertical: 8,
     paddingHorizontal: 12,
@@ -974,6 +977,10 @@ const styles = StyleSheet.create({
   notifRow:    { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 12 },
   notifIcon:   { width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   unreadDot:   { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.notGoing },
-  empty:       { alignItems: 'center', paddingTop: 80 },
-  emptyText:   { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text },
+  emptyState:  { alignItems: 'center', paddingTop: 80, paddingHorizontal: 40 },
+  emptyIcon:   { fontSize: 64, marginBottom: 16 },
+  emptyTitle:  { fontSize: 20, fontFamily: Fonts.bold, color: Colors.text, marginBottom: 8 },
+  emptyDesc:   { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
+  emptyBtn:    { paddingHorizontal: 24, paddingVertical: 12, borderRadius: Radius.lg, backgroundColor: Colors.accent },
+  emptyBtnText:{ fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.accentFg },
 });

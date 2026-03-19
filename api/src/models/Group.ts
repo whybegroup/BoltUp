@@ -1,5 +1,8 @@
+/** User's relationship to a group - determines what info is returned */
+export type MembershipStatus = 'none' | 'pending' | 'member' | 'admin';
+
 /**
- * Group model - represents a social group
+ * Group model - represents a social group (full, for members/admins)
  */
 export interface Group {
   /** Unique group identifier */
@@ -10,6 +13,10 @@ export interface Group {
   desc: string;
   /** Group thumbnail/avatar URL */
   thumbnail?: string | null;
+  /** DiceBear icons seed for generated avatar */
+  avatarSeed?: string | null;
+  /** Unique invite code for joining the group */
+  inviteCode?: string | null;
   /** Whether the group is publicly visible */
   isPublic: boolean;
   /** ID of the group's super admin */
@@ -31,6 +38,34 @@ export interface Group {
 }
 
 /**
+ * Group scoped by membership - API returns only appropriate fields per user's status
+ */
+export interface GroupScoped {
+  id: string;
+  name: string;
+  desc: string;
+  thumbnail?: string | null;
+  avatarSeed?: string | null;
+  isPublic: boolean;
+  memberCount: number;
+  membershipStatus: MembershipStatus;
+  /** Present when member or admin */
+  inviteCode?: string | null;
+  superAdminId?: string;
+  adminIds?: string[];
+  memberIds?: string[];
+  /** Present when admin only */
+  pendingMemberIds?: string[];
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  /** Set when group is soft-deleted */
+  deletedAt?: Date | null;
+  deletedBy?: string | null;
+}
+
+/**
  * Input for creating a new group
  */
 export interface GroupInput {
@@ -38,6 +73,8 @@ export interface GroupInput {
   name: string;
   desc: string;
   thumbnail?: string | null;
+  avatarSeed?: string | null;
+  inviteCode?: string | null;
   isPublic: boolean;
   superAdminId: string;
   adminIds?: string[];
@@ -52,6 +89,7 @@ export interface GroupUpdate {
   name?: string;
   desc?: string;
   thumbnail?: string | null;
+  avatarSeed?: string | null;
   isPublic?: boolean;
   superAdminId?: string;
   adminIds?: string[];

@@ -1,5 +1,3 @@
-import type { Group } from '@boltup/client';
-
 // ── Date formatting ───────────────────────────────────────────────────────────
 const DAYS_SHORT  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAYS_FULL   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -92,6 +90,11 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | nul
     g: parseInt(result[2], 16),
     b: parseInt(result[3], 16)
   } : null;
+}
+
+/** Border radius for group avatar wrapper - matches My Groups (12 for 44px). */
+export function groupAvatarBorderRadius(size: number): number {
+  return Math.round(size * 12 / 44);
 }
 
 export function getGroupColor(colorHex?: string) {

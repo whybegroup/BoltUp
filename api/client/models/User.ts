@@ -19,9 +19,9 @@ export type User = {
      */
     displayName: string;
     /**
-     * User's unique handle
+     * DiceBear bottts avatar seed
      */
-    handle: string;
+    avatar?: string | null;
     /**
      * Timestamp when the user was created
      */

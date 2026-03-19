@@ -9,6 +9,6 @@ export type UserInput = {
     id: string;
     name: string;
     displayName: string;
-    handle: string;
+    avatar?: string | null;
 };
 

@@ -26,15 +26,7 @@ module.exports = {
     },
     plugins: [
       'expo-router',
-      'expo-font',
-      [
-        'expo-image-picker',
-        { photosPermission: 'Popin needs access to your photos to share event memories.' }
-      ],
-      [
-        'expo-media-library',
-        { photosPermission: 'Allow Popin to save photos.', savePhotosPermission: 'Allow Popin to save photos.' }
-      ]
+      'expo-font'
     ],
     experiments: {
       typedRoutes: true,

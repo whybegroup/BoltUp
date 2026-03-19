@@ -10,6 +10,8 @@ export type GroupInput = {
     name: string;
     desc: string;
     thumbnail?: string | null;
+    avatarSeed?: string | null;
+    inviteCode?: string | null;
     isPublic: boolean;
     superAdminId: string;
     adminIds?: Array<string>;

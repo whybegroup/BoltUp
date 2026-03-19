@@ -13,7 +13,7 @@ export function useNotifications(userId?: string) {
     },
     staleTime: 0, // Always consider data stale
     gcTime: 0, // Don't cache
-    refetchInterval: 5000, // Poll every 5 seconds
+    refetchInterval: 3000, // Poll every 3 seconds
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     refetchOnReconnect: true,

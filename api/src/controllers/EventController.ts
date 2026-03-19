@@ -30,16 +30,22 @@ export class EventController extends Controller {
 
   /**
    * Get all events
-   * @summary Retrieves a list of events with optional filtering, including RSVPs and comments
+   * @summary Retrieves events scoped by user's group membership. userId required.
    */
   @Get()
   public async getEvents(
+    @Query() userId: string,
     @Query() groupId?: string,
     @Query() startAfter?: string,
     @Query() startBefore?: string,
     @Query() limit?: number
   ): Promise<EventDetailed[]> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
     return this.eventService.getAllDetailed({
+      userId,
       groupId,
       startAfter: startAfter ? new Date(startAfter) : undefined,
       startBefore: startBefore ? new Date(startBefore) : undefined,
@@ -49,11 +55,18 @@ export class EventController extends Controller {
 
   /**
    * Get event by ID
-   * @summary Retrieves a single event with RSVPs and comments
+   * @summary Retrieves a single event. userId required to verify access.
    */
   @Get('{id}')
-  public async getEvent(@Path() id: string): Promise<EventDetailed> {
-    const event = await this.eventService.getById(id);
+  public async getEvent(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<EventDetailed> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const event = await this.eventService.getById(id, userId);
     if (!event) {
       this.setStatus(404);
       throw new Error('Event not found');

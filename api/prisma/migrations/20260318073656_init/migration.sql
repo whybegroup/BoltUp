@@ -3,7 +3,7 @@ CREATE TABLE "users" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "displayName" TEXT NOT NULL,
-    "handle" TEXT NOT NULL,
+    "avatar" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
@@ -14,11 +14,15 @@ CREATE TABLE "groups" (
     "name" TEXT NOT NULL,
     "desc" TEXT NOT NULL,
     "thumbnail" TEXT,
+    "avatarSeed" TEXT,
+    "inviteCode" TEXT,
     "isPublic" BOOLEAN NOT NULL DEFAULT false,
     "createdBy" TEXT NOT NULL,
     "updatedBy" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    "deletedAt" DATETIME,
+    "deletedBy" TEXT
 );
 
 -- CreateTable
@@ -121,7 +125,7 @@ CREATE TABLE "notifications" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_handle_key" ON "users"("handle");
+CREATE UNIQUE INDEX "groups_inviteCode_key" ON "groups"("inviteCode");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "group_members_groupId_userId_key" ON "group_members"("groupId", "userId");

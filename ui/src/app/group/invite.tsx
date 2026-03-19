@@ -9,12 +9,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius } from '../../constants/theme';
 import { NavBar } from '../../components/ui';
 import { useGroup } from '../../hooks/api';
-
-const ME_ID = 'u1';
+import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 
 export default function GroupInviteScreen() {
   const { id }    = useLocalSearchParams<{ id: string }>();
   const router    = useRouter();
+  const { userId: currentUserId } = useCurrentUserContext();
   
   const groupId = Array.isArray(id) ? id[0] : id;
 
@@ -22,7 +22,7 @@ export default function GroupInviteScreen() {
     return null;
   }
 
-  const { data: group, isLoading } = useGroup(groupId);
+  const { data: group, isLoading } = useGroup(groupId, currentUserId || '');
 
   const [copied,    setCopied]    = useState(false);
   const [newMember, setNewMember] = useState('');
@@ -84,7 +84,7 @@ export default function GroupInviteScreen() {
           <Text style={styles.codeSectionLabel}>INVITE CODE</Text>
           <Text style={styles.codeText}>{inviteCode}</Text>
           <Text style={styles.codeDesc}>
-            Share this code — {group.adminIds.includes(ME_ID) ? "they'll need admin approval to join" : 'admin will approve requests'}
+            Share this code — {group.adminIds.includes(currentUserId) ? "they'll need admin approval to join" : 'admin will approve requests'}
           </Text>
         </View>
 
@@ -124,7 +124,7 @@ export default function GroupInviteScreen() {
         </View>
 
         {/* Admin only: add by username */}
-        {group.adminIds.includes(ME_ID) && (
+        {group.adminIds.includes(currentUserId) && (
           <View style={[styles.card, { padding: 14 }]}>
             <Text style={styles.cardTitle}>Add by username</Text>
             <Text style={styles.addDesc}>Admin only — adds directly without approval</Text>
@@ -133,7 +133,7 @@ export default function GroupInviteScreen() {
                 value={newMember}
                 onChangeText={setNewMember}
                 onSubmitEditing={addMemberDirectly}
-                placeholder="@handle or username"
+                placeholder="Search by name"
                 placeholderTextColor={Colors.textMuted}
                 style={styles.addInput}
               />

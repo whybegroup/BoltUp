@@ -5,8 +5,12 @@
 **/.env
 **/.env.local
 
+# Secrets
+secrets/
+
 # Database
 **/*.db
+**/*.db-journal
 **/*.log
 
 # Expo

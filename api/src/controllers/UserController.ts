@@ -9,6 +9,7 @@ import {
   Route,
   Tags,
   SuccessResponse,
+  Response,
 } from 'tsoa';
 import { User, UserInput, UserUpdate } from '../models';
 import { UserService } from '../services/UserService';
@@ -32,11 +33,14 @@ export class UserController extends Controller {
    * @summary Retrieves a single user by their unique identifier
    */
   @Get('{id}')
+  @Response(404, 'User not found')
   public async getUser(@Path() id: string): Promise<User> {
     const user = await this.userService.getById(id);
     if (!user) {
-      this.setStatus(404);
-      throw new Error('User not found');
+      throw {
+        status: 404,
+        message: 'User not found',
+      };
     }
     return user;
   }

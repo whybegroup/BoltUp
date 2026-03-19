@@ -18,9 +18,10 @@ components:
         displayName:
           type: string
           description: User's display name with location and year
-        handle:
+        avatar:
           type: string
-          description: User's unique handle
+          nullable: true
+          description: DiceBear bottts avatar seed
         createdAt:
           type: string
           format: date-time
@@ -33,7 +34,6 @@ components:
         - id
         - name
         - displayName
-        - handle
         - createdAt
         - updatedAt
       type: object
@@ -47,13 +47,13 @@ components:
           type: string
         displayName:
           type: string
-        handle:
+        avatar:
           type: string
+          nullable: true
       required:
         - id
         - name
         - displayName
-        - handle
       type: object
       additionalProperties: false
     UserUpdate:
@@ -63,8 +63,9 @@ components:
           type: string
         displayName:
           type: string
-        handle:
+        avatar:
           type: string
+          nullable: true
       type: object
       additionalProperties: false
     Notification:
@@ -177,8 +178,85 @@ components:
         - body
       type: object
       additionalProperties: false
+    MembershipStatus:
+      type: string
+      enum:
+        - none
+        - pending
+        - member
+        - admin
+      description: User's relationship to a group - determines what info is returned
+    GroupScoped:
+      description: Group scoped by membership - API returns only appropriate fields
+        per user's status
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        desc:
+          type: string
+        thumbnail:
+          type: string
+          nullable: true
+        avatarSeed:
+          type: string
+          nullable: true
+        isPublic:
+          type: boolean
+        memberCount:
+          type: number
+          format: double
+        membershipStatus:
+          $ref: "#/components/schemas/MembershipStatus"
+        inviteCode:
+          type: string
+          nullable: true
+          description: Present when member or admin
+        superAdminId:
+          type: string
+        adminIds:
+          items:
+            type: string
+          type: array
+        memberIds:
+          items:
+            type: string
+          type: array
+        pendingMemberIds:
+          items:
+            type: string
+          type: array
+          description: Present when admin only
+        createdBy:
+          type: string
+        updatedBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set when group is soft-deleted
+        deletedBy:
+          type: string
+          nullable: true
+      required:
+        - id
+        - name
+        - desc
+        - isPublic
+        - memberCount
+        - membershipStatus
+      type: object
+      additionalProperties: false
     Group:
-      description: Group model - represents a social group
+      description: Group model - represents a social group (full, for members/admins)
       properties:
         id:
           type: string
@@ -193,6 +271,14 @@ components:
           type: string
           nullable: true
           description: Group thumbnail/avatar URL
+        avatarSeed:
+          type: string
+          nullable: true
+          description: DiceBear icons seed for generated avatar
+        inviteCode:
+          type: string
+          nullable: true
+          description: Unique invite code for joining the group
         isPublic:
           type: boolean
           description: Whether the group is publicly visible
@@ -254,6 +340,12 @@ components:
         thumbnail:
           type: string
           nullable: true
+        avatarSeed:
+          type: string
+          nullable: true
+        inviteCode:
+          type: string
+          nullable: true
         isPublic:
           type: boolean
         superAdminId:
@@ -285,6 +377,9 @@ components:
         desc:
           type: string
         thumbnail:
+          type: string
+          nullable: true
+        avatarSeed:
           type: string
           nullable: true
         isPublic:
@@ -760,6 +855,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
       description: Get user by ID
       summary: Retrieves a single user by their unique identifier
       tags:
@@ -997,14 +1094,26 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: "#/components/schemas/Group"
+                  $ref: "#/components/schemas/GroupScoped"
                 type: array
       description: Get all groups
-      summary: Retrieves a list of all groups with their admin and member IDs
+      summary: Retrieves a list of groups with info scoped by user's membership
+        status. Requires userId.
       tags:
         - Groups
       security: []
-      parameters: []
+      parameters:
+        - in: query
+          name: userId
+          required: true
+          schema:
+            type: string
+        - description: When true, includes soft-deleted groups where user is superadmin.
+          in: query
+          name: includeDeleted
+          required: false
+          schema:
+            type: boolean
     post:
       operationId: CreateGroup
       responses:
@@ -1035,15 +1144,21 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Group"
+                $ref: "#/components/schemas/GroupScoped"
       description: Get group by ID
-      summary: Retrieves a single group with member information
+      summary: Retrieves a single group with info scoped by user's membership status.
+        Requires userId.
       tags:
         - Groups
       security: []
       parameters:
         - in: path
           name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: userId
           required: true
           schema:
             type: string
@@ -1055,15 +1170,20 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Group"
+                $ref: "#/components/schemas/GroupScoped"
       description: Update a group
-      summary: Updates an existing group's information and/or members
+      summary: Updates an existing group. Requires admin.
       tags:
         - Groups
       security: []
       parameters:
         - in: path
           name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: userId
           required: true
           schema:
             type: string
@@ -1078,14 +1198,19 @@ paths:
       responses:
         "204":
           description: No Content
-      description: Delete a group
-      summary: Deletes a group and all its associated data
+      description: Hard-delete a group
+      summary: Permanently removes a group and all its data. Superadmin only.
       tags:
         - Groups
       security: []
       parameters:
         - in: path
           name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: userId
           required: true
           schema:
             type: string
@@ -1102,7 +1227,8 @@ paths:
                   $ref: "#/components/schemas/User"
                 type: array
       description: Get group members
-      summary: Retrieves all members of a specific group
+      summary: Retrieves all members of a specific group. Requires caller to be a
+        member.
       tags:
         - Groups
       security: []
@@ -1112,6 +1238,195 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: userId
+          required: true
+          schema:
+            type: string
+  /groups/{id}/soft-delete:
+    post:
+      operationId: SoftDeleteGroup
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+                type: object
+      description: Soft-delete a group
+      summary: Marks a group as deleted. Superadmin only.
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                userId:
+                  type: string
+              required:
+                - userId
+              type: object
+  /groups/{id}/recover:
+    post:
+      operationId: RecoverGroup
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+                type: object
+      description: Recover a soft-deleted group
+      summary: Restores a soft-deleted group. Superadmin only.
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                userId:
+                  type: string
+              required:
+                - userId
+              type: object
+  /groups/join-by-code:
+    post:
+      operationId: JoinByInviteCode
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - joined
+                      - pending
+                  groupName:
+                    type: string
+                  success:
+                    type: boolean
+                required:
+                  - status
+                  - groupName
+                  - success
+                type: object
+      description: Join a group by invite code
+      summary: Join or request to join a group using its invite code
+      tags:
+        - Groups
+      security: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                userId:
+                  type: string
+                inviteCode:
+                  type: string
+              required:
+                - userId
+                - inviteCode
+              type: object
+  /groups/{id}/leave:
+    post:
+      operationId: LeaveGroup
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+                type: object
+      description: Leave a group
+      summary: Remove the current user from the group. Superadmin cannot leave.
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                userId:
+                  type: string
+              required:
+                - userId
+              type: object
+  /groups/{id}/join:
+    post:
+      operationId: JoinGroup
+      responses:
+        "200":
+          description: OK
+      description: Join a group
+      summary: Join a public group (immediate) or request to join a private group
+        (pending)
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                userId:
+                  type: string
+              required:
+                - userId
+              type: object
   /groups/{id}/requests/pending:
     get:
       operationId: GetPendingRequests
@@ -1125,7 +1440,7 @@ paths:
                   $ref: "#/components/schemas/User"
                 type: array
       description: Get pending membership requests
-      summary: Retrieves all pending membership requests for a group
+      summary: Retrieves pending requests for a group. Requires admin.
       tags:
         - Groups
       security: []
@@ -1135,6 +1450,141 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: userId
+          required: true
+          schema:
+            type: string
+  /groups/{id}/members/{memberId}/remove:
+    post:
+      operationId: RemoveMember
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+                type: object
+      description: Remove a member from the group
+      summary: Admin removes a member. Cannot remove superadmin.
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: memberId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                performedBy:
+                  type: string
+              required:
+                - performedBy
+              type: object
+  /groups/{id}/members/{memberId}/role:
+    put:
+      operationId: SetMemberRole
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+                type: object
+      description: Set a member's role (admin or member)
+      summary: Admin sets a member's role. Cannot change superadmin.
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: memberId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                role:
+                  type: string
+                  enum:
+                    - admin
+                    - member
+                performedBy:
+                  type: string
+              required:
+                - role
+                - performedBy
+              type: object
+  /groups/{id}/superadmin:
+    put:
+      operationId: SetSuperAdmin
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                properties:
+                  success:
+                    type: boolean
+                required:
+                  - success
+                type: object
+      description: Transfer superadmin role to another member
+      summary: Superadmin transfers ownership to an admin or member.
+      tags:
+        - Groups
+      security: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                userId:
+                  type: string
+                performedBy:
+                  type: string
+              required:
+                - userId
+                - performedBy
+              type: object
   /groups/{id}/requests/handle:
     post:
       operationId: HandleMembershipRequest
@@ -1142,13 +1592,18 @@ paths:
         "204":
           description: No content
       description: Handle membership request
-      summary: Approve or reject a membership request
+      summary: Approve or reject a membership request. Requires admin.
       tags:
         - Groups
       security: []
       parameters:
         - in: path
           name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: userId
           required: true
           schema:
             type: string
@@ -1256,12 +1711,16 @@ paths:
                   $ref: "#/components/schemas/EventDetailed"
                 type: array
       description: Get all events
-      summary: Retrieves a list of events with optional filtering, including RSVPs and
-        comments
+      summary: Retrieves events scoped by user's group membership. userId required.
       tags:
         - Events
       security: []
       parameters:
+        - in: query
+          name: userId
+          required: true
+          schema:
+            type: string
         - in: query
           name: groupId
           required: false
@@ -1315,13 +1774,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/EventDetailed"
       description: Get event by ID
-      summary: Retrieves a single event with RSVPs and comments
+      summary: Retrieves a single event. userId required to verify access.
       tags:
         - Events
       security: []
       parameters:
         - in: path
           name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: userId
           required: true
           schema:
             type: string

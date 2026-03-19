@@ -17,7 +17,7 @@ export function useCreateComment(eventId: string) {
     mutationFn: (data: CommentInput) => EventsService.createComment(eventId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.events.comments(eventId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId) });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
     },
   });
 }
@@ -29,7 +29,7 @@ export function useDeleteComment(eventId: string) {
     mutationFn: (commentId: string) => CommentsService.deleteComment(commentId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.events.comments(eventId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId) });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
     },
   });
 }

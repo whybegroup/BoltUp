@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
+  View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle,
   ScrollView, Modal, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -116,9 +116,9 @@ export function Btn({ label, onPress, variant = 'primary', disabled, full, small
 }
 
 // ── Toggle ────────────────────────────────────────────────────────────────────
-export function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
+export function Toggle({ value, onChange, label, style }: { value: boolean; onChange: (v: boolean) => void; label: string; style?: StyleProp<ViewStyle> }) {
   return (
-    <TouchableOpacity onPress={() => onChange(!value)} style={styles.toggleRow} activeOpacity={0.8}>
+    <TouchableOpacity onPress={() => onChange(!value)} style={[styles.toggleRow, styles.toggleFullWidth, style]} activeOpacity={0.8}>
       <Text style={[styles.toggleLabel]}>{label}</Text>
       <View style={[styles.toggleTrack, { backgroundColor: value ? Colors.accent : Colors.border }]}>
         <View style={[styles.toggleThumb, { left: value ? 22 : 2 }]} />
@@ -227,7 +227,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   pill: {
-    paddingHorizontal: 12, paddingVertical: 5,
+    paddingHorizontal: 12, paddingVertical: 4,
     borderRadius: Radius.full, borderWidth: 1,
     flexShrink: 0,
   },
@@ -240,8 +240,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
+  toggleFullWidth: { width: '100%', alignSelf: 'stretch' },
   toggleLabel: { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, flex: 1 },
-  toggleTrack: { width: 44, height: 24, borderRadius: 12, position: 'relative' },
+  toggleTrack: { width: 44, height: 24, borderRadius: 12, position: 'relative', flexShrink: 0 },
   toggleThumb: {
     position: 'absolute', top: 2, width: 20, height: 20,
     borderRadius: 10, backgroundColor: '#fff',

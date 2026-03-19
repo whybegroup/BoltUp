@@ -22,17 +22,18 @@ export const queryKeys = {
     detail: (id: string) => ['users', id] as const,
   },
   groups: {
-    all: ['groups'] as const,
-    detail: (id: string) => ['groups', id] as const,
+    _base: ['groups'] as const,
+    all: (userId: string, includeDeleted?: boolean) => ['groups', userId, includeDeleted ?? false] as const,
+    detail: (id: string, userId: string) => ['groups', 'detail', id, userId] as const,
     members: (id: string) => ['groups', id, 'members'] as const,
     pendingRequests: (id: string) => ['groups', id, 'requests', 'pending'] as const,
     memberColor: (groupId: string, userId: string) => ['groups', groupId, 'members', userId, 'color'] as const,
     allMemberColors: (userId: string) => ['groups', 'members', userId, 'colors'] as const,
   },
   events: {
-    all: ['events'] as const,
+    all: (userId: string) => ['events', userId] as const,
     list: (filters?: Record<string, any>) => ['events', 'list', filters] as const,
-    detail: (id: string) => ['events', id] as const,
+    detail: (id: string, userId: string) => ['events', id, userId] as const,
     comments: (id: string) => ['events', id, 'comments'] as const,
   },
   notifications: {

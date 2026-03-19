@@ -15,8 +15,9 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class EventsService {
     /**
-     * Retrieves a list of events with optional filtering, including RSVPs and comments
+     * Retrieves events scoped by user's group membership. userId required.
      * Get all events
+     * @param userId
      * @param groupId
      * @param startAfter
      * @param startBefore
@@ -25,6 +26,7 @@ export class EventsService {
      * @throws ApiError
      */
     public static getEvents(
+        userId: string,
         groupId?: string,
         startAfter?: string,
         startBefore?: string,
@@ -34,6 +36,7 @@ export class EventsService {
             method: 'GET',
             url: '/events',
             query: {
+                'userId': userId,
                 'groupId': groupId,
                 'startAfter': startAfter,
                 'startBefore': startBefore,
@@ -59,20 +62,25 @@ export class EventsService {
         });
     }
     /**
-     * Retrieves a single event with RSVPs and comments
+     * Retrieves a single event. userId required to verify access.
      * Get event by ID
      * @param id
+     * @param userId
      * @returns EventDetailed Ok
      * @throws ApiError
      */
     public static getEvent(
         id: string,
+        userId: string,
     ): CancelablePromise<EventDetailed> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/events/{id}',
             path: {
                 'id': id,
+            },
+            query: {
+                'userId': userId,
             },
         });
     }

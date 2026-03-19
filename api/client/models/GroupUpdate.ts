@@ -9,6 +9,7 @@ export type GroupUpdate = {
     name?: string;
     desc?: string;
     thumbnail?: string | null;
+    avatarSeed?: string | null;
     isPublic?: boolean;
     superAdminId?: string;
     adminIds?: Array<string>;

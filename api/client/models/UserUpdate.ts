@@ -8,6 +8,6 @@
 export type UserUpdate = {
     name?: string;
     displayName?: string;
-    handle?: string;
+    avatar?: string | null;
 };
 

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { Group } from '../models/Group';
 import type { GroupInput } from '../models/GroupInput';
+import type { GroupScoped } from '../models/GroupScoped';
 import type { GroupUpdate } from '../models/GroupUpdate';
 import type { MembershipRequestAction } from '../models/MembershipRequestAction';
 import type { Record_string_string_ } from '../models/Record_string_string_';
@@ -13,15 +14,24 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class GroupsService {
     /**
-     * Retrieves a list of all groups with their admin and member IDs
+     * Retrieves a list of groups with info scoped by user's membership status. Requires userId.
      * Get all groups
-     * @returns Group Ok
+     * @param userId
+     * @param includeDeleted When true, includes soft-deleted groups where user is superadmin.
+     * @returns GroupScoped Ok
      * @throws ApiError
      */
-    public static getGroups(): CancelablePromise<Array<Group>> {
+    public static getGroups(
+        userId: string,
+        includeDeleted?: boolean,
+    ): CancelablePromise<Array<GroupScoped>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/groups',
+            query: {
+                'userId': userId,
+                'includeDeleted': includeDeleted,
+            },
         });
     }
     /**
@@ -42,38 +52,120 @@ export class GroupsService {
         });
     }
     /**
-     * Retrieves a single group with member information
+     * Retrieves a single group with info scoped by user's membership status. Requires userId.
      * Get group by ID
      * @param id
-     * @returns Group Ok
+     * @param userId
+     * @returns GroupScoped Ok
      * @throws ApiError
      */
     public static getGroup(
         id: string,
-    ): CancelablePromise<Group> {
+        userId: string,
+    ): CancelablePromise<GroupScoped> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/groups/{id}',
             path: {
                 'id': id,
             },
+            query: {
+                'userId': userId,
+            },
         });
     }
     /**
-     * Updates an existing group's information and/or members
+     * Updates an existing group. Requires admin.
      * Update a group
      * @param id
+     * @param userId
      * @param requestBody
-     * @returns Group Ok
+     * @returns GroupScoped Ok
      * @throws ApiError
      */
     public static updateGroup(
         id: string,
+        userId: string,
         requestBody: GroupUpdate,
-    ): CancelablePromise<Group> {
+    ): CancelablePromise<GroupScoped> {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/groups/{id}',
+            path: {
+                'id': id,
+            },
+            query: {
+                'userId': userId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Permanently removes a group and all its data. Superadmin only.
+     * Hard-delete a group
+     * @param id
+     * @param userId
+     * @returns void
+     * @throws ApiError
+     */
+    public static deleteGroup(
+        id: string,
+        userId: string,
+    ): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/groups/{id}',
+            path: {
+                'id': id,
+            },
+            query: {
+                'userId': userId,
+            },
+        });
+    }
+    /**
+     * Retrieves all members of a specific group. Requires caller to be a member.
+     * Get group members
+     * @param id
+     * @param userId
+     * @returns User Ok
+     * @throws ApiError
+     */
+    public static getGroupMembers(
+        id: string,
+        userId: string,
+    ): CancelablePromise<Array<User>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/groups/{id}/members',
+            path: {
+                'id': id,
+            },
+            query: {
+                'userId': userId,
+            },
+        });
+    }
+    /**
+     * Marks a group as deleted. Superadmin only.
+     * Soft-delete a group
+     * @param id
+     * @param requestBody
+     * @returns any OK
+     * @throws ApiError
+     */
+    public static softDeleteGroup(
+        id: string,
+        requestBody: {
+            userId: string;
+        },
+    ): CancelablePromise<{
+        success: boolean;
+    }> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/groups/{id}/soft-delete',
             path: {
                 'id': id,
             },
@@ -82,50 +174,116 @@ export class GroupsService {
         });
     }
     /**
-     * Deletes a group and all its associated data
-     * Delete a group
+     * Restores a soft-deleted group. Superadmin only.
+     * Recover a soft-deleted group
      * @param id
-     * @returns void
+     * @param requestBody
+     * @returns any OK
      * @throws ApiError
      */
-    public static deleteGroup(
+    public static recoverGroup(
         id: string,
-    ): CancelablePromise<void> {
+        requestBody: {
+            userId: string;
+        },
+    ): CancelablePromise<{
+        success: boolean;
+    }> {
         return __request(OpenAPI, {
-            method: 'DELETE',
-            url: '/groups/{id}',
+            method: 'POST',
+            url: '/groups/{id}/recover',
             path: {
                 'id': id,
             },
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
-     * Retrieves all members of a specific group
-     * Get group members
-     * @param id
-     * @returns User Ok
+     * Join or request to join a group using its invite code
+     * Join a group by invite code
+     * @param requestBody
+     * @returns any OK
      * @throws ApiError
      */
-    public static getGroupMembers(
-        id: string,
-    ): CancelablePromise<Array<User>> {
+    public static joinByInviteCode(
+        requestBody: {
+            userId: string;
+            inviteCode: string;
+        },
+    ): CancelablePromise<{
+        status: 'joined' | 'pending';
+        groupName: string;
+        success: boolean;
+    }> {
         return __request(OpenAPI, {
-            method: 'GET',
-            url: '/groups/{id}/members',
+            method: 'POST',
+            url: '/groups/join-by-code',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Remove the current user from the group. Superadmin cannot leave.
+     * Leave a group
+     * @param id
+     * @param requestBody
+     * @returns any OK
+     * @throws ApiError
+     */
+    public static leaveGroup(
+        id: string,
+        requestBody: {
+            userId: string;
+        },
+    ): CancelablePromise<{
+        success: boolean;
+    }> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/groups/{id}/leave',
             path: {
                 'id': id,
             },
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
-     * Retrieves all pending membership requests for a group
+     * Join a public group (immediate) or request to join a private group (pending)
+     * Join a group
+     * @param id
+     * @param requestBody
+     * @returns any OK
+     * @throws ApiError
+     */
+    public static joinGroup(
+        id: string,
+        requestBody: {
+            userId: string;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/groups/{id}/join',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Retrieves pending requests for a group. Requires admin.
      * Get pending membership requests
      * @param id
+     * @param userId
      * @returns User Ok
      * @throws ApiError
      */
     public static getPendingRequests(
         id: string,
+        userId: string,
     ): CancelablePromise<Array<User>> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -133,18 +291,109 @@ export class GroupsService {
             path: {
                 'id': id,
             },
+            query: {
+                'userId': userId,
+            },
         });
     }
     /**
-     * Approve or reject a membership request
+     * Admin removes a member. Cannot remove superadmin.
+     * Remove a member from the group
+     * @param id
+     * @param memberId
+     * @param requestBody
+     * @returns any OK
+     * @throws ApiError
+     */
+    public static removeMember(
+        id: string,
+        memberId: string,
+        requestBody: {
+            performedBy: string;
+        },
+    ): CancelablePromise<{
+        success: boolean;
+    }> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/groups/{id}/members/{memberId}/remove',
+            path: {
+                'id': id,
+                'memberId': memberId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Admin sets a member's role. Cannot change superadmin.
+     * Set a member's role (admin or member)
+     * @param id
+     * @param memberId
+     * @param requestBody
+     * @returns any OK
+     * @throws ApiError
+     */
+    public static setMemberRole(
+        id: string,
+        memberId: string,
+        requestBody: {
+            role: 'admin' | 'member';
+            performedBy: string;
+        },
+    ): CancelablePromise<{
+        success: boolean;
+    }> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/groups/{id}/members/{memberId}/role',
+            path: {
+                'id': id,
+                'memberId': memberId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Superadmin transfers ownership to an admin or member.
+     * Transfer superadmin role to another member
+     * @param id
+     * @param requestBody
+     * @returns any OK
+     * @throws ApiError
+     */
+    public static setSuperAdmin(
+        id: string,
+        requestBody: {
+            userId: string;
+            performedBy: string;
+        },
+    ): CancelablePromise<{
+        success: boolean;
+    }> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/groups/{id}/superadmin',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Approve or reject a membership request. Requires admin.
      * Handle membership request
      * @param id
+     * @param userId
      * @param requestBody
      * @returns void
      * @throws ApiError
      */
     public static handleMembershipRequest(
         id: string,
+        userId: string,
         requestBody: MembershipRequestAction,
     ): CancelablePromise<void> {
         return __request(OpenAPI, {
@@ -152,6 +401,9 @@ export class GroupsService {
             url: '/groups/{id}/requests/handle',
             path: {
                 'id': id,
+            },
+            query: {
+                'userId': userId,
             },
             body: requestBody,
             mediaType: 'application/json',

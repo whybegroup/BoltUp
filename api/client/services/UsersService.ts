@@ -54,6 +54,9 @@ export class UsersService {
             path: {
                 'id': id,
             },
+            errors: {
+                404: `User not found`,
+            },
         });
     }
     /**

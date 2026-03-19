@@ -1,54 +1,102 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import React, { useMemo, useState, useEffect } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Platform, TextInput, ActivityIndicator, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors, Fonts, Radius } from '../../constants/theme';
-import { getGroupColor, getDefaultGroupThemeFromName, avatarColor } from '../../utils/helpers';
-import { useGroups, useEvents, useUser, useAllGroupMemberColors } from '../../hooks/api';
-import { Toggle } from '../../components/ui';
+import { getGroupColor, getDefaultGroupThemeFromName, avatarColor, groupAvatarBorderRadius } from '../../utils/helpers';
+import { useGroups, useEvents, useAllGroupMemberColors, useUpdateUser } from '../../hooks/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
+import { BotttsAvatar } from '../../components/Avatar';
+import { GroupAvatar } from '../../components/GroupAvatar';
 
-// TODO: Replace with actual user authentication
-const ME_ID = 'u1';
-
-function defaultGroupAvatarUri(groupId: string): string {
-  return `https://api.dicebear.com/8.x/bottts/png?seed=${encodeURIComponent(groupId)}&size=256&backgroundType=gradientLinear`;
-}
-
-const REMINDER_OPTIONS = ['Never', '1 hour before', '1 day before', '1 week before'];
+const BOTTTS_AVATAR_SEEDS = [
+  'profile-default', 'profile-blue', 'profile-green', 'profile-orange',
+  'profile-purple', 'profile-pink', 'profile-red', 'profile-teal',
+  'profile-yellow', 'profile-cyan', 'profile-indigo', 'profile-coral',
+  'profile-mint', 'profile-amber', 'profile-rose', 'profile-sky',
+];
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { user: firebaseUser, signOut } = useAuth();
+  const { userId, user: me, loading: userLoading } = useCurrentUserContext();
+  const updateUser = useUpdateUser(userId || '');
 
-  const { data: groups = [], isLoading: groupsLoading } = useGroups();
-  const { data: events = [], isLoading: eventsLoading } = useEvents();
-  const { data: me = null, isLoading: meLoading } = useUser(ME_ID);
-  const { data: groupColors = {}, isLoading: colorsLoading } = useAllGroupMemberColors(ME_ID);
+  const { data: groups = [], isLoading: groupsLoading } = useGroups(userId ?? '');
+  const { data: events = [], isLoading: eventsLoading } = useEvents({ userId: userId ?? '', groupId: undefined });
+  const { data: groupColors = {}, isLoading: colorsLoading } = useAllGroupMemberColors(userId || '');
 
-  const loading = groupsLoading || eventsLoading || meLoading || colorsLoading;
+  const loading = groupsLoading || eventsLoading || userLoading || colorsLoading;
 
-  const myEvents = events.filter(e => e.rsvps.some(r => r.userId === ME_ID && r.status === 'going'));
-
-  const [notifSettings, setNotifSettings] = useState<Record<string, any>>(
-    {}
-  );
-
-  useEffect(() => {
-    if (groups.length > 0) {
-      setNotifSettings(
-        Object.fromEntries(groups.map(g => [g.id, {
-          newEvent: true, minAttendees: true,
-          reminder: '1 hour before',
-          onLocation: false, onTime: true, onRsvp: false,
-        }]))
+  const handleSignOut = async () => {
+    console.log('[Profile] Sign out button clicked');
+    
+    // Use native confirm on web, Alert.alert on mobile
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to sign out?');
+      console.log('[Profile] Confirmation result:', confirmed);
+      
+      if (confirmed) {
+        console.log('[Profile] Sign out confirmed');
+        try {
+          await signOut();
+          console.log('[Profile] Sign out completed');
+        } catch (error) {
+          console.error('[Profile] Sign out error:', error);
+          window.alert('Failed to sign out');
+        }
+      } else {
+        console.log('[Profile] Sign out cancelled');
+      }
+    } else {
+      Alert.alert(
+        'Sign Out',
+        'Are you sure you want to sign out?',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => console.log('[Profile] Sign out cancelled'),
+          },
+          {
+            text: 'Sign Out',
+            style: 'destructive',
+            onPress: async () => {
+              console.log('[Profile] Sign out confirmed');
+              try {
+                await signOut();
+                console.log('[Profile] Sign out completed');
+              } catch (error) {
+                console.error('[Profile] Sign out error:', error);
+                Alert.alert('Error', 'Failed to sign out');
+              }
+            },
+          },
+        ]
       );
     }
-  }, [groups.length]);
-
-  const updateSetting = (groupId: string, key: string, value: any) => {
-    setNotifSettings(p => ({ ...p, [groupId]: { ...p[groupId], [key]: value } }));
   };
 
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const myEvents = events.filter(e => e.rsvps.some(r => r.userId === userId && r.status === 'going'));
+
+  const [draftDisplayName, setDraftDisplayName] = useState('');
+  const [editingDisplayName, setEditingDisplayName] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+
+  useEffect(() => {
+    if (me && !editingDisplayName) {
+      setDraftDisplayName(me.displayName || me.name || '');
+    }
+  }, [me?.displayName, me?.name, editingDisplayName]);
+
+  const myGroups = useMemo(
+    () =>
+      groups.filter(
+        (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin' || g.membershipStatus === 'pending'
+      ),
+    [groups]
+  );
 
   if (!me) {
     return null;
@@ -58,115 +106,182 @@ export default function ProfileScreen() {
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
         <Text style={styles.title}>Profile</Text>
-        <TouchableOpacity style={styles.editBtn}>
-          <Text style={styles.editBtnText}>Edit</Text>
-        </TouchableOpacity>
+        <View />
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
         {/* User card */}
         <View style={styles.userCard}>
-          <View style={[styles.bigAvatar, { backgroundColor: avatarColor(me.name) }]}>
-            <Text style={styles.bigAvatarText}>{me.name[0]}</Text>
-          </View>
+          <TouchableOpacity
+            onPress={() => setShowAvatarPicker(true)}
+            style={[styles.bigAvatar, { backgroundColor: avatarColor(me.name) }]}
+            activeOpacity={0.8}
+          >
+            {me.avatar ? (
+              <BotttsAvatar seed={me.avatar} size={60} style={styles.bigAvatarImg} />
+            ) : (
+              <Text style={styles.bigAvatarText}>{me.name[0]}</Text>
+            )}
+          </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <Text style={styles.userName}>{me.name}</Text>
-            <Text style={styles.userHandle}>@{me.handle}</Text>
-            <View style={styles.statsRow}>
-              <View style={styles.stat}>
-                <Text style={styles.statNum}>{groups.length}</Text>
-                <Text style={styles.statLabel}>Groups</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statNum}>{myEvents.length}</Text>
-                <Text style={styles.statLabel}>Events</Text>
+            <View style={styles.displayNameRow}>
+              <View style={styles.displayNameEditRow}>
+                {editingDisplayName ? (
+                  <TextInput
+                    value={draftDisplayName}
+                    onChangeText={setDraftDisplayName}
+                    placeholder="Display name"
+                    placeholderTextColor={Colors.textMuted}
+                    style={styles.displayNameInput}
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    autoFocus
+                  />
+                ) : (
+                  <View style={styles.displayNameReadRow}>
+                    <Text style={styles.userName} numberOfLines={1}>
+                      {me.displayName || me.name}
+                    </Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (!editingDisplayName) {
+                      setEditingDisplayName(true);
+                      return;
+                    }
+
+                    const next = draftDisplayName.trim();
+                    if (!next || !userId) return;
+                    try {
+                      await updateUser.mutateAsync({ displayName: next });
+                      setEditingDisplayName(false);
+                    } catch (e) {
+                      console.error('[Profile] Failed updating display name', e);
+                      if (Platform.OS === 'web') window.alert('Failed to update display name');
+                      else Alert.alert('Error', 'Failed to update display name');
+                    }
+                  }}
+                  disabled={editingDisplayName ? (!draftDisplayName.trim() || updateUser.isPending) : false}
+                  style={[
+                    styles.displayNameActionBtn,
+                    editingDisplayName ? styles.displayNameActionBtnSave : styles.displayNameActionBtnChange,
+                    (editingDisplayName && (!draftDisplayName.trim() || updateUser.isPending)) && { opacity: 0.6 },
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  {updateUser.isPending ? (
+                    <ActivityIndicator size="small" color={Colors.accentFg} />
+                  ) : (
+                    <Text style={styles.displayNameActionText}>
+                      {editingDisplayName ? 'Save' : 'Change display name'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
               </View>
             </View>
           </View>
         </View>
 
-        {/* My groups */}
-        <Text style={styles.sectionLabel}>MY GROUPS</Text>
+        {/* Account */}
+        <Text style={styles.sectionLabel}>ACCOUNT</Text>
         <View style={[styles.card, { marginBottom: 20 }]}>
-          {groups.map((g, i) => {
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabelMuted}>Email</Text>
+            <Text style={styles.infoValueMuted}>{firebaseUser?.email || '—'}</Text>
+          </View>
+          <View style={[styles.infoRow, styles.rowBorder]}>
+            <Text style={styles.infoLabelMuted}>User ID</Text>
+            <Text style={styles.infoValueMuted}>{userId || '—'}</Text>
+          </View>
+          <View style={[styles.infoRow, styles.rowBorder]}>
+            <Text style={styles.infoLabelMuted}>Sign-in Provider</Text>
+            <Text style={styles.infoValueMuted}>Google</Text>
+          </View>
+        </View>
+
+        {/* My groups */}
+        <Text style={styles.sectionLabel}>My Group Settings</Text>
+        <View style={[styles.card, { marginBottom: 20 }]}>
+          {myGroups.map((g, i) => {
             const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
             const p = getGroupColor(userColorHex);
+            const isPending = g.membershipStatus === 'pending';
             return (
               <TouchableOpacity
                 key={g.id}
-                onPress={() => router.push(`/group/${g.id}`)}
-                style={[styles.groupRow, i < groups.length - 1 && styles.rowBorder]}
+                onPress={() => router.push(isPending ? `/group/${g.id}` : `/group/${g.id}/preferences`)}
+                style={[styles.groupRow, i < myGroups.length - 1 && styles.rowBorder]}
                 activeOpacity={0.7}
               >
-                <Image 
-                  source={{ uri: g.thumbnail || defaultGroupAvatarUri(g.id) }} 
-                  style={[styles.groupIcon, { backgroundColor: p.row, borderColor: p.cal }]} 
-                />
+                <View style={[styles.groupIcon, { backgroundColor: p.row, borderColor: p.cal }]}>
+                  <GroupAvatar group={g} size={36} />
+                </View>
                 <Text style={styles.groupName}>{g.name}</Text>
+                {isPending && (
+                  <Text style={{ fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginRight: 4 }}>
+                    Pending
+                  </Text>
+                )}
                 <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>
               </TouchableOpacity>
             );
           })}
         </View>
 
-        {/* Notification settings */}
-        <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
-        <View style={styles.card}>
-          {groups.map((g, i) => {
-            const s = notifSettings[g.id];
-            const isExpanded = expandedGroup === g.id;
-            return (
-              <View key={g.id} style={i < groups.length - 1 && styles.rowBorder}>
-                <TouchableOpacity
-                  onPress={() => setExpandedGroup(x => x === g.id ? null : g.id)}
-                  style={styles.notifGroupRow}
-                  activeOpacity={0.7}
-                >
-                  <Image 
-                    source={{ uri: g.thumbnail || defaultGroupAvatarUri(g.id) }} 
-                    style={{ width: 28, height: 28, borderRadius: 8 }} 
-                  />
-                  <Text style={styles.groupName}>{g.name}</Text>
-                  <Text style={{ color: Colors.textMuted, fontSize: 13 }}>{isExpanded ? '▲' : '▼'}</Text>
-                </TouchableOpacity>
-
-                {isExpanded && (
-                  <View style={styles.notifExpanded}>
-                    <Toggle value={s.newEvent} onChange={v => updateSetting(g.id, 'newEvent', v)} label="New event alerts" />
-                    <Toggle value={s.minAttendees} onChange={v => updateSetting(g.id, 'minAttendees', v)} label="Min attendees alerts" />
-                    <Toggle value={s.onLocation} onChange={v => updateSetting(g.id, 'onLocation', v)} label="Location changes" />
-                    <Toggle value={s.onTime} onChange={v => updateSetting(g.id, 'onTime', v)} label="Time changes" />
-                    <Toggle value={s.onRsvp} onChange={v => updateSetting(g.id, 'onRsvp', v)} label="RSVP updates" />
-
-                    {/* Reminder dropdown */}
-                    <View style={styles.reminderRow}>
-                      <Text style={styles.reminderLabel}>Event reminder</Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-                        {REMINDER_OPTIONS.map(opt => (
-                          <TouchableOpacity
-                            key={opt}
-                            onPress={() => updateSetting(g.id, 'reminder', opt)}
-                            style={[styles.reminderChip, s.reminder === opt && styles.reminderChipActive]}
-                          >
-                            <Text style={[styles.reminderChipText, s.reminder === opt && styles.reminderChipTextActive]}>
-                              {opt}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
-
         {/* Sign out */}
-        <TouchableOpacity style={styles.signOutBtn}>
+        <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Avatar picker */}
+      {showAvatarPicker && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setShowAvatarPicker(false)}>
+          <TouchableOpacity
+            style={styles.avatarOverlay}
+            onPress={() => setShowAvatarPicker(false)}
+            activeOpacity={1}
+          >
+            <View style={styles.avatarPickerCard} onStartShouldSetResponder={() => true}>
+              <View style={styles.avatarPickerHeader}>
+                <Text style={styles.avatarPickerTitle}>Choose avatar</Text>
+                <TouchableOpacity onPress={() => setShowAvatarPicker(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} activeOpacity={0.7}>
+                  <Text style={{ fontSize: 20, color: Colors.textMuted, lineHeight: 24 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.avatarGrid}>
+                <TouchableOpacity
+                  onPress={() => {
+                    updateUser.mutate({ avatar: null });
+                    setShowAvatarPicker(false);
+                  }}
+                  style={[styles.avatarCell, !me.avatar && styles.avatarCellActive]}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.avatarCellLetter, { backgroundColor: avatarColor(me.name) }]}>
+                    <Text style={styles.avatarCellLetterText}>{me.name[0]}</Text>
+                  </View>
+                </TouchableOpacity>
+                {BOTTTS_AVATAR_SEEDS.map((seed) => (
+                  <TouchableOpacity
+                    key={seed}
+                    onPress={() => {
+                      updateUser.mutate({ avatar: seed });
+                      setShowAvatarPicker(false);
+                    }}
+                    style={[styles.avatarCell, me.avatar === seed && styles.avatarCellActive]}
+                    activeOpacity={0.8}
+                  >
+                    <BotttsAvatar seed={seed} size={72} style={styles.avatarCellImg} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -175,31 +290,62 @@ const styles = StyleSheet.create({
   safe:             { flex: 1, backgroundColor: Colors.bg },
   header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
   title:            { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text },
-  editBtn:          { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
-  editBtnText:      { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSub },
   userCard:         { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, padding: 20, marginBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 16 },
-  bigAvatar:        { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  bigAvatar:        { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
+  bigAvatarImg:     { width: 60, height: 60, borderRadius: 30 },
   bigAvatarText:    { fontSize: 24, fontFamily: Fonts.bold, color: '#fff' },
+  avatarOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  avatarPickerCard: { backgroundColor: Colors.surface, borderRadius: 18, borderWidth: 1, borderColor: Colors.border, padding: 16, width: '100%', maxWidth: 360 },
+  avatarPickerHeader:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  avatarPickerTitle:{ fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
+  avatarGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  avatarCell:       { width: 72, height: 72, borderRadius: groupAvatarBorderRadius(72), borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg, overflow: 'hidden' },
+  avatarCellActive: { borderColor: Colors.accent },
+  avatarCellImg:    { borderRadius: groupAvatarBorderRadius(72) },
+  avatarCellLetter: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
+  avatarCellLetterText:{ fontSize: 28, fontFamily: Fonts.bold, color: '#fff' },
   userName:         { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text, marginBottom: 2 },
   userHandle:       { fontSize: 14, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 8 },
-  statsRow:         { flexDirection: 'row', gap: 16 },
-  stat:             { alignItems: 'center' },
-  statNum:          { fontSize: 16, fontFamily: Fonts.bold, color: Colors.text },
-  statLabel:        { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular },
   sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
   card:             { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
   groupRow:         { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
   rowBorder:        { borderBottomWidth: 1, borderBottomColor: Colors.border },
-  groupIcon:        { width: 36, height: 36, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  groupIcon:        { width: 36, height: 36, borderRadius: groupAvatarBorderRadius(36), borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   groupName:        { flex: 1, fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
-  notifGroupRow:    { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
-  notifExpanded:    { paddingHorizontal: 16, paddingBottom: 8 },
-  reminderRow:      { paddingVertical: 10 },
-  reminderLabel:    { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, marginBottom: 8 },
-  reminderChip:     { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border },
-  reminderChipActive:   { borderColor: Colors.accent, backgroundColor: Colors.accent },
-  reminderChipText:     { fontSize: 12, color: Colors.textSub, fontFamily: Fonts.regular },
-  reminderChipTextActive:{ color: Colors.accentFg, fontFamily: Fonts.semiBold },
-  signOutBtn:       { marginTop: 20, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
-  signOutText:      { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.regular },
+  infoRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14 },
+  infoLabel:        { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted },
+  infoValue:        { fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
+  infoLabelMuted:   { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, opacity: 0.65 },
+  infoValueMuted:   { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, opacity: 0.65 },
+  displayNameRow:   { height: 34, justifyContent: 'center', marginBottom: 2 },
+  displayNameEditRow:{ flexDirection: 'row', alignItems: 'center', gap: 8 },
+  displayNameReadRow:{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  displayNameInput: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    backgroundColor: 'transparent',
+    fontSize: 18,
+    lineHeight: 22,
+    color: Colors.text,
+    fontFamily: Fonts.extraBold,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null),
+  },
+  displayNameActionBtn:{
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  displayNameActionBtnChange:{ minWidth: 160 },
+  displayNameActionBtnSave:{ paddingHorizontal: 10, minWidth: undefined },
+  displayNameActionText:{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
+  signOutBtn:       { marginTop: 20, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', alignItems: 'center' },
+  signOutText:      { fontSize: 14, color: '#DC2626', fontFamily: Fonts.semiBold },
 });

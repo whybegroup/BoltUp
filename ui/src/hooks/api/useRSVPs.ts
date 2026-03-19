@@ -8,8 +8,7 @@ export function useCreateOrUpdateRSVP(eventId: string) {
   return useMutation({
     mutationFn: (data: RSVPInput) => EventsService.upsertRsvp(eventId, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.all });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
     },
   });
 }
@@ -20,8 +19,7 @@ export function useDeleteRSVP(eventId: string) {
   return useMutation({
     mutationFn: (userId: string) => EventsService.deleteRsvp(eventId, userId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.events.all });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
     },
   });
 }

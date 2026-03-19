@@ -3,13 +3,13 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-nati
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
 import { isSameDay, isToday, fmtTime } from '../utils/helpers';
-import type { EventDetailed, Group } from '@boltup/client';
+import type { EventDetailed, GroupScoped } from '@boltup/client';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface CalendarViewProps {
   events: EventDetailed[];
-  groups: Group[];
+  groups: GroupScoped[];
   groupColors?: Record<string, string>;
   onSelectEvent: (ev: EventDetailed) => void;
 }
@@ -44,7 +44,7 @@ export function CalendarView({ events, groups, groupColors = {}, onSelectEvent }
   const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
   
   const groupsMap = useMemo(() => {
-    const map: Record<string, Group> = {};
+    const map: Record<string, GroupScoped> = {};
     groups.forEach(g => map[g.id] = g);
     return map;
   }, [groups]);

@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Group model - represents a social group
+ * Group model - represents a social group (full, for members/admins)
  */
 export type Group = {
     /**
@@ -22,6 +22,14 @@ export type Group = {
      * Group thumbnail/avatar URL
      */
     thumbnail?: string | null;
+    /**
+     * DiceBear icons seed for generated avatar
+     */
+    avatarSeed?: string | null;
+    /**
+     * Unique invite code for joining the group
+     */
+    inviteCode?: string | null;
     /**
      * Whether the group is publicly visible
      */

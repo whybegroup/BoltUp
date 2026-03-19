@@ -1,26 +1,35 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, Switch } from 'react-native';
+import Toast from 'react-native-toast-message';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radius } from '../../constants/theme';
-import { getGroupColor, getDefaultGroupThemeFromName } from '../../utils/helpers';
-import { useGroups, useAllGroupMemberColors } from '../../hooks/api';
-
-const ME_ID = 'u1';
-
-function defaultGroupAvatarUri(groupId: string): string {
-  return `https://api.dicebear.com/8.x/bottts/png?seed=${encodeURIComponent(groupId)}&size=256&backgroundType=gradientLinear`;
-}
+import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../../utils/helpers';
+import { useGroups, useAllGroupMemberColors, useJoinGroup, useJoinByInviteCode, useLeaveGroup } from '../../hooks/api';
+import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
+import { GroupAvatar } from '../../components/GroupAvatar';
 
 export default function ExploreScreen() {
-  const [query,  setQuery]  = useState('');
-  const [code,   setCode]   = useState('');
-  const [joined, setJoined] = useState<string[]>([]);
+  const [query, setQuery] = useState('');
+  const [code, setCode] = useState('');
+  const [showJoined, setShowJoined] = useState(true);
+  const { userId: currentUserId } = useCurrentUserContext();
 
-  const { data: groups = [], isLoading: loading } = useGroups();
-  const { data: groupColors = {} } = useAllGroupMemberColors(ME_ID);
+  const { data: groups = [], isLoading: loading } = useGroups(currentUserId ?? '');
+  const joinGroup = useJoinGroup();
+  const joinByCode = useJoinByInviteCode();
+  const leaveGroup = useLeaveGroup({
+    onError: (e: any) => {
+      const msg = e?.body?.error ?? e?.message ?? 'Failed to leave group';
+      Toast.show({ type: 'error', text1: msg });
+    },
+  });
+  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
 
-  const results = groups.filter(g =>
-    g.isPublic && (!query || g.name.toLowerCase().includes(query.toLowerCase()) || g.desc.toLowerCase().includes(query.toLowerCase()))
+  const results = groups.filter(
+    (g) =>
+      g.isPublic &&
+      (showJoined || g.membershipStatus === 'none') &&
+      (!query || g.name.toLowerCase().includes(query.toLowerCase()) || g.desc.toLowerCase().includes(query.toLowerCase()))
   );
 
   return (
@@ -48,38 +57,77 @@ export default function ExploreScreen() {
               autoCapitalize="characters"
             />
             <TouchableOpacity
-              style={[styles.joinBtn, { opacity: code.trim() ? 1 : 0.4 }]}
-              disabled={!code.trim()}
+              onPress={() => {
+                if (!currentUserId?.trim() || !code.trim()) return;
+                joinByCode.mutate(
+                  { inviteCode: code.trim(), userId: currentUserId },
+                  {
+                    onSuccess: (data: { groupName?: string; status?: string }) => {
+                      setCode('');
+                      const msg =
+                        data?.status === 'joined'
+                          ? `Joined ${data.groupName || 'the group'}`
+                          : `Submitted request to join ${data.groupName || 'the group'}`;
+                      Toast.show({ type: 'success', text1: msg });
+                    },
+                    onError: (e: any) => {
+                      const msg = e?.body?.error ?? e?.message ?? 'Invalid invite code';
+                      Toast.show({ type: 'error', text1: msg });
+                    },
+                  }
+                );
+              }}
+              style={[styles.joinBtn, { opacity: code.trim() && currentUserId ? 1 : 0.4 }]}
+              disabled={!code.trim() || !currentUserId || joinByCode.isPending}
             >
-              <Text style={styles.joinBtnText}>Join</Text>
+              <Text style={styles.joinBtnText}>{joinByCode.isPending ? 'Joining…' : 'Join'}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Results */}
-        <Text style={styles.sectionLabel}>{query ? `Results for "${query}"` : 'Public Groups'}</Text>
+        <View style={[styles.sectionRow, { marginBottom: 10 }]}>
+          <Text style={styles.sectionLabel}>{query ? `Results for "${query}"` : 'Public Groups'}</Text>
+          <View style={styles.showJoinedRow}>
+            <Text style={styles.showJoinedLabel}>Show joined</Text>
+            <Switch value={showJoined} onValueChange={setShowJoined} trackColor={{ false: Colors.border, true: Colors.border }} thumbColor="#E5E5E5" />
+          </View>
+        </View>
         <View style={styles.card}>
           {results.map((g, i) => {
             const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
             const p = getGroupColor(userColorHex);
-            const isJoined = joined.includes(g.id);
+            const isJoined = g.membershipStatus === 'member' || g.membershipStatus === 'admin' || g.membershipStatus === 'pending';
             return (
               <View key={g.id} style={[styles.row, i < results.length - 1 && styles.rowBorder]}>
-                <Image 
-                  source={{ uri: g.thumbnail || defaultGroupAvatarUri(g.id) }} 
-                  style={[styles.groupIcon, { backgroundColor: p.row, borderColor: p.cal }]} 
-                />
+                <View style={[styles.groupIcon, { backgroundColor: p.row, borderColor: p.cal }]}>
+                  <GroupAvatar group={g} size={44} />
+                </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.groupName}>{g.name}</Text>
                   <Text style={styles.groupDesc} numberOfLines={1}>{g.desc}</Text>
-                  <Text style={styles.groupMeta}>{g.memberIds.length} members</Text>
+                  <Text style={styles.groupMeta}>{g.memberCount} members</Text>
                 </View>
                 <TouchableOpacity
-                  onPress={() => setJoined(p => isJoined ? p.filter(x => x !== g.id) : [...p, g.id])}
+                  onPress={() => {
+                    if (!currentUserId?.trim()) return;
+                    if (isJoined) {
+                      leaveGroup.mutate({ groupId: g.id, userId: currentUserId });
+                    } else {
+                      joinGroup.mutate({ groupId: g.id, userId: currentUserId });
+                    }
+                  }}
+                  disabled={!currentUserId || joinGroup.isPending || leaveGroup.isPending}
                   style={[styles.joinGroupBtn, isJoined && styles.joinGroupBtnJoined]}
                 >
                   <Text style={[styles.joinGroupBtnText, isJoined && styles.joinGroupBtnTextJoined]}>
-                    {isJoined ? 'Joined ✓' : 'Join'}
+                    {isJoined
+                      ? leaveGroup.isPending && leaveGroup.variables?.groupId === g.id
+                        ? 'Leaving…'
+                        : 'Joined ✓'
+                      : joinGroup.isPending && joinGroup.variables?.groupId === g.id
+                        ? 'Joining…'
+                        : 'Join'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -108,11 +156,14 @@ const styles = StyleSheet.create({
   codeInput:          { padding: 9, paddingHorizontal: 14, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
   joinBtn:            { paddingHorizontal: 18, paddingVertical: 9, borderRadius: Radius.lg, backgroundColor: Colors.accent },
   joinBtnText:        { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
-  sectionLabel:       { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
+  sectionLabel:       { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 },
+  sectionRow:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  showJoinedRow:      { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  showJoinedLabel:    { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSub },
   card:               { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
   row:                { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14 },
   rowBorder:          { borderBottomWidth: 1, borderBottomColor: Colors.border },
-  groupIcon:          { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  groupIcon:          { width: 44, height: 44, borderRadius: groupAvatarBorderRadius(44), borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   groupName:          { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 1 },
   groupDesc:          { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 2 },
   groupMeta:          { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular },

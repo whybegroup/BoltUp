@@ -1,0 +1,21 @@
+---
+description: Daniel's personal preferences for AI responses
+alwaysApply: true
+---
+
+# Response Style Preferences
+
+## No Summaries
+- Do NOT generate summary sections at the end of responses
+- Do NOT create recap or "what was done" sections
+- Just do the work and move on
+
+## No Documentation
+- Do NOT create documentation files (.md, README, guides) unless explicitly requested
+- Do NOT create SETUP.md, IMPLEMENTATION.md, GUIDE.md, etc.
+- Only create docs when user specifically asks for documentation
+
+## Concise Communication
+- Keep responses brief and to the point
+- Focus on the actual work, not explanations
+- Let the code speak for itself

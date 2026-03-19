@@ -2,12 +2,12 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtMonthShort, dDiff, isToday as checkToday } from '../utils/helpers';
-import type { EventDetailed, Group } from '@boltup/client';
+import type { EventDetailed, GroupScoped } from '@boltup/client';
 import { AvatarStack } from './ui';
 
 interface EventRowProps {
   ev: EventDetailed;
-  group?: Group;
+  group?: GroupScoped;
   groupColorHex?: string;
   onPress: () => void;
   onGroupPress?: (groupId: string) => void;

@@ -6,11 +6,12 @@ import {
   Path,
   Post,
   Put,
+  Query,
   Route,
   Tags,
   SuccessResponse,
 } from 'tsoa';
-import { Group, GroupInput, GroupUpdate, User, MembershipRequestAction } from '../models';
+import { Group, GroupScoped, GroupInput, GroupUpdate, User, MembershipRequestAction } from '../models';
 import { GroupService } from '../services/GroupService';
 
 @Route('groups')
@@ -20,20 +21,35 @@ export class GroupController extends Controller {
 
   /**
    * Get all groups
-   * @summary Retrieves a list of all groups with their admin and member IDs
+   * @summary Retrieves a list of groups with info scoped by user's membership status. Requires userId.
+   * @param includeDeleted When true, includes soft-deleted groups where user is superadmin.
    */
   @Get()
-  public async getGroups(): Promise<Group[]> {
-    return this.groupService.getAll();
+  public async getGroups(
+    @Query() userId: string,
+    @Query() includeDeleted?: boolean
+  ): Promise<GroupScoped[]> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.getAllForUser(userId, includeDeleted === true);
   }
 
   /**
    * Get group by ID
-   * @summary Retrieves a single group with member information
+   * @summary Retrieves a single group with info scoped by user's membership status. Requires userId.
    */
   @Get('{id}')
-  public async getGroup(@Path() id: string): Promise<Group> {
-    const group = await this.groupService.getById(id);
+  public async getGroup(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<GroupScoped> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const group = await this.groupService.getByIdForUser(id, userId);
     if (!group) {
       this.setStatus(404);
       throw new Error('Group not found');
@@ -43,15 +59,25 @@ export class GroupController extends Controller {
 
   /**
    * Get group members
-   * @summary Retrieves all members of a specific group
+   * @summary Retrieves all members of a specific group. Requires caller to be a member.
    */
   @Get('{id}/members')
-  public async getGroupMembers(@Path() id: string): Promise<User[]> {
-    // First check if group exists
-    const group = await this.groupService.getById(id);
+  public async getGroupMembers(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<User[]> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const group = await this.groupService.getByIdForUser(id, userId);
     if (!group) {
       this.setStatus(404);
       throw new Error('Group not found');
+    }
+    if (group.membershipStatus !== 'member' && group.membershipStatus !== 'admin') {
+      this.setStatus(403);
+      throw new Error('Must be a member to view group members');
     }
     return this.groupService.getMembers(id);
   }
@@ -69,54 +95,349 @@ export class GroupController extends Controller {
 
   /**
    * Update a group
-   * @summary Updates an existing group's information and/or members
+   * @summary Updates an existing group. Requires admin.
    */
   @Put('{id}')
   public async updateGroup(
     @Path() id: string,
+    @Query() userId: string,
     @Body() body: GroupUpdate
-  ): Promise<Group> {
-    return this.groupService.update(id, body);
-  }
-
-  /**
-   * Delete a group
-   * @summary Deletes a group and all its associated data
-   */
-  @Delete('{id}')
-  @SuccessResponse('204', 'No Content')
-  public async deleteGroup(@Path() id: string): Promise<void> {
-    await this.groupService.delete(id);
-    this.setStatus(204);
-  }
-
-  /**
-   * Get pending membership requests
-   * @summary Retrieves all pending membership requests for a group
-   */
-  @Get('{id}/requests/pending')
-  public async getPendingRequests(@Path() id: string): Promise<User[]> {
-    const group = await this.groupService.getById(id);
-    if (!group) {
+  ): Promise<GroupScoped> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const scoped = await this.groupService.getByIdForUser(id, userId);
+    if (!scoped) {
       this.setStatus(404);
       throw new Error('Group not found');
     }
-    return this.groupService.getPendingRequests(id);
+    if (scoped.membershipStatus !== 'admin') {
+      this.setStatus(403);
+      throw new Error('Must be admin to update group');
+    }
+    await this.groupService.update(id, body);
+    const updated = await this.groupService.getByIdForUser(id, userId);
+    return updated!;
   }
 
   /**
-   * Handle membership request
-   * @summary Approve or reject a membership request
+   * Hard-delete a group
+   * @summary Permanently removes a group and all its data. Superadmin only.
    */
-  @Post('{id}/requests/handle')
-  public async handleMembershipRequest(
+  @Delete('{id}')
+  @SuccessResponse('204', 'No Content')
+  public async deleteGroup(
     @Path() id: string,
-    @Body() body: MembershipRequestAction
+    @Query() userId: string
+  ): Promise<void> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    try {
+      await this.groupService.hardDelete(id, userId);
+      this.setStatus(204);
+    } catch (e: any) {
+      if (e?.message?.includes('superadmin')) {
+        this.setStatus(403);
+        throw new Error('Must be superadmin to delete group');
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Soft-delete a group
+   * @summary Marks a group as deleted. Superadmin only.
+   */
+  @Post('{id}/soft-delete')
+  @SuccessResponse('200', 'OK')
+  public async softDeleteGroup(
+    @Path() id: string,
+    @Body() body: { userId: string }
+  ): Promise<{ success: boolean }> {
+    if (!body?.userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    try {
+      await this.groupService.softDelete(id, body.userId);
+      this.setStatus(200);
+      return { success: true };
+    } catch (e: any) {
+      if (e?.message?.includes('superadmin')) {
+        this.setStatus(403);
+        throw new Error('Must be superadmin to soft-delete group');
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Recover a soft-deleted group
+   * @summary Restores a soft-deleted group. Superadmin only.
+   */
+  @Post('{id}/recover')
+  @SuccessResponse('200', 'OK')
+  public async recoverGroup(
+    @Path() id: string,
+    @Body() body: { userId: string }
+  ): Promise<{ success: boolean }> {
+    if (!body?.userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    try {
+      await this.groupService.recoverGroup(id, body.userId);
+      this.setStatus(200);
+      return { success: true };
+    } catch (e: any) {
+      if (e?.message?.includes('superadmin')) {
+        this.setStatus(403);
+        throw new Error('Must be superadmin to recover group');
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Join a group by invite code
+   * @summary Join or request to join a group using its invite code
+   */
+  @Post('join-by-code')
+  @SuccessResponse('200', 'OK')
+  public async joinByInviteCode(
+    @Body() body: { inviteCode: string; userId: string }
+  ): Promise<{ success: boolean; groupName: string; status: 'joined' | 'pending' }> {
+    if (!body?.inviteCode?.trim()) {
+      this.setStatus(400);
+      throw new Error('inviteCode is required');
+    }
+    if (!body?.userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const result = await this.groupService.joinByInviteCode(body.inviteCode, body.userId);
+    this.setStatus(200);
+    return { success: true, ...result };
+  }
+
+  /**
+   * Leave a group
+   * @summary Remove the current user from the group. Superadmin cannot leave.
+   */
+  @Post('{id}/leave')
+  @SuccessResponse('200', 'OK')
+  public async leaveGroup(
+    @Path() id: string,
+    @Body() body: { userId: string }
+  ): Promise<{ success: boolean }> {
+    if (!body?.userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    try {
+      await this.groupService.leaveGroup(id, body.userId);
+      this.setStatus(200);
+      return { success: true };
+    } catch (e: any) {
+      if (e?.message?.includes('Superadmin cannot leave')) {
+        this.setStatus(403);
+        throw new Error('Superadmin cannot leave the group. Use soft-delete or hard-delete instead.');
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Join a group
+   * @summary Join a public group (immediate) or request to join a private group (pending)
+   */
+  @Post('{id}/join')
+  @SuccessResponse('200', 'OK')
+  public async joinGroup(
+    @Path() id: string,
+    @Body() body: { userId: string }
   ): Promise<void> {
     const group = await this.groupService.getById(id);
     if (!group) {
       this.setStatus(404);
       throw new Error('Group not found');
+    }
+    await this.groupService.joinGroup(id, body.userId);
+    this.setStatus(200);
+  }
+
+  /**
+   * Get pending membership requests
+   * @summary Retrieves pending requests for a group. Requires admin.
+   */
+  @Get('{id}/requests/pending')
+  public async getPendingRequests(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<User[]> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const group = await this.groupService.getByIdForUser(id, userId);
+    if (!group) {
+      this.setStatus(404);
+      throw new Error('Group not found');
+    }
+    if (group.membershipStatus !== 'admin') {
+      this.setStatus(403);
+      throw new Error('Must be admin to view pending requests');
+    }
+    return this.groupService.getPendingRequests(id);
+  }
+
+  /**
+   * Remove a member from the group
+   * @summary Admin removes a member. Cannot remove superadmin.
+   */
+  @Post('{id}/members/{memberId}/remove')
+  @SuccessResponse('200', 'OK')
+  public async removeMember(
+    @Path() id: string,
+    @Path() memberId: string,
+    @Body() body: { performedBy: string }
+  ): Promise<{ success: boolean }> {
+    if (!body?.performedBy) {
+      this.setStatus(400);
+      throw new Error('performedBy is required');
+    }
+    const group = await this.groupService.getByIdForUser(id, body.performedBy);
+    if (!group) {
+      this.setStatus(404);
+      throw new Error('Group not found');
+    }
+    if (group.membershipStatus !== 'admin') {
+      this.setStatus(403);
+      throw new Error('Must be admin to remove members');
+    }
+    try {
+      await this.groupService.removeMember(id, memberId, body.performedBy);
+      this.setStatus(200);
+      return { success: true };
+    } catch (e: any) {
+      if (e?.message?.includes('superadmin')) {
+        this.setStatus(403);
+        throw new Error('Cannot remove superadmin from group');
+      }
+      if (e?.message?.includes('Member not found')) {
+        this.setStatus(404);
+        throw e;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Set a member's role (admin or member)
+   * @summary Admin sets a member's role. Cannot change superadmin.
+   */
+  @Put('{id}/members/{memberId}/role')
+  @SuccessResponse('200', 'OK')
+  public async setMemberRole(
+    @Path() id: string,
+    @Path() memberId: string,
+    @Body() body: { performedBy: string; role: 'admin' | 'member' }
+  ): Promise<{ success: boolean }> {
+    if (!body?.performedBy || !body?.role) {
+      this.setStatus(400);
+      throw new Error('performedBy and role are required');
+    }
+    const group = await this.groupService.getByIdForUser(id, body.performedBy);
+    if (!group) {
+      this.setStatus(404);
+      throw new Error('Group not found');
+    }
+    if (group.membershipStatus !== 'admin') {
+      this.setStatus(403);
+      throw new Error('Must be admin to change member roles');
+    }
+    try {
+      await this.groupService.setMemberRole(id, memberId, body.role, body.performedBy);
+      this.setStatus(200);
+      return { success: true };
+    } catch (e: any) {
+      if (e?.message?.includes('superadmin')) {
+        this.setStatus(403);
+        throw new Error('Cannot change superadmin role');
+      }
+      if (e?.message?.includes('Member not found')) {
+        this.setStatus(404);
+        throw e;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Transfer superadmin role to another member
+   * @summary Superadmin transfers ownership to an admin or member.
+   */
+  @Put('{id}/superadmin')
+  @SuccessResponse('200', 'OK')
+  public async setSuperAdmin(
+    @Path() id: string,
+    @Body() body: { performedBy: string; userId: string }
+  ): Promise<{ success: boolean }> {
+    if (!body?.performedBy || !body?.userId) {
+      this.setStatus(400);
+      throw new Error('performedBy and userId are required');
+    }
+    const group = await this.groupService.getByIdForUser(id, body.performedBy);
+    if (!group) {
+      this.setStatus(404);
+      throw new Error('Group not found');
+    }
+    if (group.superAdminId !== body.performedBy) {
+      this.setStatus(403);
+      throw new Error('Must be superadmin to transfer ownership');
+    }
+    try {
+      await this.groupService.setSuperAdmin(id, body.userId, body.performedBy);
+      this.setStatus(200);
+      return { success: true };
+    } catch (e: any) {
+      if (e?.message?.includes('Already superadmin')) {
+        this.setStatus(400);
+        throw e;
+      }
+      if (e?.message?.includes('Member not found')) {
+        this.setStatus(404);
+        throw e;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Handle membership request
+   * @summary Approve or reject a membership request. Requires admin.
+   */
+  @Post('{id}/requests/handle')
+  public async handleMembershipRequest(
+    @Path() id: string,
+    @Query() userId: string,
+    @Body() body: MembershipRequestAction
+  ): Promise<void> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    const group = await this.groupService.getByIdForUser(id, userId);
+    if (!group) {
+      this.setStatus(404);
+      throw new Error('Group not found');
+    }
+    if (group.membershipStatus !== 'admin') {
+      this.setStatus(403);
+      throw new Error('Must be admin to handle membership requests');
     }
     await this.groupService.handleMembershipRequest(id, body);
     this.setStatus(200);
