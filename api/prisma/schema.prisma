@@ -15,12 +15,13 @@ generator client {
 // ============================================
 
 model User {
-  id          String   @id @default(uuid())
-  name        String
+  id         String   @id @default(uuid())
+  name       String
   displayName String
-  avatar      String?  // DiceBear bottts seed
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  avatarSeed String?  // DiceBear bottts seed for generated avatar
+  thumbnail  String?  // Optional custom avatar image URL
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // Relations
   createdEvents    Event[]

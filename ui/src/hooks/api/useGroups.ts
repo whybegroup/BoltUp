@@ -21,11 +21,12 @@ export function useGroup(id: string, userId: string) {
   });
 }
 
-export function useGroupMembers(id: string, userId: string) {
+export function useGroupMembers(id: string, userId: string, opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.groups.members(id),
     queryFn: () => GroupsService.getGroupMembers(id, userId),
-    enabled: !!id && !!userId,
+    enabled: opts?.enabled !== false && !!id && !!userId,
+    refetchInterval: 3000, // Poll so member list and avatars stay fresh
   });
 }
 
@@ -152,6 +153,7 @@ export function useHandleMembershipRequest(id: string, userId: string) {
     mutationFn: (data: MembershipRequestAction) => GroupsService.handleMembershipRequest(id, userId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(id, userId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.members(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.pendingRequests(id) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
     },
@@ -166,6 +168,7 @@ export function useRemoveMember(groupId: string, performedBy: string) {
       GroupsService.removeMember(groupId, memberId, { performedBy }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, performedBy) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.members(groupId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.pendingRequests(groupId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
     },
@@ -180,6 +183,7 @@ export function useSetMemberRole(groupId: string, performedBy: string) {
       GroupsService.setMemberRole(groupId, memberId, { performedBy, role }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, performedBy) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.members(groupId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
     },
   });
@@ -193,6 +197,7 @@ export function useSetSuperAdmin(groupId: string, performedBy: string) {
       GroupsService.setSuperAdmin(groupId, { performedBy, userId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, performedBy) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.members(groupId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
     },
   });

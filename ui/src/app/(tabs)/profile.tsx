@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Platform, TextInput, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Platform, TextInput, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors, Fonts, Radius } from '../../constants/theme';
@@ -7,15 +7,9 @@ import { getGroupColor, getDefaultGroupThemeFromName, avatarColor, groupAvatarBo
 import { useGroups, useEvents, useAllGroupMemberColors, useUpdateUser } from '../../hooks/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
-import { BotttsAvatar } from '../../components/Avatar';
+import { UserAvatar } from '../../components/UserAvatar';
+import { UserAvatarPicker } from '../../components/UserAvatarPicker';
 import { GroupAvatar } from '../../components/GroupAvatar';
-
-const BOTTTS_AVATAR_SEEDS = [
-  'profile-default', 'profile-blue', 'profile-green', 'profile-orange',
-  'profile-purple', 'profile-pink', 'profile-red', 'profile-teal',
-  'profile-yellow', 'profile-cyan', 'profile-indigo', 'profile-coral',
-  'profile-mint', 'profile-amber', 'profile-rose', 'profile-sky',
-];
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -83,12 +77,21 @@ export default function ProfileScreen() {
   const [draftDisplayName, setDraftDisplayName] = useState('');
   const [editingDisplayName, setEditingDisplayName] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [avatarSeedDraft, setAvatarSeedDraft] = useState('');
+  const [avatarThumbnailDraft, setAvatarThumbnailDraft] = useState<string | null>(null);
 
   useEffect(() => {
     if (me && !editingDisplayName) {
       setDraftDisplayName(me.displayName || me.name || '');
     }
   }, [me?.displayName, me?.name, editingDisplayName]);
+
+  useEffect(() => {
+    if (showAvatarPicker && me) {
+      setAvatarSeedDraft(me.avatarSeed ?? me.name ?? '');
+      setAvatarThumbnailDraft(me.thumbnail ?? null);
+    }
+  }, [showAvatarPicker, me?.avatarSeed, me?.name, me?.thumbnail]);
 
   const myGroups = useMemo(
     () =>
@@ -117,8 +120,8 @@ export default function ProfileScreen() {
             style={[styles.bigAvatar, { backgroundColor: avatarColor(me.name) }]}
             activeOpacity={0.8}
           >
-            {me.avatar ? (
-              <BotttsAvatar seed={me.avatar} size={60} style={styles.bigAvatarImg} />
+            {(me.avatarSeed ?? me.thumbnail) ? (
+              <UserAvatar user={me} size={60} style={styles.bigAvatarImg} />
             ) : (
               <Text style={styles.bigAvatarText}>{me.name[0]}</Text>
             )}
@@ -237,51 +240,22 @@ export default function ProfileScreen() {
       </ScrollView>
 
       {/* Avatar picker */}
-      {showAvatarPicker && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowAvatarPicker(false)}>
-          <TouchableOpacity
-            style={styles.avatarOverlay}
-            onPress={() => setShowAvatarPicker(false)}
-            activeOpacity={1}
-          >
-            <View style={styles.avatarPickerCard} onStartShouldSetResponder={() => true}>
-              <View style={styles.avatarPickerHeader}>
-                <Text style={styles.avatarPickerTitle}>Choose avatar</Text>
-                <TouchableOpacity onPress={() => setShowAvatarPicker(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} activeOpacity={0.7}>
-                  <Text style={{ fontSize: 20, color: Colors.textMuted, lineHeight: 24 }}>✕</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.avatarGrid}>
-                <TouchableOpacity
-                  onPress={() => {
-                    updateUser.mutate({ avatar: null });
-                    setShowAvatarPicker(false);
-                  }}
-                  style={[styles.avatarCell, !me.avatar && styles.avatarCellActive]}
-                  activeOpacity={0.8}
-                >
-                  <View style={[styles.avatarCellLetter, { backgroundColor: avatarColor(me.name) }]}>
-                    <Text style={styles.avatarCellLetterText}>{me.name[0]}</Text>
-                  </View>
-                </TouchableOpacity>
-                {BOTTTS_AVATAR_SEEDS.map((seed) => (
-                  <TouchableOpacity
-                    key={seed}
-                    onPress={() => {
-                      updateUser.mutate({ avatar: seed });
-                      setShowAvatarPicker(false);
-                    }}
-                    style={[styles.avatarCell, me.avatar === seed && styles.avatarCellActive]}
-                    activeOpacity={0.8}
-                  >
-                    <BotttsAvatar seed={seed} size={72} style={styles.avatarCellImg} />
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      )}
+      <UserAvatarPicker
+        visible={showAvatarPicker}
+        onClose={() => setShowAvatarPicker(false)}
+        seed={avatarSeedDraft}
+        onSeedChange={setAvatarSeedDraft}
+        thumbnail={avatarThumbnailDraft}
+        onThumbnailChange={setAvatarThumbnailDraft}
+        userName={me?.name}
+        onSave={async (avatarSeed, thumbnail) => {
+          await updateUser.mutateAsync({
+            avatarSeed: avatarSeed.trim() || null,
+            thumbnail: thumbnail ?? null,
+          });
+        }}
+        isSaving={updateUser.isPending}
+      />
     </SafeAreaView>
   );
 }
@@ -294,16 +268,6 @@ const styles = StyleSheet.create({
   bigAvatar:        { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
   bigAvatarImg:     { width: 60, height: 60, borderRadius: 30 },
   bigAvatarText:    { fontSize: 24, fontFamily: Fonts.bold, color: '#fff' },
-  avatarOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  avatarPickerCard: { backgroundColor: Colors.surface, borderRadius: 18, borderWidth: 1, borderColor: Colors.border, padding: 16, width: '100%', maxWidth: 360 },
-  avatarPickerHeader:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  avatarPickerTitle:{ fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
-  avatarGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  avatarCell:       { width: 72, height: 72, borderRadius: groupAvatarBorderRadius(72), borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg, overflow: 'hidden' },
-  avatarCellActive: { borderColor: Colors.accent },
-  avatarCellImg:    { borderRadius: groupAvatarBorderRadius(72) },
-  avatarCellLetter: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
-  avatarCellLetterText:{ fontSize: 28, fontFamily: Fonts.bold, color: '#fff' },
   userName:         { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text, marginBottom: 2 },
   userHandle:       { fontSize: 14, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 8 },
   sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },

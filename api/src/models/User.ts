@@ -8,8 +8,10 @@ export interface User {
   name: string;
   /** User's display name with location and year */
   displayName: string;
-  /** DiceBear bottts avatar seed */
-  avatar?: string | null;
+  /** DiceBear bottts seed for generated avatar */
+  avatarSeed?: string | null;
+  /** Optional custom avatar image URL */
+  thumbnail?: string | null;
   /** Timestamp when the user was created */
   createdAt: Date;
   /** Timestamp when the user was last updated */
@@ -23,7 +25,8 @@ export interface UserInput {
   id: string;
   name: string;
   displayName: string;
-  avatar?: string | null;
+  avatarSeed?: string | null;
+  thumbnail?: string | null;
 }
 
 /**
@@ -32,5 +35,6 @@ export interface UserInput {
 export interface UserUpdate {
   name?: string;
   displayName?: string;
-  avatar?: string | null;
+  avatarSeed?: string | null;
+  thumbnail?: string | null;
 }

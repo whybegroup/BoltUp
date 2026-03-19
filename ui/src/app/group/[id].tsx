@@ -5,13 +5,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../../utils/helpers';
-import { Avatar, NavBar, Toggle } from '../../components/ui';
-import { useGroup, useUsers, useGroupMemberColor, usePendingRequests, useHandleMembershipRequest, useUpdateGroup, useLeaveGroup, useSoftDeleteGroup, useDeleteGroup, useRecoverGroup, useRemoveMember, useSetMemberRole, useSetSuperAdmin } from '../../hooks/api';
+import { NavBar, Toggle } from '../../components/ui';
+import { useGroup, useUsers, useGroupMembers, useGroupMemberColor, usePendingRequests, useHandleMembershipRequest, useUpdateGroup, useLeaveGroup, useSoftDeleteGroup, useDeleteGroup, useRecoverGroup, useRemoveMember, useSetMemberRole, useSetSuperAdmin } from '../../hooks/api';
 import { MembershipRequestAction } from '@boltup/client';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { GroupAvatar } from '../../components/GroupAvatar';
 import { GroupAvatarPicker } from '../../components/GroupAvatarPicker';
+import { UserAvatar } from '../../components/UserAvatar';
 
 export default function GroupDetailScreen() {
   const { id }   = useLocalSearchParams<{ id: string }>();
@@ -27,6 +28,9 @@ export default function GroupDetailScreen() {
   const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
   const { data: memberColorData } = useGroupMemberColor(groupId, currentUserId ?? '');
   const { data: users = [] } = useUsers();
+  const { data: groupMembers = [] } = useGroupMembers(groupId, currentUserId ?? '', {
+    enabled: !!group && group.membershipStatus !== 'pending',
+  });
   const { data: pendingRequestUsers = [] } = usePendingRequests(groupId, currentUserId ?? '');
   const handleMembershipRequest = useHandleMembershipRequest(groupId, currentUserId ?? '');
   const removeMemberMutation = useRemoveMember(groupId, currentUserId ?? '');
@@ -76,8 +80,15 @@ export default function GroupDetailScreen() {
     return map;
   }, [users]);
 
+  // Prefer groupMembers (includes avatarSeed, thumbnail); fall back to users
+  const membersMap = useMemo(() => {
+    const map: Record<string, any> = {};
+    groupMembers.forEach(u => map[u.id] = u);
+    return map;
+  }, [groupMembers]);
+
   const getUser = (userId: string) => {
-    return usersMap[userId] || { id: userId, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    return membersMap[userId] || usersMap[userId] || { id: userId, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   };
 
   if (!group) {
@@ -421,7 +432,7 @@ export default function GroupDetailScreen() {
                   <View style={[styles.card, styles.pendingCard]}>
                     {pendingRequestUsers.map((user, i) => (
                       <View key={user.id} style={[styles.memberRow, i < pendingRequestUsers.length - 1 && styles.rowBorder]}>
-                        <Avatar name={user.displayName} size={38} />
+                        <UserAvatar user={user} size={38} />
                         <View style={{ flex: 1 }}>
                           <Text style={styles.memberName}>{user.displayName}</Text>
                           <Text style={styles.memberHandle}>{user.name} · wants to join</Text>
@@ -448,7 +459,8 @@ export default function GroupDetailScreen() {
                   const isSuperAdmin= memberId === superAdminId;
                   const isMe        = memberId === currentUserId;
                   const canAction   = !isMe && !isSuperAdmin;
-                  const displayName = getUser(memberId).displayName;
+                  const user = getUser(memberId);
+                  const displayName = user.displayName;
 
                   return (
                     <TouchableOpacity
@@ -457,7 +469,7 @@ export default function GroupDetailScreen() {
                       style={[styles.memberRow, i < (group.memberIds ?? []).length - 1 && styles.rowBorder]}
                       activeOpacity={canAction ? 0.7 : 1}
                     >
-                      <Avatar name={displayName} size={38} />
+                      <UserAvatar user={user} size={38} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.memberName}>
                           {displayName}{isMe ? <Text style={styles.youLabel}> · you</Text> : ''}
@@ -512,10 +524,11 @@ export default function GroupDetailScreen() {
               {(group.memberIds ?? []).map((memberId, i) => {
                 const isSuperAdmin = memberId === superAdminId;
                 const isAdmin = admins.includes(memberId);
-                const displayName = getUser(memberId).displayName;
+                const user = getUser(memberId);
+                const displayName = user.displayName;
                 return (
                   <View key={i} style={[styles.memberRow, i < (group.memberIds ?? []).length - 1 && styles.rowBorder]}>
-                    <Avatar name={displayName} size={38} />
+                    <UserAvatar user={user} size={38} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.memberName}>{displayName}</Text>
                       <Text style={styles.memberRole}>{isSuperAdmin ? 'Super Admin' : isAdmin ? 'Admin' : 'Member'}</Text>

@@ -9,6 +9,7 @@ export type UserInput = {
     id: string;
     name: string;
     displayName: string;
-    avatar?: string | null;
+    avatarSeed?: string | null;
+    thumbnail?: string | null;
 };
 

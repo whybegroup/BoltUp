@@ -18,10 +18,14 @@ components:
         displayName:
           type: string
           description: User's display name with location and year
-        avatar:
+        avatarSeed:
           type: string
           nullable: true
-          description: DiceBear bottts avatar seed
+          description: DiceBear bottts seed for generated avatar
+        thumbnail:
+          type: string
+          nullable: true
+          description: Optional custom avatar image URL
         createdAt:
           type: string
           format: date-time
@@ -47,7 +51,10 @@ components:
           type: string
         displayName:
           type: string
-        avatar:
+        avatarSeed:
+          type: string
+          nullable: true
+        thumbnail:
           type: string
           nullable: true
       required:
@@ -63,7 +70,10 @@ components:
           type: string
         displayName:
           type: string
-        avatar:
+        avatarSeed:
+          type: string
+          nullable: true
+        thumbnail:
           type: string
           nullable: true
       type: object

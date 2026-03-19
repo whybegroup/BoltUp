@@ -614,7 +614,7 @@ export class GroupService {
       select: { role: true },
     });
     if (member?.role === 'superadmin') {
-      throw new Error('Superadmin cannot leave the group. Use soft-delete or hard-delete instead.');
+      throw new Error('Superadmin cannot leave the group.');
     }
     await prisma.groupMember.deleteMany({
       where: {

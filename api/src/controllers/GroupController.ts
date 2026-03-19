@@ -244,7 +244,7 @@ export class GroupController extends Controller {
     } catch (e: any) {
       if (e?.message?.includes('Superadmin cannot leave')) {
         this.setStatus(403);
-        throw new Error('Superadmin cannot leave the group. Use soft-delete or hard-delete instead.');
+        throw new Error('Superadmin cannot leave the group.');
       }
       throw e;
     }

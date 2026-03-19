@@ -19,9 +19,13 @@ export type User = {
      */
     displayName: string;
     /**
-     * DiceBear bottts avatar seed
+     * DiceBear bottts seed for generated avatar
      */
-    avatar?: string | null;
+    avatarSeed?: string | null;
+    /**
+     * Optional custom avatar image URL
+     */
+    thumbnail?: string | null;
     /**
      * Timestamp when the user was created
      */
