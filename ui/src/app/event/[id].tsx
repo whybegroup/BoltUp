@@ -12,7 +12,7 @@ import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtDateFull, time
 import { Avatar, Sheet } from '../../components/ui';
 import { UserAvatar } from '../../components/UserAvatar';
 import { UserAvatarStack } from '../../components/UserAvatarStack';
-import { useEvent, useGroup, useUsers, useCreateOrUpdateRSVP, useDeleteRSVP, useCreateComment, useGroupMemberColor } from '../../hooks/api';
+import { useEvent, useGroup, useUsers, useCreateOrUpdateRSVP, useDeleteRSVP, useCreateComment, useGroupMemberColor, useDeleteEvent } from '../../hooks/api';
 import { uid, getNoResponseIds } from '../../utils/api-helpers';
 import type { EventDetailed, User, GroupScoped, RSVP } from '@moija/client';
 import { RSVPInput } from '@moija/client';
@@ -132,6 +132,7 @@ export default function EventDetailScreen() {
   const createOrUpdateRSVPMutation = useCreateOrUpdateRSVP(eventId || '');
   const deleteRSVPMutation = useDeleteRSVP(eventId || '');
   const createCommentMutation = useCreateComment(eventId || '');
+  const deleteEventMutation = useDeleteEvent();
 
   const [showAttend,  setShowAttend]  = useState(false);
   const [memoFor,     setMemoFor]     = useState<RSVPInput.status | null>(null);
@@ -140,6 +141,7 @@ export default function EventDetailScreen() {
   const [showCommentPhotoModal, setShowCommentPhotoModal] = useState(false);
   const [commentPhotoUrl, setCommentPhotoUrl] = useState('');
   const [lightbox,    setLightbox]    = useState<{ url: string; name: string; ts: Date } | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
 
   if (!eventId) {
@@ -192,10 +194,10 @@ export default function EventDetailScreen() {
   const rsvps   = ev.rsvps || [];
   const going   = rsvps.filter(r => r.status === 'going');
   const notGoing= rsvps.filter(r => r.status === 'notGoing');
+  const usersWithMemos = new Set(rsvps.filter(r => r.memo && r.memo.trim()).map(r => r.userId));
   const maybe   = rsvps.filter(r => r.status === 'maybe');
   const waitlist= rsvps.filter(r => r.status === 'waitlist');
   const myRsvp  = rsvps.find(r => r.userId === currentUserId);
-  const usersWithMemos = new Set(rsvps.filter(r => r.memo && r.memo.trim()).map(r => r.userId));
   const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
   const diff    = dDiff(evStart);
   const isPast  = diff < 0;
@@ -221,6 +223,17 @@ export default function EventDetailScreen() {
   const canGoGoing = !isAtCapacity || myRsvp?.status === 'going';
   const hasWaitlist = ev.enableWaitlist && maxCapacity > 0;
 
+  const handleDeleteEvent = async () => {
+    setShowDeleteConfirm(false);
+    try {
+      await deleteEventMutation.mutateAsync(eventId || '');
+      router.push('/(tabs)/feed');
+    } catch (error) {
+      console.error('Failed to delete event:', error);
+      Alert.alert('Error', 'Failed to delete event');
+    }
+  };
+
   const applyRsvp = async (status: RSVPInput.status, memo?: string) => {
     if (!ev) return;
     
@@ -236,8 +249,9 @@ export default function EventDetailScreen() {
     }
     
     try {
-      // If clicking the same status, toggle it off (delete RSVP)
-      if (myRsvp?.status === status) {
+      // If clicking the same status and no memo, toggle it off (delete RSVP)
+      // If memo is provided, only update the memo without toggling
+      if (myRsvp?.status === status && memo === undefined) {
         await deleteRSVPMutation.mutateAsync(currentUserId);
       } else {
         await createOrUpdateRSVPMutation.mutateAsync({
@@ -310,12 +324,20 @@ export default function EventDetailScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
         {canEdit && (
-          <TouchableOpacity
-            onPress={() => router.push(`/event/edit/${id}`)}
-            style={styles.navEditBtn}
-          >
-            <Text style={styles.navEditText}>Edit</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              onPress={() => router.push(`/event/edit/${id}`)}
+              style={styles.navIconBtn}
+            >
+              <Ionicons name="settings-outline" size={20} color={Colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowDeleteConfirm(true)}
+              style={styles.navIconBtn}
+            >
+              <Ionicons name="trash-outline" size={20} color={Colors.text} />
+            </TouchableOpacity>
+          </>
         )}
         <TouchableOpacity 
           style={styles.navGroup}
@@ -618,6 +640,23 @@ export default function EventDetailScreen() {
           </View>
         </Modal>
       )}
+
+      <Modal visible={showDeleteConfirm} transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
+        <View style={styles.deleteOverlay}>
+          <View style={styles.deleteBox}>
+            <Text style={styles.deleteTitle}>Delete Event</Text>
+            <Text style={styles.deleteMessage}>Are you sure you want to delete this event? This action cannot be undone.</Text>
+            <View style={styles.deleteActions}>
+              <TouchableOpacity onPress={() => setShowDeleteConfirm(false)} style={styles.deleteCancelBtn}>
+                <Text style={styles.deleteCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleDeleteEvent} style={styles.deleteConfirmBtn}>
+                <Text style={styles.deleteConfirmText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -829,8 +868,7 @@ const styles = StyleSheet.create({
   nav:              { flexDirection: 'row', alignItems: 'center', padding: 13, paddingHorizontal: 20, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
   navBack:          { marginRight: 12 },
   navBackText:      { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.medium },
-  navEditBtn:       { marginRight: 12, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.md, backgroundColor: Colors.accent },
-  navEditText:      { fontSize: 14, color: Colors.accentFg, fontFamily: Fonts.semiBold },
+  navIconBtn:       { marginRight: 8, padding: 6 },
   navGroup:         { flexDirection: 'row', alignItems: 'center', gap: 6 },
   groupDot:         { width: 8, height: 8, borderRadius: 4 },
   navGroupName:     { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.medium },
@@ -923,4 +961,13 @@ const styles = StyleSheet.create({
   memoPopup:        { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], padding: 20, width: '100%', maxWidth: 300, ...Shadows.lg },
   memoTextBox:      { backgroundColor: Colors.bg, borderRadius: Radius.lg, padding: 12 },
   memoText:         { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, lineHeight: 22 },
+  deleteOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  deleteBox:        { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], padding: 24, width: '100%', maxWidth: 320, ...Shadows.lg },
+  deleteTitle:      { fontSize: 18, fontFamily: Fonts.bold, color: Colors.text, marginBottom: 8 },
+  deleteMessage:    { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 20, marginBottom: 20 },
+  deleteActions:    { flexDirection: 'row', gap: 12 },
+  deleteCancelBtn:  { flex: 1, paddingVertical: 12, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
+  deleteCancelText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
+  deleteConfirmBtn: { flex: 1, paddingVertical: 12, borderRadius: Radius.lg, backgroundColor: '#EF4444', alignItems: 'center' },
+  deleteConfirmText:{ fontSize: 14, fontFamily: Fonts.semiBold, color: '#fff' },
 });

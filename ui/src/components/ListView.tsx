@@ -18,6 +18,7 @@ interface ListViewProps {
 type Row =
   | { key: string; type: 'year'; year: number }
   | { key: string; type: 'nowDivider' }
+  | { key: string; type: 'upcomingDivider' }
   | { key: string; type: 'event'; event: EventDetailed; isPast: boolean };
 
 export function ListView({
@@ -39,44 +40,30 @@ export function ListView({
 
   const rows: Row[] = useMemo(() => {
     const past: EventDetailed[] = [];
-    const future: EventDetailed[] = [];
-    const futureByYear = new Map<number, EventDetailed[]>();
+    const ongoing: EventDetailed[] = [];
+    const upcoming: EventDetailed[] = [];
     const now = new Date();
+    const nowTime = now.getTime();
 
     for (const ev of events) {
       const evStart = new Date(ev.start);
-      const t = evStart.getTime();
-      if (t < now.getTime()) {
+      const evEnd = new Date(ev.end);
+      
+      if (evEnd.getTime() <= nowTime) {
         past.push(ev);
+      } else if (evStart.getTime() <= nowTime && evEnd.getTime() > nowTime) {
+        ongoing.push(ev);
       } else {
-        future.push(ev);
-        const y = evStart.getFullYear();
-        if (!futureByYear.has(y)) futureByYear.set(y, []);
-        futureByYear.get(y)!.push(ev);
+        upcoming.push(ev);
       }
     }
 
     // Sort each bucket by start time
-    past.sort((a, b) => {
-      const aStart = new Date(a.start);
-      const bStart = new Date(b.start);
-      return aStart.getTime() - bStart.getTime();
-    });
-    future.sort((a, b) => {
-      const aStart = new Date(a.start);
-      const bStart = new Date(b.start);
-      return aStart.getTime() - bStart.getTime();
-    });
-    const futureYears = Array.from(futureByYear.keys()).sort((a, b) => a - b);
-    for (const y of futureYears) {
-      futureByYear.get(y)!.sort((a, b) => {
-        const aStart = new Date(a.start);
-        const bStart = new Date(b.start);
-        return aStart.getTime() - bStart.getTime();
-      });
-    }
+    past.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+    ongoing.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+    upcoming.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
 
-    // Past section (always included when present)
+    // Past section by year
     const pastByYear = past.reduce((acc, ev) => {
       const evStart = new Date(ev.start);
       const y = evStart.getFullYear();
@@ -98,17 +85,37 @@ export function ListView({
       }
     }
 
-    // Now divider
-    r.push({ key: 'now-divider', type: 'nowDivider' });
-
-    // Upcoming by year, but only show year labels for years after current year
-    const currentYear = now.getFullYear();
-    for (const year of futureYears) {
-      if (year > currentYear) {
-        r.push({ key: `future-year-${year}`, type: 'year', year });
+    // Now divider (only if there are ongoing events)
+    if (ongoing.length > 0) {
+      r.push({ key: 'now-divider', type: 'nowDivider' });
+      for (const ev of ongoing) {
+        r.push({ key: `ongoing-${ev.id}`, type: 'event', event: ev, isPast: false });
       }
-      for (const ev of futureByYear.get(year)!) {
-        r.push({ key: `future-${ev.id}`, type: 'event', event: ev, isPast: false });
+    }
+
+    // Upcoming divider
+    if (upcoming.length > 0) {
+      r.push({ key: 'upcoming-divider', type: 'upcomingDivider' });
+      
+      // Group upcoming by year
+      const upcomingByYear = upcoming.reduce((acc, ev) => {
+        const evStart = new Date(ev.start);
+        const y = evStart.getFullYear();
+        if (!acc.has(y)) acc.set(y, [] as EventDetailed[]);
+        acc.get(y)!.push(ev);
+        return acc;
+      }, new Map<number, EventDetailed[]>());
+      
+      const currentYear = now.getFullYear();
+      const upcomingYears = Array.from(upcomingByYear.keys()).sort((a, b) => a - b);
+      
+      for (const year of upcomingYears) {
+        if (year > currentYear) {
+          r.push({ key: `upcoming-year-${year}`, type: 'year', year });
+        }
+        for (const ev of upcomingByYear.get(year)!) {
+          r.push({ key: `upcoming-${ev.id}`, type: 'event', event: ev, isPast: false });
+        }
       }
     }
 
@@ -120,8 +127,19 @@ export function ListView({
       return (
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
-          <View style={styles.todayBadge}>
-            <Text style={styles.todayText}>Now</Text>
+          <View style={styles.nowBadge}>
+            <Text style={styles.nowText}>Now</Text>
+          </View>
+          <View style={styles.dividerLine} />
+        </View>
+      );
+    }
+    if (item.type === 'upcomingDivider') {
+      return (
+        <View style={styles.divider}>
+          <View style={styles.dividerLine} />
+          <View style={styles.upcomingBadge}>
+            <Text style={styles.upcomingText}>Upcoming</Text>
           </View>
           <View style={styles.dividerLine} />
         </View>
@@ -182,16 +200,20 @@ const styles = StyleSheet.create({
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
+    gap: 12,
+    paddingVertical: 16,
     paddingHorizontal: 4,
   },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
+  dividerLine: { 
+    flex: 1, 
+    height: 1, 
+    backgroundColor: Colors.border,
+  },
   yearDivider: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 8,
+    gap: 12,
+    paddingVertical: 12,
     paddingHorizontal: 4,
   },
   yearBadge: {},
@@ -199,36 +221,37 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: Fonts.semiBold,
     color: Colors.textMuted,
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  nowBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  nowText: {
+    fontSize: 11,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textSub,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   upcomingBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
     borderRadius: Radius.full,
+    backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
-    backgroundColor: Colors.bg,
   },
   upcomingText: {
     fontSize: 11,
     fontFamily: Fonts.semiBold,
-    color: Colors.textMuted,
-    letterSpacing: 0.4,
+    color: Colors.textSub,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
-  },
-  todayBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 2,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
-  },
-  todayText: {
-    fontSize: 11,
-    fontFamily: Fonts.bold,
-    color: Colors.todayRed,
-    letterSpacing: 0.4,
   },
 });

@@ -21,8 +21,11 @@ interface EventRowProps {
 export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLast, showGroup = true, meId, users = [] }: EventRowProps) {
   const p      = getGroupColor(groupColorHex || (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899'));
   const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
+  const evEnd = typeof ev.end === 'string' ? new Date(ev.end) : ev.end;
+  const now = Date.now();
+  const isOngoing = evStart.getTime() <= now && evEnd.getTime() > now;
   const diff   = dDiff(evStart);
-  const isPast = evStart.getTime() < Date.now();
+  const isPast = evEnd.getTime() <= Date.now();
   const isToday_ = diff === 0;
   const rsvps  = ev.rsvps || [];
   const going  = rsvps.filter(r => r.status === 'going');
@@ -54,8 +57,9 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
     };
   };
 
+  const timeDisplay = ev.isAllDay ? 'All day' : `${fmtTime(evStart)} – ${fmtTime(evEnd)}`;
   const metaParts = [
-    fmtTime(evStart),
+    timeDisplay,
     myRsvp?.status === 'going' ? 'Going' : null,
     myRsvp?.status === 'notGoing' ? 'Can\'t go' : null,
     cc > 0 ? `${cc} comment${cc !== 1 ? 's' : ''}` : null,
@@ -78,7 +82,14 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
     >
       {/* Content */}
       <View style={styles.content}>
-        <Text style={styles.title} numberOfLines={1}>{ev.title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={styles.title} numberOfLines={1}>{ev.title}</Text>
+          {isOngoing && (
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+            </View>
+          )}
+        </View>
         {showGroup && group && (
           <Pressable
             onPress={() => onGroupPress?.(ev.groupId)}
@@ -264,5 +275,19 @@ const styles = StyleSheet.create({
   },
   badgeDay: {
     fontSize: 17, fontFamily: Fonts.bold, color: Colors.text, lineHeight: 20,
+  },
+  liveBadge: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
   },
 });

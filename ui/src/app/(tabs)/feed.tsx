@@ -177,9 +177,12 @@ export default function FeedScreen() {
       if (selectedGroupIds.length > 0 && !selectedGroupIds.includes(ev.groupId)) return false;
 
       const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
-      const t = evStart.getTime();
-      if (startBound && t < startBound.getTime()) return false;
-      if (endBound && t >= endBound.getTime()) return false;
+      const evEnd = typeof ev.end === 'string' ? new Date(ev.end) : ev.end;
+      
+      // Use end time for start bound (so ongoing events show up)
+      if (startBound && evEnd.getTime() <= startBound.getTime()) return false;
+      // Use start time for end bound
+      if (endBound && evStart.getTime() >= endBound.getTime()) return false;
 
       const rsvps = ev.rsvps || [];
       const myGoing    = !!rsvps.find(r => r.userId === currentUserId && r.status === 'going');

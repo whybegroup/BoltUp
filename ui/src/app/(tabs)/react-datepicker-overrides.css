@@ -1,6 +1,11 @@
 /* Remove dimming when react-datepicker renders via a portal */
 .react-datepicker__portal {
   background-color: transparent !important;
+  z-index: 9999 !important;
+}
+
+.react-datepicker-popper {
+  z-index: 9999 !important;
 }
 
 /* Make the wrapper fit content width */

@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
   avatarDot: {
     position: 'absolute', top: -2, right: -2,
     width: 9, height: 9,
-    backgroundColor: '#10B981',
+    backgroundColor: '#71717A',
     borderWidth: 2, borderColor: Colors.surface,
   },
   avatarExtra: {

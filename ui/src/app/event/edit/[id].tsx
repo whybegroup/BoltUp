@@ -6,7 +6,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Colors, Fonts, Radius } from '../../../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../../../utils/helpers';
-import { useEvent, useGroups, useUpdateEvent, useAllGroupMemberColors } from '../../../hooks/api';
+import { useEvent, useGroups, useUpdateEvent, useAllGroupMemberColors, useDeleteEvent } from '../../../hooks/api';
 import { NavBar, Field, Toggle } from '../../../components/ui';
 import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 
@@ -21,6 +21,7 @@ export default function EditEventScreen() {
   const { data: groups = [], isLoading: groupsLoading } = useGroups(currentUserId ?? '');
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId);
   const updateEventMutation = useUpdateEvent(eventId || '');
+  const deleteEventMutation = useDeleteEvent();
 
   // Format date and times from existing event
   const formatDate = (date: Date | string) => {
@@ -56,6 +57,7 @@ export default function EditEventScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showStartTimePicker, setShowStartTimePicker] = useState(false);
   const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Update form when event loads
   React.useEffect(() => {
@@ -119,6 +121,17 @@ export default function EditEventScreen() {
     } catch (error) {
       console.error('Failed to update event:', error);
       Alert.alert('Error', 'Failed to update event');
+    }
+  };
+
+  const handleDeleteEvent = async () => {
+    setShowDeleteConfirm(false);
+    try {
+      await deleteEventMutation.mutateAsync(eventId || '');
+      router.push('/(tabs)/feed');
+    } catch (error) {
+      console.error('Failed to delete event:', error);
+      Alert.alert('Error', 'Failed to delete event');
     }
   };
 
@@ -599,7 +612,28 @@ export default function EditEventScreen() {
         <TouchableOpacity onPress={submit} style={[styles.submitBtn, !ok && { backgroundColor: Colors.border }]} disabled={!ok}>
           <Text style={[styles.submitBtnText, !ok && { color: Colors.textMuted }]}>Save Changes</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => setShowDeleteConfirm(true)} style={styles.deleteBtn}>
+          <Text style={styles.deleteBtnText}>Delete Event</Text>
+        </TouchableOpacity>
       </ScrollView>
+
+      <Modal visible={showDeleteConfirm} transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
+        <View style={styles.deleteOverlay}>
+          <View style={styles.deleteBox}>
+            <Text style={styles.deleteTitle}>Delete Event</Text>
+            <Text style={styles.deleteMessage}>Are you sure you want to delete this event? This action cannot be undone.</Text>
+            <View style={styles.deleteActions}>
+              <TouchableOpacity onPress={() => setShowDeleteConfirm(false)} style={styles.deleteCancelBtn}>
+                <Text style={styles.deleteCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleDeleteEvent} style={styles.deleteConfirmBtn}>
+                <Text style={styles.deleteConfirmText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -631,4 +665,15 @@ const styles = StyleSheet.create({
   removeThumb:   { position: 'absolute', top: -5, right: -5, width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.text, borderWidth: 2, borderColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
   submitBtn:     { padding: 13, borderRadius: Radius.lg, backgroundColor: Colors.accent, alignItems: 'center', marginTop: 8 },
   submitBtnText: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.accentFg },
+  deleteBtn:     { padding: 13, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', marginTop: 12, marginBottom: 24 },
+  deleteBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text },
+  deleteOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  deleteBox:     { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], padding: 24, width: '100%', maxWidth: 320 },
+  deleteTitle:   { fontSize: 18, fontFamily: Fonts.bold, color: Colors.text, marginBottom: 8 },
+  deleteMessage: { fontSize: 14, color: Colors.textSub, fontFamily: Fonts.regular, lineHeight: 20, marginBottom: 20 },
+  deleteActions: { flexDirection: 'row', gap: 12 },
+  deleteCancelBtn: { flex: 1, paddingVertical: 12, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
+  deleteCancelText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
+  deleteConfirmBtn: { flex: 1, paddingVertical: 12, borderRadius: Radius.lg, backgroundColor: '#EF4444', alignItems: 'center' },
+  deleteConfirmText: { fontSize: 14, fontFamily: Fonts.semiBold, color: '#fff' },
 });
