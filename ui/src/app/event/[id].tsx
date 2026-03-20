@@ -199,6 +199,8 @@ export default function EventDetailScreen() {
   const waitlist= rsvps.filter(r => r.status === 'waitlist');
   const myRsvp  = rsvps.find(r => r.userId === currentUserId);
   const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
+  const evEnd = typeof ev.end === 'string' ? new Date(ev.end) : ev.end;
+  const isMultiDay = evStart.toDateString() !== evEnd.toDateString();
   const diff    = dDiff(evStart);
   const isPast  = diff < 0;
   const minN = ev.minAttendees || 0;
@@ -423,7 +425,26 @@ export default function EventDetailScreen() {
           <View style={{ paddingHorizontal: 20 }}>
             {/* Info rows */}
             <View style={{ gap: 8, marginBottom: 16 }}>
-              <InfoRow ionicon="calendar-outline">{fmtDateFull(evStart)} · {fmtTime(evStart)} – {fmtTime(typeof ev.end === 'string' ? new Date(ev.end) : ev.end)}</InfoRow>
+              {isMultiDay ? (
+                <View style={{ gap: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <Ionicons name="calendar-outline" size={20} color={Colors.textSub} style={{ width: 22, marginTop: 1 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.infoText}>
+                        {fmtDateFull(evStart)}{ev.isAllDay ? '' : ` · ${fmtTime(evStart)}`}
+                      </Text>
+                      <Text style={[styles.infoText, { marginTop: 4 }]}>
+                        {fmtDateFull(evEnd)}{ev.isAllDay ? '' : ` · ${fmtTime(evEnd)}`}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <InfoRow ionicon="calendar-outline">
+                  {fmtDateFull(evStart)}
+                  {ev.isAllDay ? ' · All day' : ` · ${fmtTime(evStart)} – ${fmtTime(evEnd)}`}
+                </InfoRow>
+              )}
               {ev.location && <InfoRow ionicon="location-outline">{ev.location}</InfoRow>}
               {((ev.minAttendees || 0) > 0 || (ev.maxAttendees || 0) > 0) && (
                 <InfoRow ionicon="people-outline">

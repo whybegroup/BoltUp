@@ -12,7 +12,7 @@ export function fmtTime(d: Date): string {
 }
 
 export function fmtDateFull(d: Date): string {
-  return `${DAYS_FULL[d.getDay()]}, ${MONTHS_F[d.getMonth()]} ${d.getDate()}`;
+  return `${DAYS_FULL[d.getDay()]}, ${MONTHS_F[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 export function fmtDateShort(d: Date): string {

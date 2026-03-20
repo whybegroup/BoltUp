@@ -122,12 +122,12 @@ export function Btn({ label, onPress, variant = 'primary', disabled, full, small
 }
 
 // ── Toggle ────────────────────────────────────────────────────────────────────
-export function Toggle({ value, onChange, label, style }: { value: boolean; onChange: (v: boolean) => void; label: string; style?: StyleProp<ViewStyle> }) {
+export function Toggle({ value, onChange, label, style, small }: { value: boolean; onChange: (v: boolean) => void; label: string; style?: StyleProp<ViewStyle>; small?: boolean }) {
   return (
-    <TouchableOpacity onPress={() => onChange(!value)} style={[styles.toggleRow, styles.toggleFullWidth, style]} activeOpacity={0.8}>
-      <Text style={[styles.toggleLabel]}>{label}</Text>
-      <View style={[styles.toggleTrack, { backgroundColor: value ? Colors.accent : Colors.border }]}>
-        <View style={[styles.toggleThumb, { left: value ? 22 : 2 }]} />
+    <TouchableOpacity onPress={() => onChange(!value)} style={[styles.toggleRow, small && styles.toggleSmall, !small && styles.toggleFullWidth, style]} activeOpacity={0.8}>
+      <Text style={[styles.toggleLabel, small && styles.toggleLabelSmall]}>{label}</Text>
+      <View style={[styles.toggleTrack, small && styles.toggleTrackSmall, { backgroundColor: value ? Colors.accent : Colors.border }]}>
+        <View style={[styles.toggleThumb, small && styles.toggleThumbSmall, { left: value ? (small ? 16 : 22) : 2 }]} />
       </View>
     </TouchableOpacity>
   );
@@ -255,13 +255,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
+  toggleSmall: {
+    paddingVertical: 0, borderBottomWidth: 0, gap: 8,
+  },
   toggleFullWidth: { width: '100%', alignSelf: 'stretch' },
   toggleLabel: { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, flex: 1 },
+  toggleLabelSmall: { fontSize: 12, flex: 0 },
   toggleTrack: { width: 44, height: 24, borderRadius: 12, position: 'relative', flexShrink: 0 },
+  toggleTrackSmall: { width: 34, height: 20, borderRadius: 10 },
   toggleThumb: {
     position: 'absolute', top: 2, width: 20, height: 20,
     borderRadius: 10, backgroundColor: '#fff',
     ...Shadows.sm,
+  },
+  toggleThumbSmall: {
+    width: 16, height: 16, borderRadius: 8,
   },
   navBar: {
     flexDirection: 'row', alignItems: 'center',

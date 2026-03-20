@@ -57,7 +57,21 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
     };
   };
 
-  const timeDisplay = ev.isAllDay ? 'All day' : `${fmtTime(evStart)} – ${fmtTime(evEnd)}`;
+  const isMultiDay = evStart.toDateString() !== evEnd.toDateString();
+  
+  let timeDisplay = '';
+  if (isMultiDay) {
+    const startDateStr = `${evStart.getMonth() + 1}/${evStart.getDate()}/${String(evStart.getFullYear()).slice(-2)}`;
+    const endDateStr = `${evEnd.getMonth() + 1}/${evEnd.getDate()}/${String(evEnd.getFullYear()).slice(-2)}`;
+    if (ev.isAllDay) {
+      timeDisplay = `${startDateStr} – ${endDateStr}`;
+    } else {
+      timeDisplay = `${startDateStr} ${fmtTime(evStart)} – ${endDateStr} ${fmtTime(evEnd)}`;
+    }
+  } else {
+    timeDisplay = ev.isAllDay ? 'All day' : `${fmtTime(evStart)} – ${fmtTime(evEnd)}`;
+  }
+  
   const metaParts = [
     timeDisplay,
     myRsvp?.status === 'going' ? 'Going' : null,
