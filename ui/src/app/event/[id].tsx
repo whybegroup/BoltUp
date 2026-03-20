@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
-import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtDateFull, timeAgo, dDiff } from '../../utils/helpers';
+import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtDateFull, timeAgo, dDiff, getMyWaitlistPosition } from '../../utils/helpers';
 import { Avatar, Sheet } from '../../components/ui';
 import { UserAvatar } from '../../components/UserAvatar';
 import { UserAvatarStack } from '../../components/UserAvatarStack';
@@ -198,7 +198,13 @@ export default function EventDetailScreen() {
   const evStart = typeof ev.start === 'string' ? new Date(ev.start) : ev.start;
   const diff    = dDiff(evStart);
   const isPast  = diff < 0;
-  const needsMore = (ev.minAttendees || 0) > 0 && going.length < (ev.minAttendees || 0) && !isPast;
+  const minN = ev.minAttendees || 0;
+  const maxN = ev.maxAttendees || 0;
+  const needsMore = minN > 0 && going.length < minN && !isPast;
+  const spotsLeft = maxN > 0 ? Math.max(0, maxN - going.length) : 0;
+  const showLowSpots = maxN > 0 && !isPast && spotsLeft > 0 && spotsLeft <= 5;
+  const imWaitlisted = myRsvp?.status === 'waitlist' && !isPast;
+  const myWaitlistPos = imWaitlisted ? getMyWaitlistPosition(rsvps, currentUserId) : null;
   const hoursLeft = Math.max(0, Math.floor((evStart.getTime() - Date.now()) / 3600000));
   const allPhotos = comments.flatMap(c => {
     const ts = typeof c.createdAt === 'string' ? new Date(c.createdAt) : c.createdAt;
@@ -288,6 +294,8 @@ export default function EventDetailScreen() {
     notGoing.length > 0  && `${notGoing.length} Not Attending`,
   ].filter(Boolean).join(' · ');
 
+  const showHoursBanner = !isPast && hoursLeft <= 6 && hoursLeft > 0;
+  const hasBanners = showHoursBanner || isPast || needsMore || showLowSpots || imWaitlisted;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -322,20 +330,51 @@ export default function EventDetailScreen() {
 
         {/* Event block */}
         <View style={styles.eventBlock}>
-          {/* Banners */}
-          {!isPast && hoursLeft <= 6 && hoursLeft > 0 ? (
-            <View style={[styles.banner, styles.bannerAmber]}>
-              <Text style={styles.bannerAmberText}>⏰ Starting in <Text style={{ fontFamily: Fonts.bold }}>{hoursLeft}h</Text></Text>
-            </View>
-          ) : null}
-          {isPast ? <View style={[styles.banner, styles.bannerGray]}><Text style={styles.bannerGrayText}>This event has ended</Text></View> : null}
-          {needsMore ? (
-            <View style={[styles.banner, styles.bannerAmber]}>
-              <Text style={styles.bannerAmberText}>⚠️ Need <Text style={{ fontFamily: Fonts.bold }}>{ev.minAttendees! - going.length} more</Text> to confirm</Text>
+          {hasBanners ? (
+            <View style={styles.bannerStack}>
+              {showHoursBanner ? (
+                <View style={[styles.bannerInner, styles.bannerAmber]}>
+                  <Text style={styles.bannerAmberText}>
+                    ⏰ Starting in <Text style={{ fontFamily: Fonts.bold }}>{hoursLeft}h</Text>
+                  </Text>
+                </View>
+              ) : null}
+              {isPast ? (
+                <View style={[styles.bannerInner, styles.bannerGray]}>
+                  <Text style={styles.bannerGrayText}>This event has ended</Text>
+                </View>
+              ) : null}
+              {needsMore ? (
+                <View style={[styles.bannerInner, styles.bannerAmber]}>
+                  <Text style={styles.bannerAmberText}>
+                    ⚠️ <Text style={{ fontFamily: Fonts.bold }}>{minN - going.length} more needed</Text>
+                  </Text>
+                </View>
+              ) : null}
+              {showLowSpots ? (
+                <View style={[styles.bannerInner, styles.bannerAmber]}>
+                  <Text style={styles.bannerAmberText}>
+                    ⚠️ <Text style={{ fontFamily: Fonts.bold }}>{spotsLeft}</Text> spot{spotsLeft === 1 ? '' : 's'} left
+                  </Text>
+                </View>
+              ) : null}
+              {imWaitlisted ? (
+                <View style={[styles.bannerInner, styles.bannerAmber]}>
+                  <Text style={styles.bannerAmberText}>
+                    ⚠️ waitlisted
+                    {myWaitlistPos != null ? (
+                      <>
+                        {' · '}
+                        <Text style={{ fontFamily: Fonts.bold }}>#{myWaitlistPos} in queue</Text>
+                      </>
+                    ) : null}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
-          <View style={{ paddingHorizontal: 20, paddingTop: 20 }}>
+          <View style={{ paddingHorizontal: 20, paddingTop: hasBanners ? 12 : 20 }}>
             <Text style={styles.eventTitle}>{ev.title}</Text>
             {ev.subtitle ? <Text style={styles.eventSubtitle}>{ev.subtitle}</Text> : null}
           </View>
@@ -774,7 +813,8 @@ const styles = StyleSheet.create({
   groupDot:         { width: 8, height: 8, borderRadius: 4 },
   navGroupName:     { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.medium },
   eventBlock:       { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  banner:           { marginHorizontal: 20, marginTop: 14, padding: 9, borderRadius: Radius.lg, marginBottom: 0 },
+  bannerStack:      { paddingHorizontal: 20, paddingTop: 10, gap: 5 },
+  bannerInner:      { paddingVertical: 6, paddingHorizontal: 10, borderRadius: Radius.md },
   bannerAmber:      { backgroundColor: '#FFFBEB', borderWidth: 1, borderColor: '#FDE68A' },
   bannerAmberText:  { fontSize: 13, color: '#92400E', fontFamily: Fonts.regular },
   bannerGray:       { backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.border },

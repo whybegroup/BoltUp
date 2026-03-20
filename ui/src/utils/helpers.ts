@@ -137,3 +137,27 @@ export function daysInMonth(year: number, month: number): number {
 export function firstDayOfMonth(year: number, month: number): number {
   return new Date(year, month, 1).getDay();
 }
+
+// ── RSVP / waitlist ─────────────────────────────────────────────────────────
+type RsvpForWaitlistOrder = { userId: string; status: string; createdAt: string };
+
+/** 1-based queue position; order matches server waitlist promotion (FIFO by createdAt). */
+export function getMyWaitlistPosition(
+  rsvps: RsvpForWaitlistOrder[] | undefined,
+  meId: string | undefined,
+): number | null {
+  if (!meId || !rsvps?.length) return null;
+  const waitlisted = rsvps.filter((r) => r.status === 'waitlist');
+  if (!waitlisted.some((r) => r.userId === meId)) return null;
+  const t = (r: RsvpForWaitlistOrder) => {
+    const ms = new Date(r.createdAt).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  };
+  const sorted = [...waitlisted].sort((a, b) => {
+    const d = t(a) - t(b);
+    if (d !== 0) return d;
+    return a.userId.localeCompare(b.userId);
+  });
+  const idx = sorted.findIndex((r) => r.userId === meId);
+  return idx >= 0 ? idx + 1 : null;
+}

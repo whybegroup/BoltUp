@@ -2,8 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
-import { isSameDay, isToday, fmtTime } from '../utils/helpers';
+import { isSameDay, isToday, fmtTime, getMyWaitlistPosition } from '../utils/helpers';
 import type { EventDetailed, GroupScoped } from '@boltup/client';
+import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -37,6 +38,7 @@ function getMonthGrid(year: number, month: number): (Date | null)[][] {
 }
 
 export function CalendarView({ events, groups, groupColors = {}, onSelectEvent }: CalendarViewProps) {
+  const { userId: meId } = useCurrentUserContext();
   const [focusDate, setFocusDate] = useState(() => new Date());
   const year = focusDate.getFullYear();
   const month = focusDate.getMonth();
@@ -171,6 +173,12 @@ export function CalendarView({ events, groups, groupColors = {}, onSelectEvent }
                 const userColorHex = groupColors[ev.groupId] || (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                 const p = getGroupColor(userColorHex);
                 const startDate = new Date(ev.start);
+                const isPast = startDate.getTime() < Date.now();
+                const imWaitlisted =
+                  !!meId &&
+                  !isPast &&
+                  !!(ev.rsvps || []).find((r) => r.userId === meId && r.status === 'waitlist');
+                const myWaitlistPos = imWaitlisted ? getMyWaitlistPosition(ev.rsvps, meId) : null;
                 return (
                   <TouchableOpacity
                     key={ev.id}
@@ -183,6 +191,13 @@ export function CalendarView({ events, groups, groupColors = {}, onSelectEvent }
                     {ev.subtitle && (
                       <Text style={styles.eventSubtitle} numberOfLines={1}>{ev.subtitle}</Text>
                     )}
+                    {imWaitlisted ? (
+                      <View style={styles.calendarWaitlistPill}>
+                        <Text style={styles.calendarWaitlistText}>
+                          ⚠️ waitlisted{myWaitlistPos != null ? ` · #${myWaitlistPos} in queue` : ''}
+                        </Text>
+                      </View>
+                    ) : null}
                   </TouchableOpacity>
                 );
               })}
@@ -304,6 +319,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: Fonts.bold,
     color: Colors.text,
+  },
+  calendarWaitlistPill: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    backgroundColor: '#FFFBEB',
+    borderRadius: Radius.md,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  calendarWaitlistText: {
+    fontSize: 11,
+    fontFamily: Fonts.medium,
+    color: '#92400E',
   },
   eventSubtitle: {
     fontSize: 13,

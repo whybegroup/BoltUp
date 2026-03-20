@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
-import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtMonthShort, dDiff, isToday as checkToday } from '../utils/helpers';
+import { getGroupColor, getDefaultGroupThemeFromName, fmtTime, fmtMonthShort, dDiff, isToday as checkToday, getMyWaitlistPosition } from '../utils/helpers';
 import type { EventDetailed, GroupScoped, User } from '@boltup/client';
 import { UserAvatarStack } from './UserAvatarStack';
 
@@ -27,7 +27,13 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
   const going  = rsvps.filter(r => r.status === 'going');
   const myRsvp = meId ? rsvps.find(r => r.userId === meId) : undefined;
   const cc     = ev.comments?.length || 0;
-  const needsMore = (ev.minAttendees || 0) > 0 && going.length < (ev.minAttendees || 0) && !isPast;
+  const minN = ev.minAttendees || 0;
+  const maxN = ev.maxAttendees || 0;
+  const needsMore = minN > 0 && going.length < minN && !isPast;
+  const spotsLeft = maxN > 0 ? Math.max(0, maxN - going.length) : 0;
+  const showLowSpots = maxN > 0 && !isPast && spotsLeft > 0 && spotsLeft <= 5;
+  const imWaitlisted = myRsvp?.status === 'waitlist' && !isPast;
+  const myWaitlistPos = imWaitlisted ? getMyWaitlistPosition(rsvps, meId) : null;
   const hoursLeft = Math.max(0, Math.floor((evStart.getTime() - Date.now()) / 3600000));
   const showHoursLeft = !isPast && hoursLeft <= 6 && hoursLeft > 0;
   const usersWithMemos = new Set(rsvps.filter(r => r.memo && r.memo.trim()).map(r => r.userId));
@@ -88,9 +94,15 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
         {ev.location ? (
           <Text style={styles.location} numberOfLines={1}>{ev.location}</Text>
         ) : null}
-        {(ev.minAttendees || 0) > 0 && !isPast && (
-          <Text style={styles.minAttendees} numberOfLines={1}>
-            👥 Min {ev.minAttendees} needed
+        {(minN > 0 || maxN > 0) && !isPast && (
+          <Text style={styles.minAttendees} numberOfLines={2}>
+            👥{' '}
+            {[
+              minN > 0 ? `Min ${minN}` : null,
+              maxN > 0 ? `Max ${maxN}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </Text>
         )}
         {going.length > 0 && (
@@ -107,7 +119,21 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
         {needsMore && (
           <View style={styles.needsTextWrap}>
             <Text style={styles.needsText}>
-              ⚠️ Need {(ev.minAttendees || 0) - going.length} more to confirm
+              ⚠️ {minN - going.length} more needed
+            </Text>
+          </View>
+        )}
+        {showLowSpots && (
+          <View style={styles.needsTextWrap}>
+            <Text style={styles.needsText}>
+              ⚠️ {spotsLeft} spot{spotsLeft === 1 ? '' : 's'} left
+            </Text>
+          </View>
+        )}
+        {imWaitlisted && (
+          <View style={styles.needsTextWrap}>
+            <Text style={styles.needsText}>
+              ⚠️ waitlisted{myWaitlistPos != null ? ` · #${myWaitlistPos} in queue` : ''}
             </Text>
           </View>
         )}

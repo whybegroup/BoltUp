@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { EventRow } from './EventRow';
 import { useUsers } from '../hooks/api';
+import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import type { EventDetailed, GroupScoped } from '@boltup/client';
 
 interface ListViewProps {
@@ -28,6 +29,7 @@ export function ListView({
   showGroup = true,
 }: ListViewProps) {
   const { data: allUsers = [] } = useUsers();
+  const { userId: meId } = useCurrentUserContext();
   
   const groupsMap = useMemo(() => {
     const map: Record<string, GroupScoped> = {};
@@ -149,6 +151,7 @@ export function ListView({
           onGroupPress={onSelectGroup}
           isLast={false}
           showGroup={showGroup}
+          meId={meId ?? undefined}
           users={allUsers}
         />
       </View>
