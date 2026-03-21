@@ -11,6 +11,7 @@
     "android:install:debug": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk",
     "android:signing": "./android/gradlew -p android :app:signingReport",
     "ios": "expo run:ios",
+    "ios:build": "cd ios && pod install",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -35,7 +36,6 @@
     "expo-font": "~55.0.4",
     "expo-haptics": "~55.0.9",
     "expo-linking": "~55.0.8",
-    "expo-notifications": "^55.0.13",
     "expo-router": "~55.0.7",
     "expo-splash-screen": "~55.0.12",
     "expo-status-bar": "~55.0.4",
