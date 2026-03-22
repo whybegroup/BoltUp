@@ -61,26 +61,5 @@ target 'Moija' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
-
-    # Fix stale absolute paths from another checkout (e.g. copied Pods metadata).
-    repo_root = File.expand_path('../..', __dir__)
-    hermesc = ['../node_modules', '../../node_modules'].map { |r|
-      File.expand_path(File.join(r, 'hermes-compiler/hermesc/osx-bin/hermesc'), __dir__)
-    }.find { |p| File.exist?(p) }
-
-    if hermesc
-      Dir.glob(File.join(__dir__, 'Pods/Target Support Files/Pods-Moija/*.xcconfig')).each do |path|
-        txt = File.read(path)
-        next_txt = txt.gsub(/^HERMES_CLI_PATH = .*$/, "HERMES_CLI_PATH = #{hermesc}")
-        File.write(path, next_txt) if next_txt != txt
-      end
-    end
-
-    Dir.glob(File.join(__dir__, 'Pods/Local Podspecs/*.json')).each do |path|
-      txt = File.read(path)
-      next unless txt.include?('/Users/daniel/code/BoltUp')
-
-      File.write(path, txt.gsub('/Users/daniel/code/BoltUp', repo_root))
-    end
   end
 end

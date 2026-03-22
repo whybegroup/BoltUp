@@ -275,7 +275,6 @@
 				"$(SRCROOT)/.xcode.env",
 				"$(SRCROOT)/.xcode.env.local",
 				"$(SRCROOT)/Moija/Moija.entitlements",
-				"$(SRCROOT)/run-expo-configure.sh",
 				"$(SRCROOT)/Pods/Target Support Files/Pods-Moija/expo-configure-project.sh",
 			);
 			name = "[Expo] Configure project";
@@ -286,7 +285,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# This script configures Expo modules and generates the modules provider file.\nbash \"${SRCROOT}/run-expo-configure.sh\"\n";
+			shellScript = "# This script configures Expo modules and generates the modules provider file.\nbash -l -c \"./Pods/Target\\ Support\\ Files/Pods-Moija/expo-configure-project.sh\"\n";
 		};
 		800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
