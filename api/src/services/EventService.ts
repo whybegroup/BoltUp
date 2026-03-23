@@ -516,7 +516,7 @@ export class EventService {
               dest: 'event',
             }
           )
-          .catch((err) => console.error('Failed to create promotion notification:', err));
+          .catch(err => console.error('Failed to create promotion notification:', err));
       }
     }
   }

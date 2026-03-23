@@ -795,7 +795,7 @@ export class GroupService {
             groupId: group.id,
             dest: 'group',
           }
-        ).catch(err => console.error('Failed to create approval notification:', err));
+        ).catch(() => undefined);
       }
     } else if (requestAction === 'reject') {
       // Get user's RSVPs to check which were "going"

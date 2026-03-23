@@ -34,44 +34,29 @@ export default function ProfileScreen() {
   }, [showAvatarPicker, user?.avatarSeed, user?.thumbnail]);
 
   const handleSignOut = async () => {
-    console.log('[Profile] Sign out button clicked');
-
     if (Platform.OS === 'web') {
       const confirmed = window.confirm('Are you sure you want to sign out?');
-      console.log('[Profile] Confirmation result:', confirmed);
 
       if (confirmed) {
-        console.log('[Profile] Sign out confirmed');
         try {
           await signOut();
-          console.log('[Profile] Sign out completed');
-        } catch (error) {
-          console.error('[Profile] Sign out error:', error);
+        } catch {
           window.alert('Failed to sign out');
         }
-      } else {
-        console.log('[Profile] Sign out cancelled');
       }
     } else {
       Alert.alert(
         'Sign Out',
         'Are you sure you want to sign out?',
         [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => console.log('[Profile] Sign out cancelled'),
-          },
+          { text: 'Cancel', style: 'cancel' },
           {
             text: 'Sign Out',
             style: 'destructive',
             onPress: async () => {
-              console.log('[Profile] Sign out confirmed');
               try {
                 await signOut();
-                console.log('[Profile] Sign out completed');
-              } catch (error) {
-                console.error('[Profile] Sign out error:', error);
+              } catch {
                 Alert.alert('Error', 'Failed to sign out');
               }
             },
@@ -136,8 +121,7 @@ export default function ProfileScreen() {
                     try {
                       await updateUser.mutateAsync({ displayName: next });
                       setEditingDisplayName(false);
-                    } catch (e) {
-                      console.error('[Profile] Failed updating display name', e);
+                    } catch {
                       if (Platform.OS === 'web') window.alert('Failed to update display name');
                       else Alert.alert('Error', 'Failed to update display name');
                     }
