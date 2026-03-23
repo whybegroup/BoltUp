@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
   StyleSheet, Image, Modal, Linking, Alert, FlatList,
@@ -15,11 +15,24 @@ import { UserAvatarStack } from '../../components/UserAvatarStack';
 import { useEvent, useGroup, useUsers, useCreateOrUpdateRSVP, useDeleteRSVP, useCreateComment, useGroupMemberColor, useDeleteEvent } from '../../hooks/api';
 import { uid, getNoResponseIds } from '../../utils/api-helpers';
 import type { EventDetailed, User, GroupScoped, RSVP } from '@moija/client';
-import { RSVPInput } from '@moija/client';
+import { ApiError, RSVPInput, UploadsService } from '@moija/client';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
+import { PhotoUrlOrUploadModal } from '../../components/PhotoUrlOrUploadModal';
+import { ResolvableImage } from '../../components/ResolvableImage';
+import { useResolvedImageUrls } from '../../hooks/useResolvedImageUrls';
+
+type PendingCommentPhoto = { id: string; uri: string };
 
 // ── Photo Carousel ───────────────────────────────────────────────────────────
-function PhotoCarousel({ photos, onPhotoPress }: { photos: string[]; onPhotoPress: (url: string) => void }) {
+function PhotoCarousel({
+  photos,
+  urlMap,
+  onPhotoPress,
+}: {
+  photos: string[];
+  urlMap: Map<string, string>;
+  onPhotoPress: (url: string) => void;
+}) {
   const { width: windowWidth } = useWindowDimensions();
   const ITEM_WIDTH = Math.min(windowWidth - 40, 400);
 
@@ -39,8 +52,9 @@ function PhotoCarousel({ photos, onPhotoPress }: { photos: string[]; onPhotoPres
           activeOpacity={0.9}
           style={{ width: ITEM_WIDTH }}
         >
-          <Image
-            source={{ uri: item }}
+          <ResolvableImage
+            storedUrl={item}
+            urlMap={urlMap}
             style={{
               width: ITEM_WIDTH,
               height: 240,
@@ -62,7 +76,15 @@ function PhotoCarousel({ photos, onPhotoPress }: { photos: string[]; onPhotoPres
 const COMMENT_PHOTO_SIZE = 80;
 const COMMENT_PHOTO_GAP = 4;
 
-function CommentPhotoGallery({ photos, onPhotoPress }: { photos: string[]; onPhotoPress: (url: string) => void }) {
+function CommentPhotoGallery({
+  photos,
+  urlMap,
+  onPhotoPress,
+}: {
+  photos: string[];
+  urlMap: Map<string, string>;
+  onPhotoPress: (url: string) => void;
+}) {
   return (
     <ScrollView 
       horizontal 
@@ -76,8 +98,9 @@ function CommentPhotoGallery({ photos, onPhotoPress }: { photos: string[]; onPho
           onPress={() => onPhotoPress(photo)}
           activeOpacity={0.8}
         >
-          <Image
-            source={{ uri: photo }}
+          <ResolvableImage
+            storedUrl={photo}
+            urlMap={urlMap}
             style={{
               width: COMMENT_PHOTO_SIZE,
               height: COMMENT_PHOTO_SIZE,
@@ -134,15 +157,58 @@ export default function EventDetailScreen() {
   const createCommentMutation = useCreateComment(eventId || '');
   const deleteEventMutation = useDeleteEvent(currentUserId ?? '');
 
+  const allSourceUrls = useMemo(() => {
+    const s = new Set<string>();
+    const e = ev as EventDetailed | undefined;
+    if (!e) return [];
+    (e.coverPhotos || []).forEach((u) => s.add(u));
+    for (const c of e.comments || []) {
+      (c.photos || []).forEach((u) => s.add(u));
+    }
+    return [...s];
+  }, [ev]);
+
+  const resolvedImageMap = useResolvedImageUrls(allSourceUrls);
+
   const [showAttend,  setShowAttend]  = useState(false);
   const [memoFor,     setMemoFor]     = useState<RSVPInput.status | null>(null);
   const [input,       setInput]       = useState('');
-  const [pendingPhotos, setPendingPhotos] = useState<string[]>([]);
+  const [pendingPhotos, setPendingPhotos] = useState<PendingCommentPhoto[]>([]);
+  const [pendingPreviewLightbox, setPendingPreviewLightbox] = useState<string | null>(null);
   const [showCommentPhotoModal, setShowCommentPhotoModal] = useState(false);
-  const [commentPhotoUrl, setCommentPhotoUrl] = useState('');
   const [lightbox,    setLightbox]    = useState<{ url: string; name: string; ts: Date } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+
+  const removePendingPhoto = useCallback(
+    async (p: PendingCommentPhoto) => {
+      const drop = () => {
+        setPendingPhotos((rows) => rows.filter((x) => x.id !== p.id));
+        setPendingPreviewLightbox((open) => (open === p.uri ? null : open));
+      };
+
+      if (p.uri.startsWith('blob:')) {
+        URL.revokeObjectURL(p.uri);
+        drop();
+        return;
+      }
+      if (/^https?:\/\//i.test(p.uri)) {
+        if (currentUserId) {
+          try {
+            await UploadsService.deleteUploadedObject(currentUserId, { sourceUrl: p.uri });
+          } catch (err: unknown) {
+            const status = err instanceof ApiError ? err.status : 0;
+            if (status !== 400 && status !== 404) {
+              Alert.alert('Remove photo', 'Could not delete the file from storage. Try again.');
+              return;
+            }
+          }
+        }
+      }
+      drop();
+    },
+    [currentUserId],
+  );
 
   if (!eventId) {
     return (
@@ -230,8 +296,7 @@ export default function EventDetailScreen() {
     try {
       await deleteEventMutation.mutateAsync(eventId || '');
       router.push('/(tabs)/feed');
-    } catch (error) {
-      console.error('Failed to delete event:', error);
+    } catch {
       Alert.alert('Error', 'Failed to delete event');
     }
   };
@@ -262,22 +327,9 @@ export default function EventDetailScreen() {
           memo: memo ?? '',
         });
       }
-    } catch (error) {
-      console.error('Failed to update RSVP:', error);
+    } catch {
       Alert.alert('Error', 'Failed to update RSVP');
     }
-  };
-
-  const handleAddCommentPhoto = () => {
-    const url = commentPhotoUrl.trim();
-    if (!url) return;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      Alert.alert('Invalid URL', 'Please enter a valid image URL (e.g. https://example.com/image.jpg)');
-      return;
-    }
-    setPendingPhotos(p => [...p, url]);
-    setCommentPhotoUrl('');
-    setShowCommentPhotoModal(false);
   };
 
   const postComment = async () => {
@@ -286,7 +338,7 @@ export default function EventDetailScreen() {
       const newComment: any = {
         id: uid(),
         userId: currentUserId,
-        photos: [...pendingPhotos],
+        photos: pendingPhotos.map((p) => p.uri),
       };
       
       if (input.trim()) {
@@ -298,8 +350,6 @@ export default function EventDetailScreen() {
       setInput(''); setPendingPhotos([]);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
     } catch (error: any) {
-      console.error('Failed to post comment:', error);
-      console.error('Error details:', JSON.stringify(error, null, 2));
       Alert.alert('Error', error?.body?.message || error?.message || 'Failed to post comment');
     }
   };
@@ -411,13 +461,16 @@ export default function EventDetailScreen() {
           {/* Cover photos */}
           {ev.coverPhotos && ev.coverPhotos.length > 0 && (
             <View style={{ marginTop: ev.subtitle ? 0 : 16 }}>
-              <PhotoCarousel 
-                photos={ev.coverPhotos} 
-                onPhotoPress={(url) => setLightbox({ 
-                  url, 
-                  name: getUserSafe(ev.createdBy).displayName, 
-                  ts: new Date(ev.createdAt) 
-                })}
+              <PhotoCarousel
+                photos={ev.coverPhotos}
+                urlMap={resolvedImageMap}
+                onPhotoPress={(url) =>
+                  setLightbox({
+                    url,
+                    name: getUserSafe(ev.createdBy).displayName,
+                    ts: new Date(ev.createdAt),
+                  })
+                }
               />
             </View>
           )}
@@ -514,7 +567,12 @@ export default function EventDetailScreen() {
             <View style={styles.galleryGrid}>
               {allPhotos.map((ph, i) => (
                 <TouchableOpacity key={i} onPress={() => setLightbox(ph)} style={styles.galleryThumb}>
-                  <Image source={{ uri: ph.url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                  <ResolvableImage
+                    storedUrl={ph.url}
+                    urlMap={resolvedImageMap}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover"
+                  />
                 </TouchableOpacity>
               ))}
             </View>
@@ -552,9 +610,12 @@ export default function EventDetailScreen() {
                 {!!c.text && <Text style={styles.commentText}>{c.text}</Text>}
                 {c.photos.length > 0 && (
                   <View style={{ marginTop: c.text ? 8 : 0 }}>
-                    <CommentPhotoGallery 
+                    <CommentPhotoGallery
                       photos={c.photos}
-                      onPhotoPress={(url) => setLightbox({ url, name: getUserSafe(c.userId).displayName, ts: commentTs })}
+                      urlMap={resolvedImageMap}
+                      onPhotoPress={(url) =>
+                        setLightbox({ url, name: getUserSafe(c.userId).displayName, ts: commentTs })
+                      }
                     />
                   </View>
                 )}
@@ -571,10 +632,16 @@ export default function EventDetailScreen() {
       <View style={styles.inputBar}>
         {pendingPhotos.length > 0 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }} contentContainerStyle={{ gap: 6 }}>
-            {pendingPhotos.map((url, i) => (
-              <View key={i} style={{ position: 'relative' }}>
-                <Image source={{ uri: url }} style={styles.pendingPhoto} />
-                <TouchableOpacity onPress={() => setPendingPhotos(p => p.filter((_, j) => j !== i))} style={styles.pendingPhotoRemove}>
+            {pendingPhotos.map((p) => (
+              <View key={p.id} style={{ position: 'relative' }}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setPendingPreviewLightbox(p.uri)}
+                  style={styles.pendingPhotoHit}
+                >
+                  <ResolvableImage storedUrl={p.uri} style={styles.pendingPhoto} resizeMode="cover" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => removePendingPhoto(p)} style={styles.pendingPhotoRemove}>
                   <Ionicons name="close" size={11} color="#fff" />
                 </TouchableOpacity>
               </View>
@@ -598,35 +665,58 @@ export default function EventDetailScreen() {
         </View>
       </View>
 
-      {/* Comment photo URL modal */}
-      {showCommentPhotoModal && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowCommentPhotoModal(false)}>
-          <View style={styles.urlModalOverlay}>
-            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowCommentPhotoModal(false)} activeOpacity={1} />
-            <View style={styles.urlModalCard}>
-              <Text style={styles.urlModalTitle}>Add image from URL</Text>
-              <TextInput
-                value={commentPhotoUrl}
-                onChangeText={setCommentPhotoUrl}
-                placeholder="https://example.com/image.jpg"
-                placeholderTextColor={Colors.textMuted}
-                style={styles.urlModalInput}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoFocus
-              />
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-                <TouchableOpacity onPress={() => setShowCommentPhotoModal(false)} style={styles.urlModalSecondaryBtn} activeOpacity={0.8}>
-                  <Text style={styles.urlModalSecondaryBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleAddCommentPhoto} style={[styles.urlModalSecondaryBtn, { borderColor: Colors.accent, backgroundColor: Colors.accent }]} activeOpacity={0.8}>
-                  <Text style={[styles.urlModalSecondaryBtnText, { color: Colors.accentFg }]}>Add</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+      {pendingPreviewLightbox !== null && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPendingPreviewLightbox(null)}
+        >
+          <View style={styles.lightbox}>
+            <TouchableOpacity
+              onPress={() => setPendingPreviewLightbox(null)}
+              style={[styles.lightboxBtn, styles.pendingPreviewClose]}
+            >
+              <Ionicons name="close" size={22} color="#fff" />
+            </TouchableOpacity>
+            <ResolvableImage
+              storedUrl={pendingPreviewLightbox}
+              style={styles.lightboxImg}
+              resizeMode="contain"
+            />
           </View>
         </Modal>
       )}
+
+      <PhotoUrlOrUploadModal
+        visible={showCommentPhotoModal}
+        onClose={() => setShowCommentPhotoModal(false)}
+        userId={currentUserId ?? ''}
+        title="Add photo to comment"
+        onPickPreview={(previewUri, uploadId) =>
+          setPendingPhotos((p) => [...p, { id: uploadId, uri: previewUri }])
+        }
+        onAdd={(url, uploadId) => {
+          if (uploadId) {
+            setPendingPhotos((p) =>
+              p.map((x) => {
+                if (x.id !== uploadId) return x;
+                if (x.uri.startsWith('blob:')) URL.revokeObjectURL(x.uri);
+                return { ...x, uri: url };
+              }),
+            );
+          } else {
+            setPendingPhotos((p) => [...p, { id: uid(), uri: url }]);
+          }
+        }}
+        onUploadFailed={(uploadId) => {
+          setPendingPhotos((p) => {
+            const row = p.find((x) => x.id === uploadId);
+            if (row?.uri.startsWith('blob:')) URL.revokeObjectURL(row.uri);
+            return p.filter((x) => x.id !== uploadId);
+          });
+        }}
+      />
 
       {/* Attendance sheet */}
       <AttendanceSheet ev={ev} group={group} users={users} visible={showAttend} onClose={() => setShowAttend(false)} />
@@ -657,7 +747,12 @@ export default function EventDetailScreen() {
                 <Ionicons name="close" size={22} color="#fff" />
               </TouchableOpacity>
             </View>
-            <Image source={{ uri: lightbox.url }} style={styles.lightboxImg} resizeMode="contain" />
+            <ResolvableImage
+              storedUrl={lightbox.url}
+              urlMap={resolvedImageMap}
+              style={styles.lightboxImg}
+              resizeMode="contain"
+            />
           </View>
         </Modal>
       )}
@@ -956,17 +1051,13 @@ const styles = StyleSheet.create({
   inputBar:         { backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, padding: 10, paddingHorizontal: 16 },
   photoBtn:         { width: 36, height: 36, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   commentInput:     { flex: 1, padding: 9, paddingHorizontal: 14, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
-  urlModalOverlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  urlModalCard:     { backgroundColor: Colors.surface, borderRadius: 18, borderWidth: 1, borderColor: Colors.border, padding: 16, width: '100%', maxWidth: 360 },
-  urlModalTitle:    { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 12 },
-  urlModalInput:    { paddingHorizontal: 10, paddingVertical: 10, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
-  urlModalSecondaryBtn:    { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
-  urlModalSecondaryBtnText:{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.text },
   postBtn:          { paddingHorizontal: 18, paddingVertical: 9, borderRadius: Radius.lg, backgroundColor: Colors.accent },
   postBtnDisabled:  { backgroundColor: Colors.border },
   postBtnText:      { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  pendingPhotoHit:  { borderRadius: Radius.lg, overflow: 'hidden' },
   pendingPhoto:     { width: 64, height: 64, borderRadius: Radius.lg },
   pendingPhotoRemove:{ position: 'absolute', top: -5, right: -5, width: 18, height: 18, borderRadius: 9, backgroundColor: Colors.text, borderWidth: 2, borderColor: Colors.surface, alignItems: 'center', justifyContent: 'center' },
+  pendingPreviewClose: { position: 'absolute', top: 56, right: 16, zIndex: 2 },
   lightbox:         { flex: 1, backgroundColor: 'rgba(0,0,0,0.93)', justifyContent: 'center', alignItems: 'center' },
   lightboxHeader:   { position: 'absolute', top: 60, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
   lightboxName:     { fontSize: 13, fontFamily: Fonts.semiBold, color: '#fff' },

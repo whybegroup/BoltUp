@@ -118,7 +118,6 @@ export default function GroupDetailScreen() {
       handleBack();
     } catch (e: any) {
       const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to leave group';
-      console.error('Leave group error:', e?.status, e?.body, e);
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Error', msg);
     }
@@ -164,8 +163,8 @@ export default function GroupDetailScreen() {
         userId,
         action: MembershipRequestAction.action.APPROVE,
       });
-    } catch (error) {
-      console.error('Failed to approve request:', error);
+    } catch {
+      /* handled by mutation UI if needed */
     }
   };
 
@@ -175,8 +174,8 @@ export default function GroupDetailScreen() {
         userId,
         action: MembershipRequestAction.action.REJECT,
       });
-    } catch (error) {
-      console.error('Failed to decline request:', error);
+    } catch {
+      /* handled by mutation UI if needed */
     }
   };
 
@@ -278,8 +277,7 @@ export default function GroupDetailScreen() {
                         try {
                           await updateGroup.mutateAsync({ name: next, updatedBy: currentUserId });
                           setEditingName(false);
-                        } catch (e) {
-                          console.error('Failed to update group name', e);
+                        } catch {
                           if (Platform.OS === 'web') window.alert('Failed to update group name');
                           else Alert.alert('Error', 'Failed to update group name');
                         }
@@ -323,8 +321,7 @@ export default function GroupDetailScreen() {
                       try {
                         await updateGroup.mutateAsync({ desc: draftDesc.trim(), updatedBy: currentUserId });
                         setEditingDesc(false);
-                      } catch (e) {
-                        console.error('Failed to update group description', e);
+                      } catch {
                         if (Platform.OS === 'web') window.alert('Failed to update group description');
                         else Alert.alert('Error', 'Failed to update group description');
                       }
@@ -357,8 +354,7 @@ export default function GroupDetailScreen() {
                         if (updateGroup.isPending) return;
                         try {
                           await updateGroup.mutateAsync({ isPublic: !v, updatedBy: currentUserId ?? '' });
-                        } catch (e) {
-                          console.error('Failed to update visibility', e);
+                        } catch {
                           if (Platform.OS === 'web') window.alert('Failed to update visibility');
                           else Alert.alert('Error', 'Failed to update visibility');
                         }
@@ -612,7 +608,6 @@ export default function GroupDetailScreen() {
               updatedBy: currentUserId ?? '',
             });
           } catch (e) {
-            console.error('Failed to update avatar', e);
             if (Platform.OS === 'web') window.alert('Failed to update avatar');
             else Alert.alert('Error', 'Failed to update avatar');
             throw e;

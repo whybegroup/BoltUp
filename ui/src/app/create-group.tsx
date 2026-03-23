@@ -56,12 +56,9 @@ export default function CreateGroupScreen() {
         memberIds: [user.uid],
       });
 
-      console.log('[CreateGroup] Group created:', newGroup.id, 'Invite code:', newGroup.inviteCode);
-      
       // Navigate to the new group
       router.replace(`/group/${newGroup.id}`);
-    } catch (error: any) {
-      console.error('[CreateGroup] Error creating group:', error);
+    } catch {
       Alert.alert('Error', 'Failed to create group. Please try again.');
     }
   };

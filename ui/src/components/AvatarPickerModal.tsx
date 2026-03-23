@@ -46,7 +46,6 @@ export function AvatarPickerModal({
       await onSave(seed.trim() || DEFAULT_AVATAR_SEED, thumbnail);
       onClose();
     } catch (e) {
-      console.error('Failed to save avatar', e);
       throw e;
     }
   };
