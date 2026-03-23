@@ -141,4 +141,17 @@ export interface CommentInput {
   userId: string;
   text?: string;
   photos?: string[];
+  /** Client-resolved mention targets; server validates they are in the event's group */
+  mentionedUserIds?: string[];
+}
+
+/** Input for editing a comment */
+export interface CommentUpdateInput {
+  actorId: string;
+  text: string;
+}
+
+/** Input for deleting a comment */
+export interface CommentDeleteInput {
+  actorId: string;
 }

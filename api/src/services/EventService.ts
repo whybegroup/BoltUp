@@ -8,11 +8,23 @@ import {
   RSVPInput,
   Comment,
   CommentInput,
+  CommentUpdateInput,
+  CommentDeleteInput,
 } from '../models';
 import { NotificationService } from './NotificationService';
+import {
+  extractMentionTokens,
+  resolveMentionRecipientIds,
+  resolveCanonicalMemberUserId,
+  type MemberRow,
+} from '../utils/commentMentions';
 
 const prisma = new PrismaClient();
 const notificationService = new NotificationService();
+
+const COMMENT_MENTION_NOTIFICATION_TITLE = 'You were mentioned';
+/** Shown when a group admin removes someone else's comment (soft-delete). */
+export const COMMENT_DELETED_BY_ADMIN_TEXT = 'This message was deleted by admin';
 
 export class EventService {
   /**
@@ -542,7 +554,7 @@ export class EventService {
    * Create a comment
    */
   public async createComment(eventId: string, input: CommentInput): Promise<Comment> {
-    const { photos = [], text, ...commentData } = input;
+    const { photos = [], text, mentionedUserIds, ...commentData } = input;
 
     const data: any = {
       ...commentData,
@@ -563,15 +575,8 @@ export class EventService {
       },
     });
 
-    // Send notification to event creator and other commenters
     const event = await prisma.event.findUnique({
       where: { id: eventId },
-      include: {
-        comments: {
-          select: { userId: true },
-          distinct: ['userId'],
-        },
-      },
     });
 
     const user = await prisma.user.findUnique({
@@ -579,21 +584,80 @@ export class EventService {
     });
 
     if (event && user) {
-      // Create in-app notification for event creator
-      if (event.createdBy !== input.userId) {
-        const commentText = text || (photos.length > 0 ? 'shared a photo' : 'commented');
-        await notificationService.createForUser(
-          event.createdBy,
-          'New Comment',
-          `${user.displayName} ${commentText} on ${event.title}`,
-          {
-            type: 'comment',
-            icon: '💬',
-            eventId: event.id,
+      const commentSnippet = text || (photos.length > 0 ? 'shared a photo' : 'commented');
+      const mentionTokens = extractMentionTokens(text);
+      let mentionRecipients = new Set<string>();
+
+      if (mentionTokens.length > 0 || (mentionedUserIds && mentionedUserIds.length > 0)) {
+        // Anyone in the group can be @mentioned; resolve only against this group's roster
+        const groupMembers = await prisma.groupMember.findMany({
+          where: {
             groupId: event.groupId,
-            dest: 'event',
+            status: { in: ['active', 'pending'] },
+          },
+          include: { user: true },
+        });
+
+        const rowByUserId = new Map<string, MemberRow>();
+        for (const m of groupMembers as any[]) {
+          rowByUserId.set(m.userId, {
+            userId: m.userId,
+            displayName: m.user.displayName,
+            name: m.user.name,
+          });
+        }
+
+        const memberRows = [...rowByUserId.values()];
+        const allowedGroupUserIds = new Set(rowByUserId.keys());
+
+        // 1) Explicit client ids first (canonical match — avoids UUID case/hyphen mismatches
+        //    that would drop valid mentioned users who are not the event host).
+        mentionRecipients = new Set<string>();
+        for (const raw of mentionedUserIds ?? []) {
+          const canon = resolveCanonicalMemberUserId(raw, allowedGroupUserIds);
+          if (canon && canon !== input.userId) {
+            mentionRecipients.add(canon);
           }
-        ).catch(err => console.error('Failed to create comment notification:', err));
+        }
+        // 2) Merge @tokens from comment text
+        const fromText = resolveMentionRecipientIds(mentionTokens, memberRows, input.userId);
+        for (const uid of fromText) {
+          mentionRecipients.add(uid);
+        }
+
+        const snippet =
+          commentSnippet.length > 160 ? `${commentSnippet.slice(0, 157)}…` : commentSnippet;
+        const mentionBody = `${user.displayName} mentioned you in a comment on "${event.title}": ${snippet}`;
+
+        for (const uid of mentionRecipients) {
+          await notificationService
+            .createForUser(uid, COMMENT_MENTION_NOTIFICATION_TITLE, mentionBody, {
+              type: 'mention',
+              icon: '@',
+              eventId: event.id,
+              groupId: event.groupId,
+              dest: 'event',
+            })
+            .catch((err) => console.error('Failed to create mention notification:', err));
+        }
+      }
+
+      // Event host: "New Comment" unless they already got a mention for this comment
+      if (event.createdBy !== input.userId && !mentionRecipients.has(event.createdBy)) {
+        await notificationService
+          .createForUser(
+            event.createdBy,
+            'New Comment',
+            `${user.displayName} ${commentSnippet} on ${event.title}`,
+            {
+              type: 'comment',
+              icon: '💬',
+              eventId: event.id,
+              groupId: event.groupId,
+              dest: 'event',
+            }
+          )
+          .catch((err) => console.error('Failed to create comment notification:', err));
       }
     }
 
@@ -601,12 +665,96 @@ export class EventService {
   }
 
   /**
-   * Delete a comment
+   * Edit a comment. Only the comment author can edit.
    */
-  public async deleteComment(id: string): Promise<void> {
-    await prisma.comment.delete({
+  public async updateComment(id: string, input: CommentUpdateInput): Promise<Comment> {
+    const comment = await prisma.comment.findUnique({
       where: { id },
+      include: { photos: true },
     });
+    if (!comment) {
+      throw { status: 404, message: 'Comment not found' };
+    }
+    if (comment.userId !== input.actorId) {
+      throw { status: 403, message: 'Only the author can edit this comment' };
+    }
+
+    if (comment.text === COMMENT_DELETED_BY_ADMIN_TEXT) {
+      throw { status: 400, message: 'This comment cannot be edited' };
+    }
+
+    const nextText = (input.text || '').trim();
+    if (!nextText) {
+      throw { status: 400, message: 'Comment text cannot be empty' };
+    }
+    const updated = await prisma.comment.update({
+      where: { id },
+      data: { text: nextText },
+      include: { photos: true },
+    });
+    return this.mapCommentWithPhotos(updated);
+  }
+
+  /**
+   * Delete a comment.
+   * - Author deletes own comment → removed from thread entirely
+   * - Admin/superadmin deletes another user's comment → soft-delete placeholder only
+   * - Author or admin may fully remove an admin-placeholder row
+   */
+  public async deleteComment(id: string, input: CommentDeleteInput): Promise<void> {
+    const comment = await prisma.comment.findUnique({
+      where: { id },
+      include: { event: true },
+    });
+    if (!comment) {
+      throw { status: 404, message: 'Comment not found' };
+    }
+
+    const actorId = input?.actorId?.trim();
+    if (!actorId) {
+      throw { status: 400, message: 'actorId is required' };
+    }
+
+    const isAuthor = comment.userId === actorId;
+
+    const gmActor = await prisma.groupMember.findUnique({
+      where: {
+        groupId_userId: {
+          groupId: comment.event.groupId,
+          userId: actorId,
+        },
+      },
+    });
+    const isAdmin =
+      !!gmActor &&
+      gmActor.status === 'active' &&
+      (gmActor.role === 'admin' || gmActor.role === 'superadmin');
+
+    const isPlaceholder = comment.text === COMMENT_DELETED_BY_ADMIN_TEXT;
+
+    if (isPlaceholder) {
+      if (!isAuthor && !isAdmin) {
+        throw { status: 403, message: 'Not allowed to delete this comment' };
+      }
+      await prisma.comment.delete({ where: { id } });
+      return;
+    }
+
+    if (isAuthor) {
+      await prisma.comment.delete({ where: { id } });
+      return;
+    }
+
+    if (isAdmin && !isAuthor) {
+      await prisma.commentPhoto.deleteMany({ where: { commentId: id } });
+      await prisma.comment.update({
+        where: { id },
+        data: { text: COMMENT_DELETED_BY_ADMIN_TEXT },
+      });
+      return;
+    }
+
+    throw { status: 403, message: 'Not allowed to delete this comment' };
   }
 
   /**

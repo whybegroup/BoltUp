@@ -20,6 +20,8 @@ import {
   RSVP,
   Comment,
   CommentInput,
+  CommentUpdateInput,
+  CommentDeleteInput,
 } from '../models';
 import { EventService } from '../services/EventService';
 
@@ -188,13 +190,28 @@ export class CommentController extends Controller {
   private eventService = new EventService();
 
   /**
+   * Edit a comment
+   * @summary Edits a comment by its author
+   */
+  @Put('{id}')
+  public async updateComment(
+    @Path() id: string,
+    @Body() body: CommentUpdateInput
+  ): Promise<Comment> {
+    return this.eventService.updateComment(id, body);
+  }
+
+  /**
    * Delete a comment
-   * @summary Deletes a comment from an event
+   * @summary Deletes a comment from an event (admin can delete others)
    */
   @Delete('{id}')
   @SuccessResponse('204', 'No Content')
-  public async deleteComment(@Path() id: string): Promise<void> {
-    await this.eventService.deleteComment(id);
+  public async deleteComment(
+    @Path() id: string,
+    @Body() body: CommentDeleteInput
+  ): Promise<void> {
+    await this.eventService.deleteComment(id, body);
     this.setStatus(204);
   }
 }
