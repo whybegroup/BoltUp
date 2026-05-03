@@ -18,6 +18,11 @@ import {
   GroupUpdate,
   User,
   MembershipRequestAction,
+  GroupPost,
+  GroupPostCreateInput,
+  GroupPostComment,
+  GroupPostCommentCreateInput,
+  GroupPostReactionInput,
   NotifPrefs,
   NotifPrefsPartial,
 } from '../models';
@@ -546,5 +551,74 @@ export class GroupController extends Controller {
     @Path() userId: string
   ): Promise<Record<string, string>> {
     return this.groupService.getAllMemberColors(userId);
+  }
+
+  /** List posts in a group (active members only). */
+  @Get('{id}/posts')
+  public async getGroupPosts(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<GroupPost[]> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.getGroupPosts(id, userId);
+  }
+
+  /** Create a group post (active members only). */
+  @Post('{id}/posts')
+  @SuccessResponse('201', 'Created')
+  public async createGroupPost(
+    @Path() id: string,
+    @Body() body: GroupPostCreateInput
+  ): Promise<GroupPost> {
+    if (!body?.userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    this.setStatus(201);
+    return this.groupService.createGroupPost(id, body);
+  }
+
+  /** Toggle a reaction on a group post (same emoji removes it). */
+  @Post('posts/{postId}/reactions')
+  public async toggleGroupPostReaction(
+    @Path() postId: string,
+    @Body() body: GroupPostReactionInput
+  ): Promise<GroupPost> {
+    if (!body?.userId || !body?.emoji?.trim()) {
+      this.setStatus(400);
+      throw new Error('userId and emoji are required');
+    }
+    return this.groupService.toggleGroupPostReaction(postId, body);
+  }
+
+  /** Add a comment (or reply via parentCommentId) on a group post. */
+  @Post('posts/{postId}/comments')
+  @SuccessResponse('201', 'Created')
+  public async createGroupPostComment(
+    @Path() postId: string,
+    @Body() body: GroupPostCommentCreateInput
+  ): Promise<GroupPostComment> {
+    if (!body?.userId || !body?.body?.trim()) {
+      this.setStatus(400);
+      throw new Error('userId and body are required');
+    }
+    this.setStatus(201);
+    return this.groupService.createGroupPostComment(postId, body);
+  }
+
+  /** Toggle a reaction on a group post comment (same emoji removes it). */
+  @Post('post-comments/{commentId}/reactions')
+  public async toggleGroupPostCommentReaction(
+    @Path() commentId: string,
+    @Body() body: GroupPostReactionInput
+  ): Promise<GroupPostComment> {
+    if (!body?.userId || !body?.emoji?.trim()) {
+      this.setStatus(400);
+      throw new Error('userId and emoji are required');
+    }
+    return this.groupService.toggleGroupPostCommentReaction(commentId, body);
   }
 }

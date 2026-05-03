@@ -26,7 +26,8 @@ import { AvatarPickerModal } from '../components/AvatarPickerModal';
 import type { PendingAvatarFile } from '../services/pickAndUploadImage';
 import { uploadPendingAvatarFile } from '../services/pickAndUploadImage';
 import { ResolvableImage } from '../components/ResolvableImage';
-import { pickAndUploadCoverPhoto } from '../services/pickAndUploadImage';
+import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
+import { AddImageButton } from '../components/AddImageButton';
 import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
 import { ApiError } from '@moijia/client';
 
@@ -111,6 +112,23 @@ export default function CreateGroupScreen() {
     } finally {
       setCoverPhotoBusy(false);
     }
+  };
+
+  const addCoverPhotoFromCamera = async () => {
+    if (!user?.uid || coverPhotoBusy) return;
+    setCoverPhotoBusy(true);
+    try {
+      const url = await takeAndUploadCoverPhoto(user.uid);
+      if (url) setDraftCoverPhotos((prev) => [...prev, url]);
+    } finally {
+      setCoverPhotoBusy(false);
+    }
+  };
+
+  const addCoverPhotoFromLink = async (url: string) => {
+    const clean = url.trim();
+    if (!clean) return;
+    setDraftCoverPhotos((prev) => [...prev, clean]);
   };
 
   const handleBack = () => {
@@ -243,21 +261,14 @@ export default function CreateGroupScreen() {
         }}
       >
         <View style={[styles.groupPhotosAddCard, styles.groupPhotosAddCardNested]}>
-          <TouchableOpacity
-            onPress={() => void addCoverPhotoFromPicker()}
-            style={styles.groupPhotosAddBtn}
+          <AddImageButton
+            label="Add photo"
+            busy={coverPhotoBusy}
             disabled={coverPhotoBusy}
-            activeOpacity={0.85}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              {coverPhotoBusy ? (
-                <ActivityIndicator size="small" color={Colors.textSub} />
-              ) : (
-                <Ionicons name="camera-outline" size={16} color={Colors.textSub} />
-              )}
-              <Text style={{ fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium }}>Add photo</Text>
-            </View>
-          </TouchableOpacity>
+            onTakePhoto={addCoverPhotoFromCamera}
+            onChooseFromLibrary={addCoverPhotoFromPicker}
+            onInsertLink={addCoverPhotoFromLink}
+          />
         </View>
       </View>
     </View>

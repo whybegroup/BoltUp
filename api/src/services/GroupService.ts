@@ -6,6 +6,12 @@ import {
   GroupUpdate,
   GroupRole,
   MembershipRequestAction,
+  GroupPost,
+  GroupPostCreateInput,
+  GroupPostComment,
+  GroupPostCommentCreateInput,
+  GroupPostReactionInput,
+  GroupPostReactionEntry,
   User,
   NotifPrefs,
   NotifPrefsPartial,
@@ -567,6 +573,209 @@ export class GroupService {
     if (!member || member.role !== 'superadmin' || member.status !== 'active') {
       throw new Error('Must be superadmin to perform this action');
     }
+  }
+
+  private async requireActiveMember(groupId: string, userId: string): Promise<void> {
+    const member = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+      select: { status: true },
+    });
+    if (!member || member.status !== 'active') {
+      throw new Error('Must be an active member to access group posts');
+    }
+  }
+
+  private mapReactionEntries(
+    rows: Array<{ emoji: string; userId: string }>
+  ): GroupPostReactionEntry[] {
+    const byEmoji = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const set = byEmoji.get(row.emoji) ?? new Set<string>();
+      set.add(row.userId);
+      byEmoji.set(row.emoji, set);
+    }
+    return [...byEmoji.entries()].map(([emoji, userIds]) => ({
+      emoji,
+      count: userIds.size,
+      userIds: [...userIds],
+    }));
+  }
+
+  private mapGroupPostComment(row: any): GroupPostComment {
+    return {
+      id: row.id,
+      postId: row.postId,
+      userId: row.userId,
+      body: row.body,
+      parentCommentId: row.parentCommentId ?? undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      reactions: this.mapReactionEntries(row.reactions ?? []),
+    };
+  }
+
+  private mapGroupPost(row: any): GroupPost {
+    return {
+      id: row.id,
+      groupId: row.groupId,
+      userId: row.userId,
+      title: row.title,
+      body: row.body,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      reactions: this.mapReactionEntries(row.reactions ?? []),
+      comments: (row.comments ?? []).map((c: any) => this.mapGroupPostComment(c)),
+    };
+  }
+
+  public async getGroupPosts(groupId: string, userId: string): Promise<GroupPost[]> {
+    await this.requireActiveMember(groupId, userId);
+    const rows = await prisma.groupPost.findMany({
+      where: { groupId },
+      include: {
+        reactions: { select: { emoji: true, userId: true } },
+        comments: {
+          include: { reactions: { select: { emoji: true, userId: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((r) => this.mapGroupPost(r));
+  }
+
+  public async createGroupPost(groupId: string, input: GroupPostCreateInput): Promise<GroupPost> {
+    await this.requireActiveMember(groupId, input.userId);
+    const created = await prisma.groupPost.create({
+      data: {
+        id: input.id,
+        groupId,
+        userId: input.userId,
+        title: input.title.trim(),
+        body: input.body,
+      },
+      include: {
+        reactions: { select: { emoji: true, userId: true } },
+        comments: {
+          include: { reactions: { select: { emoji: true, userId: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    return this.mapGroupPost(created);
+  }
+
+  public async toggleGroupPostReaction(postId: string, input: GroupPostReactionInput): Promise<GroupPost> {
+    const post = await prisma.groupPost.findUnique({
+      where: { id: postId },
+      select: { id: true, groupId: true },
+    });
+    if (!post) throw new Error('Post not found');
+    await this.requireActiveMember(post.groupId, input.userId);
+    const existing = await prisma.groupPostReaction.findUnique({
+      where: {
+        postId_userId_emoji: {
+          postId,
+          userId: input.userId,
+          emoji: input.emoji,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.groupPostReaction.delete({ where: { id: existing.id } });
+    } else {
+      await prisma.groupPostReaction.create({
+        data: {
+          postId,
+          userId: input.userId,
+          emoji: input.emoji,
+        },
+      });
+    }
+    const refreshed = await prisma.groupPost.findUnique({
+      where: { id: postId },
+      include: {
+        reactions: { select: { emoji: true, userId: true } },
+        comments: {
+          include: { reactions: { select: { emoji: true, userId: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!refreshed) throw new Error('Post not found');
+    return this.mapGroupPost(refreshed);
+  }
+
+  public async createGroupPostComment(
+    postId: string,
+    input: GroupPostCommentCreateInput
+  ): Promise<GroupPostComment> {
+    const post = await prisma.groupPost.findUnique({
+      where: { id: postId },
+      select: { groupId: true },
+    });
+    if (!post) throw new Error('Post not found');
+    await this.requireActiveMember(post.groupId, input.userId);
+    if (input.parentCommentId) {
+      const parent = await prisma.groupPostComment.findUnique({
+        where: { id: input.parentCommentId },
+        select: { postId: true },
+      });
+      if (!parent || parent.postId !== postId) {
+        throw new Error('Parent comment not found');
+      }
+    }
+    const created = await prisma.groupPostComment.create({
+      data: {
+        id: input.id,
+        postId,
+        userId: input.userId,
+        body: input.body,
+        parentCommentId: input.parentCommentId ?? null,
+      },
+      include: { reactions: { select: { emoji: true, userId: true } } },
+    });
+    return this.mapGroupPostComment(created);
+  }
+
+  public async toggleGroupPostCommentReaction(
+    commentId: string,
+    input: GroupPostReactionInput
+  ): Promise<GroupPostComment> {
+    const comment = await prisma.groupPostComment.findUnique({
+      where: { id: commentId },
+      include: { post: { select: { groupId: true } } },
+    });
+    if (!comment) throw new Error('Comment not found');
+    await this.requireActiveMember(comment.post.groupId, input.userId);
+    const existing = await prisma.groupPostCommentReaction.findUnique({
+      where: {
+        commentId_userId_emoji: {
+          commentId,
+          userId: input.userId,
+          emoji: input.emoji,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.groupPostCommentReaction.delete({ where: { id: existing.id } });
+    } else {
+      await prisma.groupPostCommentReaction.create({
+        data: {
+          commentId,
+          userId: input.userId,
+          emoji: input.emoji,
+        },
+      });
+    }
+    const refreshed = await prisma.groupPostComment.findUnique({
+      where: { id: commentId },
+      include: { reactions: { select: { emoji: true, userId: true } } },
+    });
+    if (!refreshed) throw new Error('Comment not found');
+    return this.mapGroupPostComment(refreshed);
   }
 
   /**

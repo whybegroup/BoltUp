@@ -4,11 +4,11 @@ const STORAGE_PREFIX = '@moijia:commentQuickReactions:v1:';
 
 /** Shown until the user picks reactions; order is MRU after first use. */
 export const DEFAULT_COMMENT_QUICK_REACTIONS_LIST: readonly string[] = [
+  '❤️',
   '👍',
-  '🙂',
   '😮',
-  '✔️',
-  '😂',
+  '😆',
+  '😭',
 ];
 
 function storageKey(userId: string): string {

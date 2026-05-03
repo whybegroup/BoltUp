@@ -37,6 +37,27 @@ export async function pickImageFromLibrary(): Promise<PickedImageAsset> {
   };
 }
 
+/** Opens the camera; throws `cancelled` if the user backs out. */
+export async function pickImageFromCamera(): Promise<PickedImageAsset> {
+  const perm = await ImagePicker.requestCameraPermissionsAsync();
+  if (perm.status !== 'granted') {
+    throw new Error('Camera access is required to take photos.');
+  }
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ['images'],
+    quality: 0.85,
+  });
+  if (result.canceled || !result.assets?.length) {
+    throw new Error('cancelled');
+  }
+  const asset = result.assets[0];
+  return {
+    uri: asset.uri,
+    contentType: asset.mimeType || 'image/jpeg',
+    fileName: asset.fileName ?? undefined,
+  };
+}
+
 /**
  * Presign + PUT to the API (local `api/data` storage; set API_PUBLIC_URL if clients use another host).
  */
@@ -75,6 +96,11 @@ export async function pickAndUploadImageFromLibrary(userId: string): Promise<str
   return uploadPickedImageAsset(userId, asset);
 }
 
+export async function pickAndUploadImageFromCamera(userId: string): Promise<string> {
+  const asset = await pickImageFromCamera();
+  return uploadPickedImageAsset(userId, asset);
+}
+
 /**
  * Opens the image picker immediately (no intermediate dialog). Returns the public URL, or undefined if cancelled / not signed in.
  */
@@ -85,6 +111,20 @@ export async function pickAndUploadCoverPhoto(userId: string): Promise<string | 
   }
   try {
     return await pickAndUploadImageFromLibrary(userId);
+  } catch (e) {
+    if (isCancelled(e)) return undefined;
+    Alert.alert('Upload', e instanceof Error ? e.message : 'Upload failed');
+    return undefined;
+  }
+}
+
+export async function takeAndUploadCoverPhoto(userId: string): Promise<string | undefined> {
+  if (!userId.trim()) {
+    Alert.alert('Upload', 'You must be signed in to upload photos.');
+    return undefined;
+  }
+  try {
+    return await pickAndUploadImageFromCamera(userId);
   } catch (e) {
     if (isCancelled(e)) return undefined;
     Alert.alert('Upload', e instanceof Error ? e.message : 'Upload failed');

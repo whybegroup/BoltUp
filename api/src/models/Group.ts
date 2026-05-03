@@ -125,3 +125,51 @@ export interface MembershipRequestAction {
   /** Action to take: approve or reject */
   action: 'approve' | 'reject';
 }
+
+export interface GroupPostReactionEntry {
+  emoji: string;
+  count: number;
+  userIds: string[];
+}
+
+export interface GroupPostComment {
+  id: string;
+  postId: string;
+  userId: string;
+  body: string;
+  parentCommentId?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  reactions: GroupPostReactionEntry[];
+}
+
+export interface GroupPost {
+  id: string;
+  groupId: string;
+  userId: string;
+  title: string;
+  body: string;
+  createdAt: Date;
+  updatedAt: Date;
+  reactions: GroupPostReactionEntry[];
+  comments: GroupPostComment[];
+}
+
+export interface GroupPostCreateInput {
+  id: string;
+  userId: string;
+  title: string;
+  body: string;
+}
+
+export interface GroupPostCommentCreateInput {
+  id: string;
+  userId: string;
+  body: string;
+  parentCommentId?: string;
+}
+
+export interface GroupPostReactionInput {
+  userId: string;
+  emoji: string;
+}

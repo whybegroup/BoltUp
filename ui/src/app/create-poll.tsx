@@ -32,8 +32,10 @@ import { useGroups, useCreatePoll, useAllGroupMemberColors, usePoll, useUpdatePo
 import { uid } from '../utils/api-helpers';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { ResolvableImage } from '../components/ResolvableImage';
+import { AddImageButton } from '../components/AddImageButton';
 import {
   pickDeferredCoverPhotoNative,
+  pickImageFromCamera,
   createWebDeferredCoverPhoto,
   uploadCoverPhotoDrafts,
   revokeCoverPhotoDraftPreview,
@@ -284,6 +286,31 @@ export default function CreatePollScreen() {
     } finally {
       setCoverPhotoBusy(false);
     }
+  };
+
+  const addCoverPhotoFromCamera = async () => {
+    if (!currentUserId || coverPhotoBusy || Platform.OS === 'web') return;
+    setCoverPhotoBusy(true);
+    try {
+      const asset = await pickImageFromCamera();
+      setForm((p) => ({
+        ...p,
+        coverPhotoDrafts: [
+          ...p.coverPhotoDrafts,
+          { kind: 'pending', previewUri: asset.uri, pending: { kind: 'native', asset } },
+        ],
+      }));
+    } catch {
+      // Camera picker handles permission/cancel messaging upstream.
+    } finally {
+      setCoverPhotoBusy(false);
+    }
+  };
+
+  const addCoverPhotoFromLink = async (url: string) => {
+    const clean = url.trim();
+    if (!clean) return;
+    setForm((p) => ({ ...p, coverPhotoDrafts: [...p.coverPhotoDrafts, { kind: 'remote', url: clean }] }));
   };
 
   const onCoverPhotoWebFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -749,20 +776,14 @@ export default function CreatePollScreen() {
                 </ScrollView>
               )}
               <View style={[styles.photosToolbar, form.coverPhotoDrafts.length === 0 && { borderTopWidth: 0 }]}>
-                <TouchableOpacity
-                  onPress={() => void addCoverPhotoFromPicker()}
-                  style={styles.photoBtn}
+                <AddImageButton
+                  label="Add photo"
+                  busy={coverPhotoBusy}
                   disabled={coverPhotoBusy || !currentUserId}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                    {coverPhotoBusy ? (
-                      <ActivityIndicator size="small" color={Colors.textSub} />
-                    ) : (
-                      <Ionicons name="camera-outline" size={16} color={Colors.textSub} />
-                    )}
-                    <Text style={{ fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium }}>Add photo</Text>
-                  </View>
-                </TouchableOpacity>
+                  onTakePhoto={addCoverPhotoFromCamera}
+                  onChooseFromLibrary={addCoverPhotoFromPicker}
+                  onInsertLink={addCoverPhotoFromLink}
+                />
               </View>
             </View>
           </View>

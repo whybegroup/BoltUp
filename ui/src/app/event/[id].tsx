@@ -7,6 +7,7 @@ import {
   type ChangeEvent,
   type ComponentProps,
   type ComponentRef,
+  type ReactNode,
 } from 'react';
 import {
   View,
@@ -55,6 +56,7 @@ import {
 import { computeMentionUserIdsForPost, type MentionMemberRow } from '../../utils/mentionUtils';
 import { Avatar, Sheet, Toggle, formSectionTitleStyle } from '../../components/ui';
 import { CommentMentionInput } from '../../components/CommentMentionInput';
+import { CommentsSection } from '../../components/CommentsSection';
 import { UserAvatar } from '../../components/UserAvatar';
 import { UserAvatarStack } from '../../components/UserAvatarStack';
 import {
@@ -88,12 +90,18 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 import { ResolvableImage } from '../../components/ResolvableImage';
 import { ReactionEmojiGlyph } from '../../components/ReactionEmojiGlyph';
+import { EmojiBar } from '../../components/EmojiBar';
+import { ImageLightboxModal } from '../../components/ImageLightboxModal';
+import { AddImageButton } from '../../components/AddImageButton';
+import { CommentReplyQuote } from '../../components/CommentReplyQuote';
 import {
   pickImageFromLibrary,
+  pickImageFromCamera,
   uploadPickedImageAsset,
   uploadWebImageFile,
   isCancelled,
   pickAndUploadCoverPhoto,
+  takeAndUploadCoverPhoto,
   type PickedImageAsset,
 } from '../../services/pickAndUploadImage';
 import { useResolvedImageUrls } from '../../hooks/useResolvedImageUrls';
@@ -191,12 +199,14 @@ function PhotoCarousel({
   onPhotoPress,
   canRemove,
   onRemoveAt,
+  leadingItem,
 }: {
   photos: string[];
   urlMap: Map<string, string>;
   onPhotoPress: (url: string, index: number) => void;
   canRemove?: boolean;
   onRemoveAt?: (index: number) => void;
+  leadingItem?: ReactNode;
 }) {
   return (
     <ScrollView
@@ -209,6 +219,7 @@ function PhotoCarousel({
         paddingVertical: 10,
       }}
     >
+      {leadingItem ? <View style={{ width: EVENT_COVER_THUMB }}>{leadingItem}</View> : null}
       {photos.map((item, index) => (
         <View key={`${item}-${index}`} style={{ width: EVENT_COVER_THUMB, position: 'relative' }}>
           <TouchableOpacity onPress={() => onPhotoPress(item, index)} activeOpacity={0.9}>
@@ -574,6 +585,8 @@ export default function EventDetailScreen() {
   const [inputBarHeight, setInputBarHeight] = useState(96);
   const [shakeCommentId, setShakeCommentId] = useState<string | null>(null);
   const shakeX = useRef(new Animated.Value(0)).current;
+  const highlightOpacityByIdRef = useRef<Record<string, Animated.Value>>({});
+  const [highlightedCommentIds, setHighlightedCommentIds] = useState<Record<string, true>>({});
   const insets = useSafeAreaInsets();
 
   const runCommentShake = useCallback(
@@ -636,34 +649,46 @@ export default function EventDetailScreen() {
     scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
   }, []);
 
-  const jumpToCommentWithRestore = useCallback(
-    (targetCommentId: string, scrollBackShakeSourceId?: string) => {
-      replyScrollRestoreYRef.current = scrollOffsetYRef.current;
-      replyScrollRestoreShakeIdRef.current = scrollBackShakeSourceId ?? null;
-      setReplyScrollBackVisible(true);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollToCommentById(targetCommentId);
-          setTimeout(() => runCommentShake(targetCommentId), 400);
+  const getHighlightOpacity = useCallback((commentId: string) => {
+    if (!highlightOpacityByIdRef.current[commentId]) {
+      highlightOpacityByIdRef.current[commentId] = new Animated.Value(0);
+    }
+    return highlightOpacityByIdRef.current[commentId];
+  }, []);
+
+  const runCommentHighlightFade = useCallback(
+    (commentId: string) => {
+      const opacity = getHighlightOpacity(commentId);
+      setHighlightedCommentIds((prev) => ({ ...prev, [commentId]: true }));
+      opacity.stopAnimation();
+      opacity.setValue(1);
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 1500,
+        useNativeDriver: true,
+      }).start(() => {
+        setHighlightedCommentIds((prev) => {
+          if (!prev[commentId]) return prev;
+          const next = { ...prev };
+          delete next[commentId];
+          return next;
         });
       });
     },
-    [scrollToCommentById, runCommentShake]
+    [getHighlightOpacity]
   );
 
-  const restoreReplyScrollPosition = useCallback(() => {
-    const y = replyScrollRestoreYRef.current;
-    const shakeAfterId = replyScrollRestoreShakeIdRef.current;
-    replyScrollRestoreYRef.current = null;
-    replyScrollRestoreShakeIdRef.current = null;
-    setReplyScrollBackVisible(false);
-    if (y != null) {
-      scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
-      if (shakeAfterId) {
-        setTimeout(() => runCommentShake(shakeAfterId), 400);
-      }
-    }
-  }, [runCommentShake]);
+  const jumpToCommentWithRestore = useCallback(
+    (targetCommentId: string) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollToCommentById(targetCommentId);
+          setTimeout(() => runCommentHighlightFade(targetCommentId), 400);
+        });
+      });
+    },
+    [scrollToCommentById, runCommentHighlightFade]
+  );
 
   const openReactionDetailSheet = useCallback((payload: { emoji: string; userIds: string[] }) => {
     setReactionDetailModal(payload);
@@ -844,7 +869,7 @@ export default function EventDetailScreen() {
     });
   }, []);
 
-  const addPendingCommentPhoto = useCallback((previewUri: string, pendingUpload: PickedImageAsset | File) => {
+  const addPendingCommentPhoto = useCallback((previewUri: string, pendingUpload: PickedImageAsset | File | string) => {
     const t = commentPhotoTargetRef.current;
     const row: PendingCommentPhoto = { id: uid(), uri: previewUri, pendingUpload };
     if (t === 'composer') {
@@ -869,6 +894,21 @@ export default function EventDetailScreen() {
     } catch (e) {
       if (!isCancelled(e)) {
         Alert.alert('Photo', e instanceof Error ? e.message : 'Could not pick image');
+      }
+    }
+  }, [addPendingCommentPhoto, currentUserId]);
+
+  const pickCommentPhotoCameraNative = useCallback(async () => {
+    if (!currentUserId) {
+      Alert.alert('Sign in', 'You must be signed in to add photos.');
+      return;
+    }
+    try {
+      const asset = await pickImageFromCamera();
+      addPendingCommentPhoto(asset.uri, asset);
+    } catch (e) {
+      if (!isCancelled(e)) {
+        Alert.alert('Photo', e instanceof Error ? e.message : 'Could not take photo');
       }
     }
   }, [addPendingCommentPhoto, currentUserId]);
@@ -900,6 +940,45 @@ export default function EventDetailScreen() {
       void pickCommentPhotoNative();
     }
   }, [currentUserId, pickCommentPhotoNative]);
+
+  const chooseCommentPhotoFromLibrary = useCallback(
+    async (forCommentEditId?: string) => {
+      if (!currentUserId) {
+        Alert.alert('Sign in', 'You must be signed in to add photos.');
+        return;
+      }
+      commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
+      if (Platform.OS === 'web') {
+        commentPhotoFileInputRef.current?.click();
+        return;
+      }
+      await pickCommentPhotoNative();
+    },
+    [currentUserId, pickCommentPhotoNative],
+  );
+
+  const takeCommentPhoto = useCallback(
+    async (forCommentEditId?: string) => {
+      if (!currentUserId) {
+        Alert.alert('Sign in', 'You must be signed in to add photos.');
+        return;
+      }
+      commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
+      if (Platform.OS === 'web') {
+        commentPhotoFileInputRef.current?.click();
+        return;
+      }
+      await pickCommentPhotoCameraNative();
+    },
+    [currentUserId, pickCommentPhotoCameraNative],
+  );
+
+  const insertCommentPhotoByLink = useCallback((url: string, forCommentEditId?: string) => {
+    const clean = url.trim();
+    if (!clean) return;
+    commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
+    addPendingCommentPhoto(clean, clean);
+  }, [addPendingCommentPhoto]);
 
   const absorbImageUrlsFromCommentText = useCallback(
     (target: 'composer' | string, text: string): string => {
@@ -1609,7 +1688,7 @@ export default function EventDetailScreen() {
   const coverPhotosForDisplay = canEditDescriptionAndPhotos
     ? localCoverPhotos
     : (displayEv.coverPhotos ?? []);
-  const showEventPhotosSection = coverPhotosForDisplay.length > 0 || canEditDescriptionAndPhotos;
+  const showEventPhotosSection = true;
 
   const persistCoverPhotos = async (next: string[]) => {
     if (!currentUserId) return;
@@ -1637,6 +1716,26 @@ export default function EventDetailScreen() {
     setCoverPhotoBusy(true);
     try {
       const url = await pickAndUploadCoverPhoto(currentUserId);
+      if (!url) return;
+      const prev = localCoverPhotos;
+      const next = [...prev, url];
+      setLocalCoverPhotos(next);
+      try {
+        await persistCoverPhotos(next);
+      } catch {
+        setLocalCoverPhotos(prev);
+        Alert.alert('Error', 'Failed to add photo');
+      }
+    } finally {
+      setCoverPhotoBusy(false);
+    }
+  };
+
+  const addCoverPhotoFromCamera = async () => {
+    if (!currentUserId || !canEditDescriptionAndPhotos || coverPhotoBusy) return;
+    setCoverPhotoBusy(true);
+    try {
+      const url = await takeAndUploadCoverPhoto(currentUserId);
       if (!url) return;
       const prev = localCoverPhotos;
       const next = [...prev, url];
@@ -2227,12 +2326,37 @@ export default function EventDetailScreen() {
                   Photos{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
                 </Text>
               </View>
-              {coverPhotosForDisplay.length > 0 ? (
+              {coverPhotosForDisplay.length > 0 || canEditDescriptionAndPhotos ? (
                 <PhotoCarousel
                   photos={coverPhotosForDisplay}
                   urlMap={resolvedImageMap}
                   canRemove={canEditDescriptionAndPhotos}
                   onRemoveAt={(i) => void removeCoverPhotoAt(i)}
+                  leadingItem={
+                    canEditDescriptionAndPhotos ? (
+                      <AddImageButton
+                        tile
+                        triggerIconName="camera-outline"
+                        label="Add photo"
+                        busy={coverPhotoBusy}
+                        disabled={coverPhotoBusy}
+                        onTakePhoto={addCoverPhotoFromCamera}
+                        onChooseFromLibrary={addCoverPhotoFromPicker}
+                        onInsertLink={async (url) => {
+                          if (!url.trim()) return;
+                          const prev = localCoverPhotos;
+                          const next = [...prev, url.trim()];
+                          setLocalCoverPhotos(next);
+                          try {
+                            await persistCoverPhotos(next);
+                          } catch {
+                            setLocalCoverPhotos(prev);
+                            Alert.alert('Error', 'Failed to add photo');
+                          }
+                        }}
+                      />
+                    ) : null
+                  }
                   onPhotoPress={(url, index) =>
                     setLightbox({
                       urls: coverPhotosForDisplay,
@@ -2242,33 +2366,6 @@ export default function EventDetailScreen() {
                     })
                   }
                 />
-              ) : null}
-              {canEditDescriptionAndPhotos ? (
-                <View
-                  style={{
-                    paddingHorizontal: 16,
-                    marginTop: coverPhotosForDisplay.length > 0 ? 4 : 0,
-                    marginBottom: 16,
-                  }}
-                >
-                  <View style={[styles.eventPhotosAddCard, styles.eventPhotosAddCardNested]}>
-                    <TouchableOpacity
-                      onPress={() => void addCoverPhotoFromPicker()}
-                      style={styles.eventPhotosAddBtn}
-                      disabled={coverPhotoBusy}
-                      activeOpacity={0.85}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                        {coverPhotoBusy ? (
-                          <ActivityIndicator size="small" color={Colors.textSub} />
-                        ) : (
-                          <Ionicons name="camera-outline" size={16} color={Colors.textSub} />
-                        )}
-                        <Text style={{ fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium }}>Add photo</Text>
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                </View>
               ) : null}
             </View>
           ) : null}
@@ -2936,13 +3033,13 @@ export default function EventDetailScreen() {
           <Text style={styles.eventSectionLabel}>
             Comments{comments.length > 0 ? ` · ${comments.length}` : ''}
           </Text>
-          <View
-            style={styles.eventMainCard}
+          <CommentsSection
+            isEmpty={comments.length === 0}
+            containerStyle={styles.eventMainCard}
             onLayout={(e) => {
               commentsThreadCardYRef.current = e.nativeEvent.layout.y;
             }}
-          >
-            {comments.length === 0 ? (
+            emptyContent={
               <View style={styles.commentsEmptyInsideCard}>
                 {isPast ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -2957,7 +3054,8 @@ export default function EventDetailScreen() {
                   </Text>
                 )}
               </View>
-            ) : null}
+            }
+          >
           {comments.map((c, i) => {
             const commentTs = typeof c.createdAt === 'string' ? new Date(c.createdAt) : c.createdAt;
             const isMine = c.userId === currentUserId;
@@ -2974,13 +3072,6 @@ export default function EventDetailScreen() {
               updateCommentMutation.isPending && updateCommentMutation.variables?.commentId === c.id;
             const shakeRowStyle =
               shakeCommentId === c.id ? { transform: [{ translateX: shakeX }] } : undefined;
-            const openCommentActionMenu = () => {
-              if (!hasActions) return;
-              if (Platform.OS !== 'web') {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              }
-              setCommentActionMenu({ commentId: c.id });
-            };
             return (
             <View
               key={c.id}
@@ -3054,12 +3145,16 @@ export default function EventDetailScreen() {
                         textAlignVertical="top"
                       />
                       <View style={styles.commentInlineEditToolbar}>
-                        <TouchableOpacity
-                          onPress={() => onCommentPhotoButtonPress(c.id)}
-                          style={styles.photoBtn}
-                        >
-                          <Ionicons name="camera-outline" size={20} color={Colors.textSub} />
-                        </TouchableOpacity>
+                        <AddImageButton
+                          iconOnly
+                          triggerIconName="camera-outline"
+                          label="Add photo"
+                          onTakePhoto={() => takeCommentPhoto(c.id)}
+                          onChooseFromLibrary={() => chooseCommentPhotoFromLibrary(c.id)}
+                          onInsertLink={async (url) => {
+                            insertCommentPhotoByLink(url, c.id);
+                          }}
+                        />
                         <TouchableOpacity
                           onPress={() => cancelEditComment(c.id)}
                           style={styles.commentInlineEditCancel}
@@ -3085,14 +3180,20 @@ export default function EventDetailScreen() {
                 </View>
                 </Animated.View>
               ) : (
-                <Pressable
-                  delayLongPress={400}
-                  style={styles.commentPressable}
-                  onLongPress={openCommentActionMenu}
-                  accessibilityHint={hasActions ? 'Long press for reactions and actions' : undefined}
-                >
+                <View style={styles.commentPressable}>
                   <Animated.View style={shakeRowStyle}>
                   <View style={[styles.commentRow, borderBelow]}>
+                    {highlightedCommentIds[c.id] ? (
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[
+                          styles.commentRowHighlightOverlay,
+                          {
+                            opacity: getHighlightOpacity(c.id),
+                          },
+                        ]}
+                      />
+                    ) : null}
                   <Avatar name={getUserSafe(c.userId).displayName} size={34} />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
@@ -3100,28 +3201,16 @@ export default function EventDetailScreen() {
                       <Text style={styles.commentTime}>{timeAgo(commentTs)}</Text>
                     </View>
                     {c.replyTo ? (
-                      <Pressable
-                        onPress={() => jumpToCommentWithRestore(c.replyTo!.id, c.id)}
-                        delayLongPress={400}
-                        onLongPress={openCommentActionMenu}
-                        style={({ pressed }) => [
-                          styles.replyQuoteStrip,
-                          styles.replyQuotePressable,
-                          pressed && { opacity: 0.88 },
-                        ]}
-                        accessibilityRole="button"
+                      <CommentReplyQuote
+                        onPress={() => jumpToCommentWithRestore(c.replyTo!.id)}
+                        author={c.replyTo.user.displayName ?? c.replyTo.user.name ?? 'Member'}
+                        preview={c.replyTo.preview}
+                        containerStyle={[styles.replyQuoteStrip, styles.replyQuotePressable]}
+                        pressedStyle={{ opacity: 0.88 }}
                         accessibilityLabel="Jump to previous comment in thread"
-                      >
-                        <Ionicons name="return-down-forward" size={14} color={Colors.textMuted} style={{ marginTop: 2 }} />
-                        <View style={{ flex: 1, minWidth: 0 }}>
-                          <Text style={styles.replyQuoteAuthor} numberOfLines={1}>
-                            {c.replyTo.user.displayName ?? c.replyTo.user.name ?? 'Member'}
-                          </Text>
-                          <Text style={styles.replyQuotePreview} numberOfLines={2}>
-                            {c.replyTo.preview}
-                          </Text>
-                        </View>
-                      </Pressable>
+                        authorStyle={styles.replyQuoteAuthor}
+                        previewStyle={styles.replyQuotePreview}
+                      />
                     ) : null}
                     {c.photos.length > 0 && (
                       <CommentPhotoGallery
@@ -3187,39 +3276,46 @@ export default function EventDetailScreen() {
                           ))}
                       </View>
                     ) : null}
+                    <View style={styles.commentIconActionRow}>
+                      <TouchableOpacity
+                        style={styles.commentIconActionBtn}
+                        onPress={() => setCommentActionMenu({ commentId: c.id })}
+                        accessibilityLabel="Add reaction"
+                        activeOpacity={0.75}
+                      >
+                        <Ionicons name="happy-outline" size={15} color={Colors.textSub} />
+                      </TouchableOpacity>
+                      {canReply ? (
+                        <TouchableOpacity
+                          style={styles.commentIconActionBtn}
+                          onPress={() =>
+                            setComposerReplyTo({
+                              id: c.id,
+                              label: getUserSafe(c.userId).displayName,
+                              preview: c.text?.trim() || (c.photos.length ? 'Photo' : '(no text)'),
+                            })
+                          }
+                          accessibilityLabel="Reply"
+                          activeOpacity={0.75}
+                        >
+                          <Ionicons name="return-up-forward-outline" size={15} color={Colors.textSub} />
+                          <Text style={styles.commentIconActionText}>Reply</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
                   </View>
                   </View>
                   </Animated.View>
-                </Pressable>
+                </View>
               )}
             </View>
             );
           })}
-          </View>
+          </CommentsSection>
         </View>
 
         <View style={{ height: 100 }} />
       </GestureScrollView>
-
-      {replyScrollBackVisible ? (
-        <View
-          pointerEvents="box-none"
-          style={[
-            styles.replyScrollFloatingWrap,
-            { bottom: inputBarHeight + Math.max(insets.bottom, 0) + 8 },
-          ]}
-        >
-          <TouchableOpacity
-            onPress={restoreReplyScrollPosition}
-            style={styles.replyScrollFloatingPill}
-            activeOpacity={0.88}
-            accessibilityRole="button"
-            accessibilityLabel="Back to reply message"
-          >
-            <Text style={styles.replyScrollFloatingPillText}>Back to Reply Message</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
 
       <View
         style={styles.inputBar}
@@ -3246,9 +3342,6 @@ export default function EventDetailScreen() {
             </Pressable>
             <TouchableOpacity
               onPress={() => {
-                setReplyScrollBackVisible(false);
-                replyScrollRestoreYRef.current = null;
-                replyScrollRestoreShakeIdRef.current = null;
                 setComposerReplyTo(null);
               }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -3290,12 +3383,16 @@ export default function EventDetailScreen() {
           </ScrollView>
         )}
         <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <TouchableOpacity
-            onPress={() => onCommentPhotoButtonPress()}
-            style={styles.photoBtn}
-          >
-            <Ionicons name="camera-outline" size={20} color={Colors.textSub} />
-          </TouchableOpacity>
+          <AddImageButton
+            iconOnly
+            triggerIconName="camera-outline"
+            label="Add photo"
+            onTakePhoto={() => takeCommentPhoto()}
+            onChooseFromLibrary={() => chooseCommentPhotoFromLibrary()}
+            onInsertLink={async (url) => {
+              insertCommentPhotoByLink(url);
+            }}
+          />
           <CommentMentionInput
             value={composerInput}
             onChangeText={(t) => setComposerInput(absorbImageUrlsFromCommentText('composer', t))}
@@ -3334,72 +3431,16 @@ export default function EventDetailScreen() {
         </View>
       </View>
 
-      {pendingPreviewLightbox !== null && (
-        <Modal
-          visible
-          transparent
-          animationType="fade"
-          onRequestClose={() => setPendingPreviewLightbox(null)}
-        >
-          <View style={styles.lightbox}>
-            <TouchableOpacity
-              onPress={() => setPendingPreviewLightbox(null)}
-              style={[styles.lightboxBtn, styles.pendingPreviewClose]}
-            >
-              <Ionicons name="close" size={22} color="#fff" />
-            </TouchableOpacity>
-            {pendingPreviewLightbox.urls.length > 1 ? (
-              <>
-                <TouchableOpacity
-                  accessibilityLabel="Previous photo"
-                  onPress={() =>
-                    setPendingPreviewLightbox((prev) =>
-                      prev && prev.index > 0 ? { ...prev, index: prev.index - 1 } : prev
-                    )
-                  }
-                  disabled={pendingPreviewLightbox.index <= 0}
-                  style={[
-                    styles.lightboxNavBtn,
-                    styles.lightboxNavPrev,
-                    pendingPreviewLightbox.index <= 0 && styles.lightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-back" size={28} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel="Next photo"
-                  onPress={() =>
-                    setPendingPreviewLightbox((prev) =>
-                      prev && prev.index < prev.urls.length - 1
-                        ? { ...prev, index: prev.index + 1 }
-                        : prev
-                    )
-                  }
-                  disabled={pendingPreviewLightbox.index >= pendingPreviewLightbox.urls.length - 1}
-                  style={[
-                    styles.lightboxNavBtn,
-                    styles.lightboxNavNext,
-                    pendingPreviewLightbox.index >= pendingPreviewLightbox.urls.length - 1 &&
-                      styles.lightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-forward" size={28} color="#fff" />
-                </TouchableOpacity>
-              </>
-            ) : null}
-            <ResolvableImage
-              storedUrl={pendingPreviewLightbox.urls[pendingPreviewLightbox.index] ?? ''}
-              style={styles.lightboxImg}
-              resizeMode="contain"
-            />
-            {pendingPreviewLightbox.urls.length > 1 ? (
-              <Text style={styles.lightboxCounter}>
-                {pendingPreviewLightbox.index + 1} / {pendingPreviewLightbox.urls.length}
-              </Text>
-            ) : null}
-          </View>
-        </Modal>
-      )}
+      <ImageLightboxModal
+        visible={pendingPreviewLightbox !== null}
+        urls={pendingPreviewLightbox?.urls ?? []}
+        index={pendingPreviewLightbox?.index ?? 0}
+        onChangeIndex={(nextIndex) =>
+          setPendingPreviewLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
+        }
+        onClose={() => setPendingPreviewLightbox(null)}
+        showCounter
+      />
 
       <Modal
         visible={reactionDetailSheetVisible}
@@ -3594,46 +3635,17 @@ export default function EventDetailScreen() {
                   return (
                     <>
                       {currentUserId && menuCanReply ? (
-                        <View style={styles.commentActionEmojiBarRow}>
-                          <View style={styles.commentActionEmojiQuickPill}>
-                            <View style={styles.commentActionEmojiQuickInner}>
-                              {commentQuickReactions.map((emoji) => {
-                                const active = (mc.viewerReactionEmojis || []).includes(emoji);
-                                return (
-                                  <TouchableOpacity
-                                    key={emoji}
-                                    onPress={() => void applyCommentReactionAndDismiss(mc.id, emoji)}
-                                    disabled={commentReactionMutation.isPending}
-                                    style={[
-                                      styles.commentActionEmojiQuickHit,
-                                      active && styles.commentActionEmojiHitActive,
-                                    ]}
-                                    accessibilityLabel={`React with ${emoji}`}
-                                  >
-                                    <ReactionEmojiGlyph emoji={emoji} size={24} />
-                                  </TouchableOpacity>
-                                );
-                              })}
-                            </View>
-                          </View>
-                          <TouchableOpacity
-                            style={styles.commentActionEmojiMoreBtn}
-                            onPress={() => {
-                              setCommentReactionFullPickerFor(mc.id);
-                              closeCommentActionSheet();
-                            }}
-                            disabled={commentReactionMutation.isPending}
-                            accessibilityLabel="More emojis"
-                            activeOpacity={0.75}
-                          >
-                            <View style={styles.commentActionEmojiMoreInner}>
-                              <Ionicons name="happy-outline" size={22} color={Colors.textSub} />
-                              <View style={styles.commentActionEmojiMorePlus} pointerEvents="none">
-                                <Ionicons name="add" size={11} color={Colors.textSub} />
-                              </View>
-                            </View>
-                          </TouchableOpacity>
-                        </View>
+                        <EmojiBar
+                          style={styles.commentActionQuickReactionBar}
+                          quickReactions={commentQuickReactions}
+                          activeEmojis={mc.viewerReactionEmojis || []}
+                          onPressReaction={(emoji) => void applyCommentReactionAndDismiss(mc.id, emoji)}
+                          onPressViewAll={() => {
+                            setCommentReactionFullPickerFor(mc.id);
+                            closeCommentActionSheet();
+                          }}
+                          disabled={commentReactionMutation.isPending}
+                        />
                       ) : null}
 
                       <View
@@ -3773,72 +3785,23 @@ export default function EventDetailScreen() {
       )}
 
       {/* Lightbox */}
-      {lightbox && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setLightbox(null)}>
-          <View style={styles.lightbox}>
-            <View style={styles.lightboxHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Avatar name={lightbox.name} size={28} />
-                <View>
-                  <Text style={styles.lightboxName}>{lightbox.name}</Text>
-                  <Text style={styles.lightboxTime}>
-                    {lightbox.urls.length > 1
-                      ? `${lightbox.index + 1} of ${lightbox.urls.length} · ${timeAgo(lightbox.ts)}`
-                      : timeAgo(lightbox.ts)}
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity onPress={() => setLightbox(null)} style={styles.lightboxBtn}>
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
-            </View>
-            {lightbox.urls.length > 1 ? (
-              <>
-                <TouchableOpacity
-                  accessibilityLabel="Previous photo"
-                  onPress={() =>
-                    setLightbox((prev) =>
-                      prev && prev.index > 0 ? { ...prev, index: prev.index - 1 } : prev
-                    )
-                  }
-                  disabled={lightbox.index <= 0}
-                  style={[
-                    styles.lightboxNavBtn,
-                    styles.lightboxNavPrev,
-                    lightbox.index <= 0 && styles.lightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-back" size={28} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel="Next photo"
-                  onPress={() =>
-                    setLightbox((prev) =>
-                      prev && prev.index < prev.urls.length - 1
-                        ? { ...prev, index: prev.index + 1 }
-                        : prev
-                    )
-                  }
-                  disabled={lightbox.index >= lightbox.urls.length - 1}
-                  style={[
-                    styles.lightboxNavBtn,
-                    styles.lightboxNavNext,
-                    lightbox.index >= lightbox.urls.length - 1 && styles.lightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-forward" size={28} color="#fff" />
-                </TouchableOpacity>
-              </>
-            ) : null}
-            <ResolvableImage
-              storedUrl={lightbox.urls[lightbox.index] ?? ''}
-              urlMap={resolvedImageMap}
-              style={styles.lightboxImg}
-              resizeMode="contain"
-            />
-          </View>
-        </Modal>
-      )}
+      <ImageLightboxModal
+        visible={!!lightbox}
+        urls={lightbox?.urls ?? []}
+        index={lightbox?.index ?? 0}
+        onChangeIndex={(nextIndex) => setLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))}
+        onClose={() => setLightbox(null)}
+        headerAvatar={lightbox ? <Avatar name={lightbox.name} size={28} /> : undefined}
+        title={lightbox?.name}
+        subtitle={
+          lightbox
+            ? lightbox.urls.length > 1
+              ? `${lightbox.index + 1} of ${lightbox.urls.length} · ${timeAgo(lightbox.ts)}`
+              : timeAgo(lightbox.ts)
+            : undefined
+        }
+        urlMap={Object.fromEntries(resolvedImageMap)}
+      />
 
       <Modal
         visible={showCommentPhotoModal}
@@ -5026,7 +4989,14 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.border,
   },
   attendText:       { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
-  commentRow:       { flexDirection: 'row', gap: 12, paddingVertical: 14, paddingHorizontal: 16 },
+  commentRow:       { flexDirection: 'row', gap: 12, paddingVertical: 14, paddingHorizontal: 16, position: 'relative', overflow: 'hidden' },
+  commentRowHighlightOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#F59E0B',
+  },
   commentPressable: {
     borderWidth: 0,
     borderRadius: 0,
@@ -5046,6 +5016,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   commentBorder:    { borderBottomWidth: 1, borderBottomColor: Colors.border },
+  commentIconActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  commentIconActionBtn: {
+    minHeight: 28,
+    paddingHorizontal: 8,
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  commentIconActionText: { fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium },
   commentActions:   { flexDirection: 'row', alignItems: 'stretch', marginRight: 12, marginVertical: 8, gap: 8 },
   commentActionBtn: { minWidth: 84, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 10 },
   commentActionEdit:{ backgroundColor: '#64748B' },
@@ -5126,59 +5109,8 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     alignSelf: 'center',
   },
-  commentActionEmojiBarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  commentActionQuickReactionBar: {
     marginBottom: 10,
-    alignSelf: 'stretch',
-  },
-  commentActionEmojiQuickPill: {
-    flex: 1,
-    minWidth: 0,
-    borderRadius: 999,
-    backgroundColor: Colors.bg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.border,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    ...Shadows.sm,
-  },
-  commentActionEmojiQuickInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  commentActionEmojiQuickHit: {
-    flex: 1,
-    minWidth: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  commentActionEmojiMoreBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: Radius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Shadows.sm,
-  },
-  commentActionEmojiMoreInner: {
-    position: 'relative',
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  commentActionEmojiMorePlus: {
-    position: 'absolute',
-    top: 2,
-    right: 2,
   },
   commentActionEmojiHit: {
     width: 40,
@@ -5186,9 +5118,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  commentActionEmojiHitActive: {
-    backgroundColor: Colors.surface,
   },
   commentReactionPickerRoot: {
     flex: 1,
