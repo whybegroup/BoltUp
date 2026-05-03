@@ -29,6 +29,55 @@ CREATE TABLE "groups" (
 );
 
 -- CreateTable
+CREATE TABLE "group_posts" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "groupId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "group_posts_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "groups" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "group_posts_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "group_post_reactions" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "postId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "emoji" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "group_post_reactions_postId_fkey" FOREIGN KEY ("postId") REFERENCES "group_posts" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "group_post_reactions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "group_post_comments" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "postId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "body" TEXT NOT NULL,
+    "parentCommentId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "group_post_comments_postId_fkey" FOREIGN KEY ("postId") REFERENCES "group_posts" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "group_post_comments_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "group_post_comments_parentCommentId_fkey" FOREIGN KEY ("parentCommentId") REFERENCES "group_post_comments" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "group_post_comment_reactions" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "commentId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "emoji" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "group_post_comment_reactions_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "group_post_comments" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "group_post_comment_reactions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE "group_photos" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "groupId" TEXT NOT NULL,
@@ -199,10 +248,13 @@ CREATE TABLE "polls" (
     "anonymousVotes" BOOLEAN NOT NULL DEFAULT false,
     "multipleChoice" BOOLEAN NOT NULL DEFAULT false,
     "ranking" BOOLEAN NOT NULL DEFAULT false,
+    "closedAt" DATETIME,
+    "closedBy" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "polls_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "groups" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "polls_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "users" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    CONSTRAINT "polls_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "users" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "polls_closedBy_fkey" FOREIGN KEY ("closedBy") REFERENCES "users" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -267,6 +319,20 @@ CREATE TABLE "poll_text_answers" (
 );
 
 -- CreateTable
+CREATE TABLE "poll_option_suggestions" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "pollId" TEXT NOT NULL,
+    "questionKey" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "suggestedBy" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "decidedAt" DATETIME,
+    CONSTRAINT "poll_option_suggestions_pollId_fkey" FOREIGN KEY ("pollId") REFERENCES "polls" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "poll_option_suggestions_suggestedBy_fkey" FOREIGN KEY ("suggestedBy") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE "notifications" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "type" TEXT NOT NULL,
@@ -277,6 +343,7 @@ CREATE TABLE "notifications" (
     "body" TEXT NOT NULL,
     "groupId" TEXT,
     "eventId" TEXT,
+    "pollId" TEXT,
     "navigable" BOOLEAN NOT NULL DEFAULT false,
     "dest" TEXT,
     "userId" TEXT,
@@ -286,6 +353,21 @@ CREATE TABLE "notifications" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "groups_inviteCode_key" ON "groups"("inviteCode");
+
+-- CreateIndex
+CREATE INDEX "group_posts_groupId_createdAt_idx" ON "group_posts"("groupId", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "group_post_reactions_postId_userId_emoji_key" ON "group_post_reactions"("postId", "userId", "emoji");
+
+-- CreateIndex
+CREATE INDEX "group_post_comments_postId_createdAt_idx" ON "group_post_comments"("postId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "group_post_comments_parentCommentId_idx" ON "group_post_comments"("parentCommentId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "group_post_comment_reactions_commentId_userId_emoji_key" ON "group_post_comment_reactions"("commentId", "userId", "emoji");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "group_members_groupId_userId_key" ON "group_members"("groupId", "userId");
@@ -325,3 +407,9 @@ CREATE INDEX "poll_text_answers_pollId_questionKey_idx" ON "poll_text_answers"("
 
 -- CreateIndex
 CREATE UNIQUE INDEX "poll_text_answers_pollId_questionKey_userId_key" ON "poll_text_answers"("pollId", "questionKey", "userId");
+
+-- CreateIndex
+CREATE INDEX "poll_option_suggestions_pollId_questionKey_idx" ON "poll_option_suggestions"("pollId", "questionKey");
+
+-- CreateIndex
+CREATE INDEX "poll_option_suggestions_pollId_status_idx" ON "poll_option_suggestions"("pollId", "status");
