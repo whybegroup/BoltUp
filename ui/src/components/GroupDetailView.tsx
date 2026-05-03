@@ -39,7 +39,7 @@ import {
   useAllGroupMemberColors,
   useEvents,
 } from '../hooks/api';
-import { MembershipRequestAction, type EventDetailed } from '@moijia/client';
+import { MembershipRequestAction } from '@moijia/client';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Rect } from 'react-native-svg';
@@ -49,13 +49,14 @@ import { AvatarPickerModal } from './AvatarPickerModal';
 import { UserAvatar } from './UserAvatar';
 import { deleteManagedUploadFireAndForget } from '../services/managedUploadDelete';
 import { ResolvableImage } from './ResolvableImage';
-import { pickAndUploadCoverPhoto } from '../services/pickAndUploadImage';
+import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 import Toast from 'react-native-toast-message';
 import { GroupsTopHeader } from './GroupsTopHeader';
 import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
 import { NotificationsPanelModal } from './NotificationsPanelModal';
-import { ListView } from './ListView';
+import { ImageLightboxModal } from './ImageLightboxModal';
 import { withReturnTo } from '../utils/navigationReturn';
+import { AddImageButton } from './AddImageButton';
 
 const AVATAR_SIZE = 56;
 
@@ -145,7 +146,7 @@ export function GroupDetailView({
     !!currentUserId &&
     !!group &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
-  const { data: groupWeekEvents = [], isLoading: groupWeekEventsLoading, refetch: refetchGroupEvents } = useEvents({
+  const { data: groupWeekEvents = [], refetch: refetchGroupEvents } = useEvents({
     userId: currentUserId ?? '',
     groupId,
     startAfter: groupEventsFetchWindow.startAfter,
@@ -159,20 +160,16 @@ export function GroupDetailView({
     const { weekEndMs } = groupEventsFetchWindow;
     let inProgressCount = 0;
     let upcomingCount = 0;
-    const eventsForModal: EventDetailed[] = [];
     for (const ev of groupWeekEvents) {
       const s = new Date(ev.start).getTime();
       const e = new Date(ev.end).getTime();
       if (s <= nowMs && e > nowMs) {
         inProgressCount += 1;
-        eventsForModal.push(ev);
       } else if (s > nowMs && s <= weekEndMs) {
         upcomingCount += 1;
-        eventsForModal.push(ev);
       }
     }
-    eventsForModal.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-    return { inProgressCount, upcomingCount, eventsForModal };
+    return { inProgressCount, upcomingCount };
   }, [groupWeekEvents, groupEventsFetchWindow, eventsSummaryRefreshTick]);
   const groupEventsSummaryButtonLine = useMemo(() => {
     const { inProgressCount, upcomingCount } = groupEventsSummary;
@@ -252,7 +249,6 @@ export function GroupDetailView({
   const [showSwitchGroups, setShowSwitchGroups] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showGroupSettingsModal, setShowGroupSettingsModal] = useState(false);
-  const [eventsExpanded, setEventsExpanded] = useState(true);
   const [descExpanded, setDescExpanded] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
@@ -555,19 +551,18 @@ export function GroupDetailView({
     }
   };
 
-  const closeAnnouncementModal = useCallback(() => {
+  const closeAnnouncementModal = () => {
     setDraftAnnouncement(group.announcement ?? '');
     setEditingAnnouncement(false);
     setShowAnnouncementReadModal(false);
-  }, [group]);
+  };
 
-  const coverPhotosForDisplay =
-    isAdmin && editingGroupProfile ? localCoverPhotos : (group.coverPhotos ?? []);
-  const showGroupCoverSection =
-    coverPhotosForDisplay.length > 0 || (isAdmin && !isPending && editingGroupProfile);
+  const canEditPhotos = isAdmin && !isPending;
+  const coverPhotosForDisplay = isAdmin ? localCoverPhotos : (group.coverPhotos ?? []);
+  const showGroupCoverSection = true;
 
   const removeCoverPhotoAt = async (index: number) => {
-    if (!currentUserId || !isAdmin || !editingGroupProfile) return;
+    if (!currentUserId || !canEditPhotos) return;
     const prev = localCoverPhotos;
     const next = prev.filter((_, j) => j !== index);
     setLocalCoverPhotos(next);
@@ -584,7 +579,7 @@ export function GroupDetailView({
   };
 
   const addCoverPhoto = async (url: string) => {
-    if (!currentUserId || !isAdmin || !editingGroupProfile) return;
+    if (!currentUserId || !canEditPhotos) return;
     const prev = localCoverPhotos;
     const next = [...prev, url];
     setLocalCoverPhotos(next);
@@ -601,7 +596,7 @@ export function GroupDetailView({
   };
 
   const addCoverPhotoFromPicker = async () => {
-    if (!currentUserId || !isAdmin || !editingGroupProfile || coverPhotoBusy) return;
+    if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
       const url = await pickAndUploadCoverPhoto(currentUserId);
@@ -611,91 +606,79 @@ export function GroupDetailView({
     }
   };
 
+  const addCoverPhotoFromCamera = async () => {
+    if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
+    setCoverPhotoBusy(true);
+    try {
+      const url = await takeAndUploadCoverPhoto(currentUserId);
+      if (url) await addCoverPhoto(url);
+    } finally {
+      setCoverPhotoBusy(false);
+    }
+  };
+
   const groupPhotosBlock = showGroupCoverSection ? (
-    <View
-      style={{
-        marginTop: 10,
-        marginBottom:
-          isAdmin && !isPending && editingGroupProfile
-            ? 0
-            : coverPhotosForDisplay.length > 0
-              ? 16
-              : 0,
-      }}
-    >
-      <View style={{ paddingHorizontal: 16 }}>
-        <Text style={formSectionTitleStyle}>
-          Photos{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
-        </Text>
-      </View>
-      {coverPhotosForDisplay.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{
-            borderBottomWidth: isAdmin && !isPending && editingGroupProfile ? StyleSheet.hairlineWidth : 0,
-            borderBottomColor: Colors.border,
-          }}
-          contentContainerStyle={{ gap: 4, paddingVertical: 10, paddingHorizontal: 16 }}
-        >
-          {coverPhotosForDisplay.map((uri, i) => (
-            <View key={`${uri}-${i}`} style={{ position: 'relative' }}>
-              <TouchableOpacity
-                onPress={() => setGroupPhotoLightbox({ urls: coverPhotosForDisplay, index: i })}
-                activeOpacity={0.9}
-              >
-                <ResolvableImage
-                  storedUrl={uri}
-                  style={{
-                    width: 80,
-                    height: 80,
-                    borderRadius: Radius.lg,
-                    backgroundColor: Colors.bg,
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: Colors.border,
-                  }}
-                  resizeMode="cover"
-                />
-              </TouchableOpacity>
-              {isAdmin && !isPending && editingGroupProfile && (
+    <View style={styles.groupPhotosSectionWrap}>
+      <Text style={styles.sectionLabel}>
+        PHOTOS{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
+      </Text>
+      <View style={styles.card}>
+        {coverPhotosForDisplay.length > 0 || canEditPhotos ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{
+              borderBottomWidth: canEditPhotos ? StyleSheet.hairlineWidth : 0,
+              borderBottomColor: Colors.border,
+            }}
+            contentContainerStyle={{ gap: 4, paddingVertical: 10, paddingHorizontal: 16 }}
+          >
+            {canEditPhotos ? (
+              <AddImageButton
+                tile
+                triggerIconName="camera-outline"
+                label="Add photo"
+                busy={coverPhotoBusy}
+                disabled={coverPhotoBusy}
+                onTakePhoto={addCoverPhotoFromCamera}
+                onChooseFromLibrary={addCoverPhotoFromPicker}
+                onInsertLink={async (url) => {
+                  await addCoverPhoto(url);
+                }}
+              />
+            ) : null}
+            {coverPhotosForDisplay.map((uri, i) => (
+              <View key={`${uri}-${i}`} style={{ position: 'relative' }}>
                 <TouchableOpacity
-                  onPress={() => void removeCoverPhotoAt(i)}
-                  style={styles.coverRemoveThumb}
+                  onPress={() => setGroupPhotoLightbox({ urls: coverPhotosForDisplay, index: i })}
+                  activeOpacity={0.9}
                 >
-                  <Ionicons name="close" size={11} color="#fff" />
+                  <ResolvableImage
+                    storedUrl={uri}
+                    style={{
+                      width: 80,
+                      height: 80,
+                      borderRadius: Radius.lg,
+                      backgroundColor: Colors.bg,
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: Colors.border,
+                    }}
+                    resizeMode="cover"
+                  />
                 </TouchableOpacity>
-              )}
-            </View>
-          ))}
-        </ScrollView>
-      ) : null}
-      {isAdmin && !isPending && editingGroupProfile ? (
-        <View
-          style={{
-            paddingHorizontal: 16,
-            marginTop: coverPhotosForDisplay.length > 0 ? 4 : 0,
-            marginBottom: 16,
-          }}
-        >
-          <View style={[styles.groupPhotosAddCard, styles.groupPhotosAddCardNested]}>
-            <TouchableOpacity
-              onPress={() => void addCoverPhotoFromPicker()}
-              style={styles.groupPhotosAddBtn}
-              disabled={coverPhotoBusy}
-              activeOpacity={0.85}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                {coverPhotoBusy ? (
-                  <ActivityIndicator size="small" color={Colors.textSub} />
-                ) : (
-                  <Ionicons name="camera-outline" size={16} color={Colors.textSub} />
+                {canEditPhotos && (
+                  <TouchableOpacity
+                    onPress={() => void removeCoverPhotoAt(i)}
+                    style={styles.coverRemoveThumb}
+                  >
+                    <Ionicons name="close" size={11} color="#fff" />
+                  </TouchableOpacity>
                 )}
-                <Text style={{ fontSize: 12, color: Colors.textSub, fontFamily: Fonts.medium }}>Add photo</Text>
               </View>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
+            ))}
+          </ScrollView>
+        ) : null}
+      </View>
     </View>
   ) : null;
 
@@ -710,10 +693,6 @@ export function GroupDetailView({
   );
 
   const breadcrumbRow = <GroupsBreadcrumbTrail segments={breadcrumbSegments} />;
-
-  const groupEventsPalette = getGroupColor(
-    memberColorData?.colorHex || getDefaultGroupThemeFromName(group.name)
-  );
 
   const scrollAndOverlays = (
     <>
@@ -987,8 +966,6 @@ export function GroupDetailView({
             )}
           </View>
 
-          {groupPhotosBlock}
-
           {!isPending && inviteCode ? (
             <View style={[styles.inviteSection, styles.inviteSectionInset]}>
               <View style={[styles.inviteRow, { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: 4 }]}>
@@ -1033,6 +1010,8 @@ export function GroupDetailView({
           </View>
         </View>
 
+        {groupPhotosBlock}
+
         {isPending ? (
           <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 100 }}>
             <View style={[styles.card, styles.cardPendingNotice, { padding: 24, alignItems: 'center' }]}>
@@ -1063,52 +1042,47 @@ export function GroupDetailView({
         <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 100 }}>
           {fetchGroupWeekEvents ? (
             <>
-              <TouchableOpacity
-                onPress={() => setEventsExpanded((prev) => !prev)}
-                style={styles.collapsibleSectionHeader}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel={eventsExpanded ? 'Collapse events section' : 'Expand events section'}
-              >
-                <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>
-                  EVENTS
-                  {groupEventsSummaryButtonLine ? ` · ${groupEventsSummaryButtonLine}` : ''}
-                </Text>
-                <Ionicons
-                  name={eventsExpanded ? 'chevron-up' : 'chevron-down'}
-                  size={16}
-                  color={Colors.textMuted}
-                  style={{ marginLeft: 6 }}
-                />
-              </TouchableOpacity>
-              {eventsExpanded && (
-                <View style={{ marginBottom: 16 }}>
-                  {groupWeekEventsLoading && groupEventsSummary.eventsForModal.length === 0 ? (
-                    <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                      <ActivityIndicator color={Colors.textSub} />
-                    </View>
-                  ) : groupEventsSummary.eventsForModal.length === 0 ? (
-                    <View style={{ paddingVertical: 24, paddingHorizontal: 16 }}>
-                      <Text style={{ fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, textAlign: 'center' }}>
-                        No in-progress or upcoming events
-                      </Text>
-                    </View>
-                  ) : (
-                    <ListView
-                      events={groupEventsSummary.eventsForModal}
-                      groups={[group]}
-                      groupColors={groupColors}
-                      onSelect={(ev: EventDetailed) => {
-                        router.push(withReturnTo(`/event/${ev.id}`, pathname));
-                      }}
-                      onSelectGroup={(gid) => {
-                        router.push(withReturnTo(`/(tabs)/groups/${gid}`, pathname));
-                      }}
-                      showGroup={false}
-                    />
-                  )}
-                </View>
-              )}
+              <Text style={styles.sectionLabel}>ACTIVITIES</Text>
+              <View style={[styles.card, { marginBottom: 16 }]}>
+                <TouchableOpacity
+                  onPress={() =>
+                    router.push(withReturnTo(`/(tabs)/groups/${groupId}/events`, pathname))
+                  }
+                  style={[styles.memberRow, styles.rowBorder]}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open events timeline"
+                >
+                  <Ionicons name="calendar-outline" size={22} color={Colors.textSub} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.memberName}>Events</Text>
+                    <Text style={styles.memberHandle}>
+                      {groupEventsSummaryButtonLine
+                        ? groupEventsSummaryButtonLine
+                        : 'In-progress and upcoming'}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() =>
+                    router.push(withReturnTo(`/(tabs)/groups/${groupId}/forum`, pathname))
+                  }
+                  style={styles.memberRow}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open group posts"
+                >
+                  <Ionicons name="chatbubbles-outline" size={22} color={Colors.textSub} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.memberName}>Posts</Text>
+                    <Text style={styles.memberHandle}>
+                      Posts, reactions, comments, and threaded replies
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+              </View>
             </>
           ) : null}
           {canManageMembers && pendingRequestUsers.length > 0 && (
@@ -1188,80 +1162,24 @@ export function GroupDetailView({
         )}
       </ScrollView>
 
-      {groupPhotoLightbox !== null && (
-        <Modal
-          visible
-          transparent
-          animationType="fade"
-          onRequestClose={() => setGroupPhotoLightbox(null)}
-        >
-          <View style={styles.groupPhotoLightbox}>
-            <View style={styles.groupPhotoLightboxHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Avatar name={group.name} size={28} />
-                <View>
-                  <Text style={styles.groupPhotoLightboxName}>{group.name}</Text>
-                  <Text style={styles.groupPhotoLightboxSub}>
-                    {groupPhotoLightbox.urls.length > 1
-                      ? `Cover photos · ${groupPhotoLightbox.index + 1} of ${groupPhotoLightbox.urls.length}`
-                      : 'Cover photo'}
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setGroupPhotoLightbox(null)}
-                style={styles.groupPhotoLightboxClose}
-              >
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
-            </View>
-            {groupPhotoLightbox.urls.length > 1 ? (
-              <>
-                <TouchableOpacity
-                  accessibilityLabel="Previous photo"
-                  onPress={() =>
-                    setGroupPhotoLightbox((prev) =>
-                      prev && prev.index > 0 ? { ...prev, index: prev.index - 1 } : prev
-                    )
-                  }
-                  disabled={groupPhotoLightbox.index <= 0}
-                  style={[
-                    styles.groupPhotoLightboxNavBtn,
-                    styles.groupPhotoLightboxNavPrev,
-                    groupPhotoLightbox.index <= 0 && styles.groupPhotoLightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-back" size={28} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel="Next photo"
-                  onPress={() =>
-                    setGroupPhotoLightbox((prev) =>
-                      prev && prev.index < prev.urls.length - 1
-                        ? { ...prev, index: prev.index + 1 }
-                        : prev
-                    )
-                  }
-                  disabled={groupPhotoLightbox.index >= groupPhotoLightbox.urls.length - 1}
-                  style={[
-                    styles.groupPhotoLightboxNavBtn,
-                    styles.groupPhotoLightboxNavNext,
-                    groupPhotoLightbox.index >= groupPhotoLightbox.urls.length - 1 &&
-                      styles.groupPhotoLightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-forward" size={28} color="#fff" />
-                </TouchableOpacity>
-              </>
-            ) : null}
-            <ResolvableImage
-              storedUrl={groupPhotoLightbox.urls[groupPhotoLightbox.index] ?? ''}
-              style={styles.groupPhotoLightboxImg}
-              resizeMode="contain"
-            />
-          </View>
-        </Modal>
-      )}
+      <ImageLightboxModal
+        visible={groupPhotoLightbox !== null}
+        urls={groupPhotoLightbox?.urls ?? []}
+        index={groupPhotoLightbox?.index ?? 0}
+        onChangeIndex={(nextIndex) =>
+          setGroupPhotoLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
+        }
+        onClose={() => setGroupPhotoLightbox(null)}
+        headerAvatar={<Avatar name={group.name} size={28} />}
+        title={group.name}
+        subtitle={
+          groupPhotoLightbox
+            ? groupPhotoLightbox.urls.length > 1
+              ? `Cover photos · ${groupPhotoLightbox.index + 1} of ${groupPhotoLightbox.urls.length}`
+              : 'Cover photo'
+            : undefined
+        }
+      />
 
       <AvatarPickerModal
         variant="group"
@@ -1669,6 +1587,7 @@ const styles = StyleSheet.create({
   groupScrollView:  { flex: 1, backgroundColor: Colors.bg },
   groupScrollContent: { flexGrow: 1, backgroundColor: Colors.bg, paddingBottom: 8 },
   groupMainCardWrap:{ marginHorizontal: 20, marginTop: 10, marginBottom: 4 },
+  groupPhotosSectionWrap: { marginHorizontal: 20, marginTop: 12, marginBottom: 4 },
   groupMainCard:    { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], overflow: 'hidden' },
   groupProfileTopRow: {
     flexDirection: 'row',
@@ -1820,12 +1739,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionLabelSpaced: { marginTop: 24 },
-  collapsibleSectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginBottom: 10,
-  },
   pendingCard:      { borderWidth: StyleSheet.hairlineWidth, borderColor: '#FDE68A', marginBottom: 16 },
   memberRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 16 },
   rowBorder:        { borderBottomWidth: 1, borderBottomColor: Colors.border },

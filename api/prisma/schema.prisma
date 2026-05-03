@@ -39,6 +39,10 @@ model User {
   pollOptionVotes         PollOptionVote[]
   pollTextAnswers         PollTextAnswer[]
   pollWatches             PollWatch[]
+  groupPosts              GroupPost[]
+  groupPostReactions      GroupPostReaction[]
+  groupPostComments       GroupPostComment[]
+  groupPostCommentReactions GroupPostCommentReaction[]
 
   @@map("users")
 }
@@ -69,8 +73,75 @@ model Group {
   events      Event[]
   coverPhotos GroupPhoto[]
   polls       Poll[]
+  posts       GroupPost[]
 
   @@map("groups")
+}
+
+model GroupPost {
+  id        String   @id @default(uuid())
+  groupId   String
+  userId    String
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group     Group                    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions GroupPostReaction[]
+  comments  GroupPostComment[]
+
+  @@index([groupId, createdAt])
+  @@map("group_posts")
+}
+
+model GroupPostReaction {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  post GroupPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId, emoji])
+  @@map("group_post_reactions")
+}
+
+model GroupPostComment {
+  id              String   @id @default(uuid())
+  postId          String
+  userId          String
+  body            String
+  parentCommentId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  post      GroupPost           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent    GroupPostComment?   @relation("GroupPostCommentReplies", fields: [parentCommentId], references: [id], onDelete: SetNull)
+  replies   GroupPostComment[]  @relation("GroupPostCommentReplies")
+  reactions GroupPostCommentReaction[]
+
+  @@index([postId, createdAt])
+  @@index([parentCommentId])
+  @@map("group_post_comments")
+}
+
+model GroupPostCommentReaction {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment GroupPostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@map("group_post_comment_reactions")
 }
 
 model GroupPhoto {

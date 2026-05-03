@@ -5,4 +5,5 @@ export * from './useRSVPs';
 export * from './useComments';
 export * from './useNotifications';
 export * from './usePolls';
+export * from './useGroupPosts';
 export { useCreateUser } from './useUsers';
