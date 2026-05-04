@@ -178,3 +178,10 @@ export function getMyWaitlistPosition(
   const idx = sorted.findIndex((r) => r.userId === meId);
   return idx >= 0 ? idx + 1 : null;
 }
+
+/** Shorten labels for breadcrumb-style UI (e.g. poll title in the trail). */
+export function breadcrumbTruncate(label: string, maxChars = 20): string {
+  const t = label.trim();
+  if (t.length <= maxChars) return t;
+  return `${t.slice(0, maxChars)}...`;
+}

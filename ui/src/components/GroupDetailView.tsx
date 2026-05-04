@@ -1066,6 +1066,24 @@ export function GroupDetailView({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() =>
+                    router.push(withReturnTo(`/(tabs)/groups/${groupId}/polls`, pathname))
+                  }
+                  style={[styles.memberRow, styles.rowBorder]}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open group polls"
+                >
+                  <Ionicons name="bar-chart-outline" size={22} color={Colors.textSub} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.memberName}>Polls</Text>
+                    <Text style={styles.memberHandle}>
+                      Polls for this group; vote and view results
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() =>
                     router.push(withReturnTo(`/(tabs)/groups/${groupId}/forum`, pathname))
                   }
                   style={styles.memberRow}

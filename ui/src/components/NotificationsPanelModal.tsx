@@ -93,7 +93,13 @@ export function NotificationsPanelModal({
                       } else if (n.dest === Notification.dest.GROUP && n.groupId) {
                         router.push(withReturnTo(`/(tabs)/groups/${n.groupId}`, pathname));
                       } else if (n.dest === Notification.dest.POLL && n.pollId) {
-                        router.push(withReturnTo(`/poll/${n.pollId}`, pathname));
+                        if (n.groupId) {
+                          router.push(
+                            withReturnTo(`/(tabs)/groups/${n.groupId}/polls/${n.pollId}`, pathname)
+                          );
+                        } else {
+                          router.push(withReturnTo(`/poll/${n.pollId}`, pathname));
+                        }
                       }
                     }}
                     style={[
