@@ -8,8 +8,10 @@ import {
   MembershipRequestAction,
   GroupPost,
   GroupPostCreateInput,
+  GroupPostUpdateInput,
   GroupPostComment,
   GroupPostCommentCreateInput,
+  GroupPostCommentUpdateInput,
   GroupPostReactionInput,
   GroupPostReactionEntry,
   User,
@@ -665,6 +667,49 @@ export class GroupService {
     return this.mapGroupPost(created);
   }
 
+  public async updateGroupPost(postId: string, input: GroupPostUpdateInput): Promise<GroupPost> {
+    const post = await prisma.groupPost.findUnique({
+      where: { id: postId },
+      select: { id: true, groupId: true, userId: true },
+    });
+    if (!post) throw new Error('Post not found');
+    if (post.userId !== input.userId) {
+      throw new Error('You can only edit your own post');
+    }
+    await this.requireActiveMember(post.groupId, input.userId);
+    const body = input.body.trim();
+    if (!body) throw new Error('Post body is required');
+    const title = input.title.trim() || 'Post';
+    const updated = await prisma.groupPost.update({
+      where: { id: postId },
+      data: {
+        title,
+        body,
+      },
+      include: {
+        reactions: { select: { emoji: true, userId: true } },
+        comments: {
+          include: { reactions: { select: { emoji: true, userId: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    return this.mapGroupPost(updated);
+  }
+
+  public async deleteGroupPost(postId: string, userId: string): Promise<void> {
+    const post = await prisma.groupPost.findUnique({
+      where: { id: postId },
+      select: { groupId: true, userId: true },
+    });
+    if (!post) throw new Error('Post not found');
+    if (post.userId !== userId) {
+      throw new Error('You can only delete your own post');
+    }
+    await this.requireActiveMember(post.groupId, userId);
+    await prisma.groupPost.delete({ where: { id: postId } });
+  }
+
   public async toggleGroupPostReaction(postId: string, input: GroupPostReactionInput): Promise<GroupPost> {
     const post = await prisma.groupPost.findUnique({
       where: { id: postId },
@@ -737,6 +782,91 @@ export class GroupService {
       include: { reactions: { select: { emoji: true, userId: true } } },
     });
     return this.mapGroupPostComment(created);
+  }
+
+  public async updateGroupPostComment(
+    commentId: string,
+    input: GroupPostCommentUpdateInput
+  ): Promise<GroupPostComment> {
+    const comment = await prisma.groupPostComment.findUnique({
+      where: { id: commentId },
+      include: { post: { select: { groupId: true } } },
+    });
+    if (!comment) throw new Error('Comment not found');
+    if (comment.userId !== input.userId) {
+      throw new Error('You can only edit your own comment');
+    }
+    await this.requireActiveMember(comment.post.groupId, input.userId);
+    const body = input.body.trim();
+    if (!body) throw new Error('Comment body is required');
+
+    const postId = comment.postId;
+    let nextParentId: string | null | undefined = undefined;
+    if (input.parentCommentId !== undefined) {
+      if (input.parentCommentId === null) {
+        nextParentId = null;
+      } else {
+        const parentId = input.parentCommentId.trim();
+        if (parentId === commentId) {
+          throw new Error('A comment cannot be its own parent');
+        }
+        const parent = await prisma.groupPostComment.findUnique({
+          where: { id: parentId },
+          select: { postId: true },
+        });
+        if (!parent || parent.postId !== postId) {
+          throw new Error('Parent comment not found');
+        }
+        const blocked = await this.collectDescendantCommentIds(commentId);
+        if (blocked.has(parentId)) {
+          throw new Error('Cannot reply to a reply of this comment');
+        }
+        nextParentId = parentId;
+      }
+    }
+
+    const updated = await prisma.groupPostComment.update({
+      where: { id: commentId },
+      data: {
+        body,
+        ...(nextParentId !== undefined ? { parentCommentId: nextParentId } : {}),
+      },
+      include: { reactions: { select: { emoji: true, userId: true } } },
+    });
+    return this.mapGroupPostComment(updated);
+  }
+
+  /** Includes `rootId` and all transitive replies under it. */
+  private async collectDescendantCommentIds(rootId: string): Promise<Set<string>> {
+    const ids = new Set<string>([rootId]);
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      const children = await prisma.groupPostComment.findMany({
+        where: { parentCommentId: id },
+        select: { id: true },
+      });
+      for (const ch of children) {
+        if (!ids.has(ch.id)) {
+          ids.add(ch.id);
+          queue.push(ch.id);
+        }
+      }
+    }
+    return ids;
+  }
+
+  public async deleteGroupPostComment(commentId: string, userId: string): Promise<void> {
+    const comment = await prisma.groupPostComment.findUnique({
+      where: { id: commentId },
+      include: { post: { select: { groupId: true } } },
+    });
+    if (!comment) throw new Error('Comment not found');
+    if (comment.userId !== userId) {
+      throw new Error('You can only delete your own comment');
+    }
+    await this.requireActiveMember(comment.post.groupId, userId);
+    await prisma.groupPostComment.delete({ where: { id: commentId } });
   }
 
   public async toggleGroupPostCommentReaction(

@@ -162,11 +162,24 @@ export interface GroupPostCreateInput {
   body: string;
 }
 
+export interface GroupPostUpdateInput {
+  userId: string;
+  title: string;
+  body: string;
+}
+
 export interface GroupPostCommentCreateInput {
   id: string;
   userId: string;
   body: string;
   parentCommentId?: string;
+}
+
+export interface GroupPostCommentUpdateInput {
+  userId: string;
+  body: string;
+  /** When set (including `null`), replaces reply parent; omit to leave unchanged. */
+  parentCommentId?: string | null;
 }
 
 export interface GroupPostReactionInput {

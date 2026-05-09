@@ -1585,6 +1585,38 @@ export class EventService {
       throw { status: 400, message: 'Comment cannot be empty' };
     }
 
+    const eventId = comment.eventId;
+    let nextReplyToId: string | null | undefined = undefined;
+    if (input.replyToCommentId !== undefined) {
+      if (input.replyToCommentId === null) {
+        nextReplyToId = null;
+      } else {
+        const parentId = input.replyToCommentId.trim();
+        if (!parentId) {
+          nextReplyToId = null;
+        } else {
+          if (parentId === id) {
+            throw { status: 400, message: 'A comment cannot reply to itself' };
+          }
+          const parent = await prisma.comment.findUnique({
+            where: { id: parentId },
+            select: { eventId: true },
+          });
+          if (!parent || parent.eventId !== eventId) {
+            throw { status: 400, message: 'Parent comment not found' };
+          }
+          const blocked = await this.collectEventCommentDescendantIds(id);
+          if (blocked.has(parentId)) {
+            throw { status: 400, message: 'Cannot reply to a reply of this comment' };
+          }
+          nextReplyToId = parentId;
+        }
+      }
+    }
+
+    const replyData =
+      nextReplyToId !== undefined ? { replyToCommentId: nextReplyToId } : {};
+
     let updated;
     if (input.photos !== undefined) {
       await prisma.commentPhoto.deleteMany({ where: { commentId: id } });
@@ -1593,17 +1625,38 @@ export class EventService {
         data: {
           text: nextText || null,
           photos: { create: nextPhotos.map((photoUrl) => ({ photoUrl })) },
+          ...replyData,
         },
         include: COMMENT_INCLUDE_FOR_API,
       });
     } else {
       updated = await prisma.comment.update({
         where: { id },
-        data: { text: nextText || null },
+        data: { text: nextText || null, ...replyData },
         include: COMMENT_INCLUDE_FOR_API,
       });
     }
     return this.mapCommentWithPhotos(updated, input.actorId);
+  }
+
+  /** Includes `rootId` and all transitive replies under it (event comments). */
+  private async collectEventCommentDescendantIds(rootId: string): Promise<Set<string>> {
+    const ids = new Set<string>([rootId]);
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const cid = queue.shift()!;
+      const children = await prisma.comment.findMany({
+        where: { replyToCommentId: cid },
+        select: { id: true },
+      });
+      for (const ch of children) {
+        if (!ids.has(ch.id)) {
+          ids.add(ch.id);
+          queue.push(ch.id);
+        }
+      }
+    }
+    return ids;
   }
 
   /**

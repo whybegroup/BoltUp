@@ -12,7 +12,6 @@ import {
   Pressable,
   Platform,
   Dimensions,
-  Animated,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,20 +32,27 @@ import {
   useGroupPosts,
   useUsers,
   useCreateGroupPost,
+  useUpdateGroupPost,
+  useDeleteGroupPost,
   useToggleGroupPostReaction,
   useCreateGroupPostComment,
   useToggleGroupPostCommentReaction,
+  useUpdateGroupPostComment,
+  useDeleteGroupPostComment,
 } from '../hooks/api';
 import { GroupsTopHeader } from './GroupsTopHeader';
 import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
 import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { EmojiBar } from './EmojiBar';
-import { CommentsSection } from './CommentsSection';
 import { UserAvatar } from './UserAvatar';
+import {
+  COMMENT_THREAD_OPTIONS_MENU_WIDTH,
+  ThreadedCommentsSection,
+  type ThreadComment,
+} from './ThreadedCommentsSection';
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { AddImageButton } from './AddImageButton';
-import { CommentReplyQuote } from './CommentReplyQuote';
 import { type GroupPost, type GroupPostComment } from '@moijia/client';
 import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 
@@ -69,6 +75,17 @@ function formatCreatedAt(value: string | number): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function mapGroupCommentsToThread(comments: GroupPostComment[]): ThreadComment[] {
+  return comments.map((c) => ({
+    id: c.id,
+    userId: c.userId,
+    body: c.body,
+    parentCommentId: c.parentCommentId ?? null,
+    createdAt: c.createdAt,
+    reactions: c.reactions,
+  }));
 }
 
 function parseImageLine(trimmedLine: string): { alt: string; url: string } | null {
@@ -114,13 +131,17 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   const scrollRef = useRef<ScrollView | null>(null);
   const scrollViewportYRef = useRef(0);
   const scrollOffsetYRef = useRef(0);
-  const commentRowRefs = useRef<Record<string, View | null>>({});
   const postTopByIdRef = useRef<Record<string, number>>({});
-  const commentRowTopByIdRef = useRef<Record<string, number>>({});
-  const highlightOpacityByIdRef = useRef<Record<string, Animated.Value>>({});
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSwitchGroups, setShowSwitchGroups] = useState(false);
   const [postBody, setPostBody] = useState('');
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const stashedComposerBodyRef = useRef('');
+  const [postMenuTarget, setPostMenuTarget] = useState<{
+    postId: string;
+    anchor: { x: number; y: number; width: number; height: number };
+  } | null>(null);
+  const postMenuButtonRefs = useRef<Record<string, View | null>>({});
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [composerSelection, setComposerSelection] = useState<{ start: number; end: number }>({
     start: 0,
@@ -163,8 +184,11 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     ownerAvatarSeed?: string | null;
     ownerThumbnail?: string | null;
   } | null>(null);
-  const [highlightedCommentIds, setHighlightedCommentIds] = useState<Record<string, true>>({});
   const reactionButtonRefs = useRef<Record<string, View | null>>({});
+  const [commentEdit, setCommentEdit] = useState<{ postId: string; commentId: string } | null>(null);
+  const [commentEditText, setCommentEditText] = useState('');
+  /** Draft reply parent while editing; `null` = top-level comment. */
+  const [commentEditParentId, setCommentEditParentId] = useState<string | null>(null);
 
   const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
   const { data: allGroupsForChrome = [] } = useGroups(currentUserId ?? '', true);
@@ -173,9 +197,13 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
   const { data: posts = [], isLoading: postsLoading } = useGroupPosts(groupId, currentUserId ?? '');
   const createPostMutation = useCreateGroupPost(groupId, currentUserId ?? '');
+  const updatePostMutation = useUpdateGroupPost(groupId, currentUserId ?? '');
+  const deletePostMutation = useDeleteGroupPost(groupId, currentUserId ?? '');
   const togglePostReactionMutation = useToggleGroupPostReaction(groupId, currentUserId ?? '');
   const createCommentMutation = useCreateGroupPostComment(groupId, currentUserId ?? '');
   const toggleCommentReactionMutation = useToggleGroupPostCommentReaction(groupId, currentUserId ?? '');
+  const updateCommentMutation = useUpdateGroupPostComment(groupId, currentUserId ?? '');
+  const deleteCommentMutation = useDeleteGroupPostComment(groupId, currentUserId ?? '');
   const { data: commentQuickReactions = [...DEFAULT_COMMENT_QUICK_REACTIONS_LIST] } =
     useCommentQuickReactions(currentUserId);
 
@@ -629,10 +657,71 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     [usersById]
   );
 
-  const createPost = useCallback(async () => {
+  const postMenuTargetPost = useMemo(
+    () => (postMenuTarget ? posts.find((p) => p.id === postMenuTarget.postId) ?? null : null),
+    [postMenuTarget, posts]
+  );
+
+  const postMenuPopoverLayout = useMemo(() => {
+    if (!postMenuTarget) return null;
+    const aw = Dimensions.get('window').width;
+    const { anchor } = postMenuTarget;
+    let left = anchor.x + anchor.width - COMMENT_THREAD_OPTIONS_MENU_WIDTH;
+    left = Math.max(8, Math.min(left, aw - COMMENT_THREAD_OPTIONS_MENU_WIDTH - 8));
+    const top = anchor.y + anchor.height + 4;
+    return { left, top };
+  }, [postMenuTarget]);
+
+  const cancelEditPost = useCallback(() => {
+    setEditingPostId(null);
+    setPostBody(stashedComposerBodyRef.current);
+    stashedComposerBodyRef.current = '';
+    setComposerSelection({ start: 0, end: 0 });
+  }, []);
+
+  const beginEditPost = useCallback(
+    (post: GroupPost) => {
+      if (!currentUserId) return;
+      if (!editingPostId) {
+        stashedComposerBodyRef.current = postBody;
+      }
+      setEditingPostId(post.id);
+      setPostBody(post.body);
+      setComposerSelection({ start: 0, end: 0 });
+      setPostMenuTarget(null);
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
+    },
+    [currentUserId, editingPostId, postBody]
+  );
+
+  const openPostMenu = useCallback((post: GroupPost) => {
+    const node = postMenuButtonRefs.current[post.id] as
+      | (View & {
+          measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void;
+        })
+      | null;
+    node?.measureInWindow?.((x, y, width, height) => {
+      setPostMenuTarget({ postId: post.id, anchor: { x, y, width, height } });
+    });
+  }, []);
+
+  const submitComposer = useCallback(async () => {
     const body = postBody.trim();
     if (!body || !currentUserId) return;
     const title = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 80) || 'Post';
+    if (editingPostId) {
+      try {
+        await updatePostMutation.mutateAsync({ postId: editingPostId, title, body });
+        setEditingPostId(null);
+        setPostBody(stashedComposerBodyRef.current);
+        stashedComposerBodyRef.current = '';
+        setComposerSelection({ start: 0, end: 0 });
+      } catch {
+        if (Platform.OS === 'web') window.alert('Failed to update post');
+        else Alert.alert('Error', 'Failed to update post');
+      }
+      return;
+    }
     await createPostMutation.mutateAsync({
       id: forumId('post'),
       userId: currentUserId,
@@ -640,7 +729,33 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
       body,
     });
     setPostBody('');
-  }, [createPostMutation, currentUserId, postBody]);
+  }, [createPostMutation, currentUserId, editingPostId, postBody, updatePostMutation]);
+
+  const confirmDeletePost = useCallback(
+    (postId: string) => {
+      const run = () => {
+        if (editingPostId === postId) {
+          setEditingPostId(null);
+          setPostBody(stashedComposerBodyRef.current);
+          stashedComposerBodyRef.current = '';
+        }
+        void deletePostMutation.mutateAsync(postId).catch(() => {
+          if (Platform.OS === 'web') window.alert('Failed to delete post');
+          else Alert.alert('Error', 'Failed to delete post');
+        });
+      };
+      const msg = 'Delete this post and all of its comments?';
+      if (Platform.OS === 'web') {
+        if (window.confirm(msg)) run();
+      } else {
+        Alert.alert('Delete post?', msg, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: run },
+        ]);
+      }
+    },
+    [deletePostMutation, editingPostId]
+  );
 
   const handleComposerChangeText = useCallback(
     (nextBody: string) => {
@@ -684,20 +799,6 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     [composerSelection.end, postBody]
   );
 
-  const commentTree = useCallback((comments: GroupPostComment[]) => {
-    const byParent = new Map<string, GroupPostComment[]>();
-    const roots: GroupPostComment[] = [];
-    for (const c of comments) {
-      const key = c.parentCommentId ?? '__root__';
-      if (key === '__root__') roots.push(c);
-      const arr = byParent.get(key) ?? [];
-      arr.push(c);
-      byParent.set(key, arr);
-    }
-    const childrenOf = (id: string) => byParent.get(id) ?? [];
-    return { roots, childrenOf };
-  }, []);
-
   const addComment = useCallback(
     async (postId: string) => {
       if (!currentUserId) return;
@@ -716,6 +817,74 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
       setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
     },
     [createCommentMutation, currentUserId, draftComments, replyTargetByPost]
+  );
+
+  const beginEditComment = useCallback((postId: string, c: GroupPostComment) => {
+    setCommentEdit({ postId, commentId: c.id });
+    setCommentEditText(c.body);
+    setCommentEditParentId(c.parentCommentId ?? null);
+    setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+  }, []);
+
+  const cancelEditComment = useCallback(() => {
+    setCommentEdit(null);
+    setCommentEditText('');
+    setCommentEditParentId(null);
+  }, []);
+
+  const saveEditedComment = useCallback(async () => {
+    if (!currentUserId || !commentEdit) return;
+    const body = commentEditText.trim();
+    if (!body) {
+      if (Platform.OS === 'web') window.alert('Comment cannot be empty');
+      else Alert.alert('Error', 'Comment cannot be empty');
+      return;
+    }
+    try {
+      await updateCommentMutation.mutateAsync({
+        commentId: commentEdit.commentId,
+        body,
+        parentCommentId: commentEditParentId,
+      });
+      cancelEditComment();
+    } catch {
+      if (Platform.OS === 'web') window.alert('Failed to update comment');
+      else Alert.alert('Error', 'Failed to update comment');
+    }
+  }, [
+    currentUserId,
+    commentEdit,
+    commentEditText,
+    commentEditParentId,
+    updateCommentMutation,
+    cancelEditComment,
+  ]);
+
+  const confirmDeleteComment = useCallback(
+    (postId: string, commentId: string) => {
+      const run = () => {
+        if (replyTargetByPost[postId] === commentId) {
+          setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+        }
+        if (commentEdit?.commentId === commentId) {
+          cancelEditComment();
+        }
+        void deleteCommentMutation.mutateAsync(commentId).catch(() => {
+          if (Platform.OS === 'web') window.alert('Failed to delete comment');
+          else Alert.alert('Error', 'Failed to delete comment');
+        });
+      };
+      const msg = 'Delete this comment?';
+      if (Platform.OS === 'web') {
+        if (window.confirm(msg)) run();
+      } else {
+        Alert.alert('Delete comment?', msg, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: run },
+        ]);
+      }
+    },
+    [replyTargetByPost, commentEdit, cancelEditComment, deleteCommentMutation]
   );
 
   const applyReactionAndDismiss = (emoji: string) => {
@@ -774,45 +943,6 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     },
     [postCarouselWidthById]
   );
-  const getHighlightOpacity = useCallback((commentId: string) => {
-    if (!highlightOpacityByIdRef.current[commentId]) {
-      highlightOpacityByIdRef.current[commentId] = new Animated.Value(0);
-    }
-    return highlightOpacityByIdRef.current[commentId];
-  }, []);
-  const jumpToComment = useCallback((commentId: string) => {
-    const node = commentRowRefs.current[commentId] as
-      | (View & { measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => void })
-      | null;
-    if (node?.measureInWindow) {
-      node.measureInWindow((_x, y) => {
-        const viewportY = scrollViewportYRef.current;
-        const absoluteTarget = scrollOffsetYRef.current + (y - viewportY);
-        scrollRef.current?.scrollTo({ y: Math.max(0, absoluteTarget - 18), animated: true });
-      });
-    } else {
-      const y = commentRowTopByIdRef.current[commentId];
-      if (typeof y !== 'number' || !Number.isFinite(y)) return;
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 18), animated: true });
-    }
-    const opacity = getHighlightOpacity(commentId);
-    setHighlightedCommentIds((prev) => ({ ...prev, [commentId]: true }));
-    opacity.stopAnimation();
-    opacity.setValue(1);
-    Animated.timing(opacity, {
-      toValue: 0,
-      duration: 1500,
-      useNativeDriver: true,
-    }).start(() => {
-      setHighlightedCommentIds((prev) => {
-        if (!prev[commentId]) return prev;
-        const next = { ...prev };
-        delete next[commentId];
-        return next;
-      });
-    });
-  }, [getHighlightOpacity]);
-
   if (!group) return null;
 
   return (
@@ -846,6 +976,14 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
       >
         <View style={styles.card}>
           <View style={styles.cardPad}>
+            {editingPostId ? (
+              <View style={styles.editingPostBanner}>
+                <Text style={styles.editingPostBannerText}>Editing your post</Text>
+                <TouchableOpacity onPress={cancelEditPost} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.editingPostBannerCancel}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
             <View style={styles.attachToolbarRow}>
               <AddImageButton
                 iconOnly
@@ -887,11 +1025,25 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
               )}
             </View>
             <TouchableOpacity
-              style={[styles.postBtn, !postBody.trim() && styles.postBtnDisabled]}
-              onPress={createPost}
-              disabled={!postBody.trim()}
+              style={[
+                styles.postBtn,
+                (!postBody.trim() ||
+                  createPostMutation.isPending ||
+                  updatePostMutation.isPending) &&
+                  styles.postBtnDisabled,
+              ]}
+              onPress={() => void submitComposer()}
+              disabled={
+                !postBody.trim() || createPostMutation.isPending || updatePostMutation.isPending
+              }
             >
-              <Text style={styles.postBtnText}>Publish Post</Text>
+              {createPostMutation.isPending || updatePostMutation.isPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.postBtnText}>
+                  {editingPostId ? 'Save changes' : 'Publish Post'}
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -921,12 +1073,32 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
               }}
             >
               <View style={styles.cardPad}>
-                <Text style={styles.metaText}>
-                  {post.userId === currentUserId
-                    ? `${getUserDisplayName(post.userId)} (you)`
-                    : getUserDisplayName(post.userId)}{' '}
-                  · {formatCreatedAt(post.createdAt)}
-                </Text>
+                <View style={styles.postMetaHeaderRow}>
+                  <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={2}>
+                    {post.userId === currentUserId ? (
+                      <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
+                    ) : (
+                      getUserDisplayName(post.userId)
+                    )}
+                    {post.userId === currentUserId ? (
+                      <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
+                    ) : null}{' '}
+                    · {formatCreatedAt(post.createdAt)}
+                  </Text>
+                  {post.userId === currentUserId ? (
+                    <TouchableOpacity
+                      ref={(node) => {
+                        postMenuButtonRefs.current[post.id] = node;
+                      }}
+                      onPress={() => openPostMenu(post)}
+                      style={styles.postMenuBtn}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Post options"
+                    >
+                      <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
                 {(() => {
                   const parsed = parsePostBody(post.body);
                   const textLines = parsed.textLines;
@@ -1098,177 +1270,121 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                   </TouchableOpacity>
                 </View>
                 {expandedCommentsByPost[post.id] ? (
-                  <CommentsSection
-                    isEmpty={post.comments.length === 0}
+                  <ThreadedCommentsSection
+                    comments={mapGroupCommentsToThread(post.comments)}
+                    ancestorTopPx={postTopByIdRef.current[post.id] ?? 0}
+                    scrollRef={scrollRef}
+                    scrollViewportYRef={scrollViewportYRef}
+                    scrollOffsetYRef={scrollOffsetYRef}
+                    currentUserId={currentUserId}
+                    getUserDisplayName={getUserDisplayName}
+                    formatCommentTime={formatCreatedAt}
+                    draftText={draftComments[post.id] ?? ''}
+                    onDraftTextChange={(v) =>
+                      setDraftComments((prev) => ({ ...prev, [post.id]: v }))
+                    }
+                    replyTargetId={replyTargetByPost[post.id] ?? null}
+                    onReplyTargetChange={(id) =>
+                      setReplyTargetByPost((prev) => ({ ...prev, [post.id]: id }))
+                    }
+                    onSubmitDraft={() => void addComment(post.id)}
+                    commentEdit={
+                      commentEdit?.postId === post.id ? { commentId: commentEdit.commentId } : null
+                    }
+                    commentEditText={commentEditText}
+                    onCommentEditTextChange={setCommentEditText}
+                    commentEditParentId={commentEditParentId}
+                    onCommentEditParentIdChange={setCommentEditParentId}
+                    onCancelEdit={cancelEditComment}
+                    onSaveEdit={() => void saveEditedComment()}
+                    saveEditBusy={updateCommentMutation.isPending}
+                    onToggleReaction={(commentId, emoji) =>
+                      toggleCommentReactionMutation.mutate({ commentId, emoji })
+                    }
+                    onReactionChipLongPress={openReactionDetailModal}
+                    onOpenReactionQuickPicker={(commentId) =>
+                      openReactionQuickPicker({ kind: 'comment', id: commentId })
+                    }
+                    onBeginEdit={(commentId) => {
+                      const c = post.comments.find((x) => x.id === commentId);
+                      if (c) beginEditComment(post.id, c);
+                    }}
+                    confirmDeleteComment={(commentId) =>
+                      confirmDeleteComment(post.id, commentId)
+                    }
                     containerStyle={styles.postCommentsSection}
-                    emptyContent={<Text style={styles.emptyText}>No comments yet.</Text>}
-                  >
-                    {(() => {
-                      const { roots, childrenOf } = commentTree(post.comments);
-                      const commentsById = new Map(post.comments.map((c) => [c.id, c]));
-                      const renderCommentNode = (comment: GroupPostComment, level: number) => {
-                        const children = childrenOf(comment.id);
-                        const commentUser = usersById.get(comment.userId);
-                        const repliedTo = comment.parentCommentId
-                          ? commentsById.get(comment.parentCommentId) ?? null
-                          : null;
-                        return (
-                          <View
-                            key={comment.id}
-                            ref={(node) => {
-                              commentRowRefs.current[comment.id] = node;
-                            }}
-                            onLayout={(e) => {
-                              const postTop = postTopByIdRef.current[post.id] ?? 0;
-                              commentRowTopByIdRef.current[comment.id] = postTop + e.nativeEvent.layout.y;
-                            }}
-                          >
-                            <View
-                              style={[
-                                styles.commentRow,
-                              ]}
-                            >
-                                {highlightedCommentIds[comment.id] ? (
-                                  <Animated.View
-                                    pointerEvents="none"
-                                    style={[
-                                      styles.commentRowHighlightOverlay,
-                                      {
-                                        opacity: getHighlightOpacity(comment.id),
-                                      },
-                                    ]}
-                                  />
-                                ) : null}
-                              <UserAvatar
-                                seed={getUserDisplayName(comment.userId)}
-                                backgroundColor={[commentUser?.avatarSeed ?? '']}
-                                thumbnail={commentUser?.thumbnail}
-                                size={34}
-                              />
-                              <View style={{ flex: 1, minWidth: 0 }}>
-                                <View style={styles.commentHeaderRow}>
-                                  <Text style={styles.commentName}>
-                                    {comment.userId === currentUserId
-                                      ? `${getUserDisplayName(comment.userId)} (you)`
-                                      : getUserDisplayName(comment.userId)}
-                                  </Text>
-                                  <Text style={styles.commentTime} numberOfLines={1}>
-                                    {formatCreatedAt(comment.createdAt)}
-                                  </Text>
-                                </View>
-                                {repliedTo ? (
-                                  <CommentReplyQuote
-                                    onPress={() => jumpToComment(repliedTo.id)}
-                                    author={getUserDisplayName(repliedTo.userId)}
-                                    preview={repliedTo.body || '(no text)'}
-                                    containerStyle={styles.replyQuoteStrip}
-                                    pressedStyle={styles.replyQuotePressed}
-                                    authorStyle={styles.replyQuoteAuthor}
-                                    previewStyle={styles.replyQuotePreview}
-                                    accessibilityLabel="Jump to replied comment"
-                                  />
-                                ) : null}
-                                <Text style={styles.commentText}>{comment.body}</Text>
-                                {comment.reactions.length > 0 ? (
-                                  <View style={styles.reactionChipsRow}>
-                                    {comment.reactions.map((entry) => (
-                                      <TouchableOpacity
-                                        key={`${comment.id}-existing-${entry.emoji}`}
-                                        style={styles.reactionChip}
-                                        onPress={() =>
-                                          toggleCommentReactionMutation.mutate({
-                                            commentId: comment.id,
-                                            emoji: entry.emoji,
-                                          })
-                                        }
-                                        onLongPress={() =>
-                                          openReactionDetailModal({
-                                            emoji: entry.emoji,
-                                            userIds: entry.userIds,
-                                          })
-                                        }
-                                      >
-                                        <View style={styles.reactionChipInner}>
-                                          <ReactionEmojiGlyph emoji={entry.emoji} size={17} />
-                                          <Text style={styles.reactionChipCount}>{entry.count}</Text>
-                                        </View>
-                                      </TouchableOpacity>
-                                    ))}
-                                  </View>
-                                ) : null}
-                                <View style={styles.reactionRow}>
-                                  <TouchableOpacity
-                                    ref={(node) => {
-                                      reactionButtonRefs.current[`comment:${comment.id}`] = node;
-                                    }}
-                                    style={styles.iconActionBtn}
-                                    onPress={() =>
-                                      openReactionQuickPicker({ kind: 'comment', id: comment.id })
-                                    }
-                                    onLongPress={() =>
-                                      openReactionQuickPicker({ kind: 'comment', id: comment.id })
-                                    }
-                                    accessibilityLabel="Add reaction"
-                                    activeOpacity={0.75}
-                                  >
-                                    <Ionicons name="happy-outline" size={15} color={Colors.textSub} />
-                                  </TouchableOpacity>
-                                  <TouchableOpacity
-                                    style={styles.iconActionBtn}
-                                    onPress={() =>
-                                      setReplyTargetByPost((prev) => ({ ...prev, [post.id]: comment.id }))
-                                    }
-                                  >
-                                    <Ionicons
-                                      name="return-up-forward-outline"
-                                      size={15}
-                                      color={Colors.textSub}
-                                    />
-                                    <Text style={styles.iconActionText}>Reply</Text>
-                                  </TouchableOpacity>
-                                </View>
-                              </View>
-                            </View>
-                            {children.map((child) => renderCommentNode(child, level + 1))}
-                          </View>
-                        );
-                      };
-                      return roots.map((r) => renderCommentNode(r, 0));
-                    })()}
-                    <View style={styles.commentComposer}>
-                      {replyTargetByPost[post.id] ? (
-                        <View style={styles.replyingBadge}>
-                          <Text style={styles.replyingBadgeText}>Replying to comment</Text>
-                          <TouchableOpacity
-                            onPress={() =>
-                              setReplyTargetByPost((prev) => ({ ...prev, [post.id]: null }))
-                            }
-                          >
-                            <Ionicons name="close" size={14} color={Colors.textMuted} />
-                          </TouchableOpacity>
-                        </View>
-                      ) : null}
-                      <TextInput
-                        value={draftComments[post.id] ?? ''}
-                        onChangeText={(v) => setDraftComments((prev) => ({ ...prev, [post.id]: v }))}
-                        placeholder={replyTargetByPost[post.id] ? 'Write a reply' : 'Add a comment'}
-                        placeholderTextColor={Colors.textMuted}
-                        style={styles.commentInput}
-                        multiline
-                      />
-                      <TouchableOpacity style={styles.replyBtn} onPress={() => void addComment(post.id)}>
-                        <Text style={styles.replyBtnText}>
-                          {replyTargetByPost[post.id] ? 'Reply' : 'Comment'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </CommentsSection>
+                    reactionButtonRefs={reactionButtonRefs}
+                    renderAvatar={(userId, displayName) => {
+                      const u = usersById.get(userId);
+                      return (
+                        <UserAvatar
+                          seed={displayName}
+                          backgroundColor={[u?.avatarSeed ?? '']}
+                          thumbnail={u?.thumbnail}
+                          size={34}
+                        />
+                      );
+                    }}
+                  />
                 ) : null}
               </View>
             </View>
           ))
         )}
       </ScrollView>
+
+      {postMenuTarget && postMenuPopoverLayout ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPostMenuTarget(null)}
+        >
+          <View style={styles.postOptionsModalRoot} pointerEvents="box-none">
+            <Pressable
+              style={styles.postOptionsDismiss}
+              onPress={() => setPostMenuTarget(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss menu"
+            />
+            <View
+              style={[
+                styles.postOptionsPopoverWrap,
+                {
+                  left: postMenuPopoverLayout.left,
+                  top: postMenuPopoverLayout.top,
+                  width: COMMENT_THREAD_OPTIONS_MENU_WIDTH,
+                },
+              ]}
+              pointerEvents="box-none"
+            >
+              <View style={styles.postOptionsCard}>
+                <TouchableOpacity
+                  style={styles.postOptionsRow}
+                  onPress={() => {
+                    setPostMenuTarget(null);
+                    if (postMenuTargetPost) beginEditPost(postMenuTargetPost);
+                  }}
+                >
+                  <Ionicons name="create-outline" size={20} color={Colors.text} />
+                  <Text style={styles.postOptionsLabel}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.postOptionsRow, styles.postOptionsRowLast]}
+                  onPress={() => {
+                    const id = postMenuTarget.postId;
+                    setPostMenuTarget(null);
+                    confirmDeletePost(id);
+                  }}
+                >
+                  <Ionicons name="trash-outline" size={20} color={Colors.notGoing} />
+                  <Text style={[styles.postOptionsLabel, styles.postOptionsLabelDanger]}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
 
       {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
@@ -1610,6 +1726,58 @@ const styles = StyleSheet.create({
   postBtnText: { color: '#fff', fontFamily: Fonts.semiBold, fontSize: 13 },
   emptyText: { color: Colors.textMuted, fontFamily: Fonts.regular, fontSize: 14, lineHeight: 21 },
   metaText: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 12 },
+  metaPostMe: { color: Colors.going },
+  postMetaHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 12,
+  },
+  postMetaTextGrow: { flex: 1, marginBottom: 0 },
+  postMenuBtn: { padding: 2, marginTop: -2 },
+  editingPostBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.goingBg,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.goingBorder,
+  },
+  editingPostBannerText: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.text },
+  editingPostBannerCancel: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accent },
+  postOptionsModalRoot: { flex: 1 },
+  postOptionsDismiss: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+  },
+  postOptionsPopoverWrap: {
+    position: 'absolute',
+    zIndex: 20,
+    elevation: 20,
+  },
+  postOptionsCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    overflow: 'hidden',
+    width: '100%',
+    ...Shadows.lg,
+  },
+  postOptionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  postOptionsRowLast: { borderBottomWidth: 0 },
+  postOptionsLabel: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.text, flex: 1 },
+  postOptionsLabelDanger: { color: Colors.notGoing },
   postImageCarouselWrap: { marginBottom: 8 },
   postImageCarousel: { width: '100%' },
   carouselDotsRow: {
@@ -1920,6 +2088,97 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   replyingBadgeText: { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.medium },
+  composerReplyPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  composerReplyQuoteStrip: {
+    flex: 1,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  commentEditReplyComposer: {
+    gap: 8,
+    marginTop: 4,
+  },
+  commentEditStaleHint: {
+    fontSize: 12,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+    lineHeight: 17,
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  commentEditInput: {
+    marginTop: 8,
+    minHeight: 72,
+  },
+  commentEditActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 10,
+  },
+  commentEditSecondaryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  commentEditSecondaryBtnText: {
+    fontSize: 13,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textSub,
+  },
+  commentEditPrimaryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.accent,
+    minWidth: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentEditPrimaryBtnDisabled: { opacity: 0.45 },
+  commentEditPrimaryBtnText: {
+    fontSize: 13,
+    fontFamily: Fonts.semiBold,
+    color: '#fff',
+  },
+  commentOptionsModalRoot: {
+    flex: 1,
+  },
+  commentOptionsDismiss: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+  },
+  commentOptionsPopoverWrap: {
+    position: 'absolute',
+    zIndex: 20,
+    elevation: 20,
+  },
+  commentOptionsCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    overflow: 'hidden',
+    width: '100%',
+    ...Shadows.lg,
+  },
+  commentOptionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  commentOptionsRowLast: { borderBottomWidth: 0 },
+  commentOptionsLabel: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.text, flex: 1 },
+  commentOptionsLabelDanger: { color: Colors.notGoing },
   commentInput: {
     minHeight: 42,
     borderWidth: StyleSheet.hairlineWidth,
@@ -1955,9 +2214,32 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#fff7cc',
   },
-  commentHeaderRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 4 },
+  commentHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  commentHeaderTitleCluster: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: 4,
+  },
+  /** Wraps nested Text so name + timestamp stay inline and ellipsize together. */
+  commentHeaderInlineRoot: {
+    width: '100%',
+  },
   commentName: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.text },
+  commentNameMe: { color: Colors.going },
+  commentMenuBtn: { padding: 2 },
   commentTime: { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular, flexShrink: 0 },
+  commentTimeInline: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontFamily: Fonts.regular,
+    flexShrink: 0,
+    marginLeft: 8,
+  },
   commentText: { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, lineHeight: 20 },
   replyQuoteStrip: {
     marginTop: 4,
