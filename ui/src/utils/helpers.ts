@@ -180,7 +180,7 @@ export function getMyWaitlistPosition(
 }
 
 /** Shorten labels for breadcrumb-style UI (e.g. poll title in the trail). */
-export function breadcrumbTruncate(label: string, maxChars = 20): string {
+export function breadcrumbTruncate(label: string, maxChars = 200): string {
   const t = label.trim();
   if (t.length <= maxChars) return t;
   return `${t.slice(0, maxChars)}...`;

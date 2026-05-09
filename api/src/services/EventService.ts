@@ -622,6 +622,13 @@ export class EventService {
               ...baseScalars,
               createdBy,
               updatedBy: createdBy,
+              rsvps: {
+                create: {
+                  userId: createdBy,
+                  status: 'going',
+                  memo: '',
+                },
+              },
               start: occStart,
               end: occEnd,
               rsvpDeadline:
@@ -656,6 +663,13 @@ export class EventService {
           ...baseScalars,
           createdBy,
           updatedBy: createdBy,
+          rsvps: {
+            create: {
+              userId: createdBy,
+              status: 'going',
+              memo: '',
+            },
+          },
           start,
           end,
           rsvpDeadline: anchorRsvpDeadline,

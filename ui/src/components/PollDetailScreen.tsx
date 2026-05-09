@@ -238,7 +238,42 @@ export function PollDetailScreen({
     if (poll.createdBy === userId) return true;
     return group?.membershipStatus === 'admin' || group?.superAdminId === userId;
   }, [poll, userId, group?.membershipStatus, group?.superAdminId]);
-  const isPollClosed = useMemo(() => !!poll?.closedAt, [poll?.closedAt]);
+  const pollDeadlineDate = useMemo(() => {
+    if (!poll?.deadline) return null;
+    const d = new Date(poll.deadline);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }, [poll?.deadline]);
+  const pollWithCloseState = poll as
+    | (Poll & {
+        closedAt?: string;
+        closedBy?: string;
+        closedByName?: string;
+        closed?: boolean;
+        isClosed?: boolean;
+        status?: string;
+      })
+    | undefined;
+  const hasManualCloseMarker = useMemo(() => {
+    if (!pollWithCloseState) return false;
+    return Boolean(
+      pollWithCloseState.closedAt ||
+        pollWithCloseState.closedBy ||
+        pollWithCloseState.closedByName ||
+        pollWithCloseState.closed === true ||
+        pollWithCloseState.isClosed === true ||
+        String(pollWithCloseState.status || '').toLowerCase() === 'closed'
+    );
+  }, [pollWithCloseState]);
+  const pollClosedAtDate = useMemo(() => {
+    if (!pollWithCloseState?.closedAt) return null;
+    const d = new Date(pollWithCloseState.closedAt);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }, [pollWithCloseState?.closedAt]);
+  const isPollClosed = useMemo(() => {
+    if (!poll) return false;
+    if (hasManualCloseMarker) return true;
+    return !!(pollDeadlineDate && pollDeadlineDate.getTime() <= Date.now());
+  }, [poll, hasManualCloseMarker, pollDeadlineDate]);
   const canEditPoll = useMemo(
     () => !!poll && !!userId && poll.createdBy === userId && !isPollClosed,
     [poll, userId, isPollClosed],
@@ -408,73 +443,105 @@ export function PollDetailScreen({
     }
   }, [poll?.deadline]);
 
+  const pollClosedLine = useMemo(() => {
+    if (!isPollClosed) return null;
+    const closedOnDate = hasManualCloseMarker ? pollClosedAtDate ?? pollDeadlineDate : pollDeadlineDate;
+    const closedOnText = closedOnDate
+      ? closedOnDate.toLocaleString(undefined, {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+      : 'unknown time';
+
+    const manuallyClosedBeforeDeadline = Boolean(
+      hasManualCloseMarker &&
+        pollClosedAtDate &&
+        pollDeadlineDate &&
+        pollClosedAtDate.getTime() < pollDeadlineDate.getTime()
+    );
+
+    if (manuallyClosedBeforeDeadline) {
+      const by = (pollWithCloseState?.closedByName || pollWithCloseState?.closedBy || '').trim();
+      if (by) return `Closed on ${closedOnText} (by ${by})`;
+    }
+    return `Closed on ${closedOnText}`;
+  }, [
+    isPollClosed,
+    hasManualCloseMarker,
+    pollClosedAtDate,
+    pollDeadlineDate,
+    pollWithCloseState?.closedByName,
+    pollWithCloseState?.closedBy,
+  ]);
+
   const sheetBody = (
       <View style={styles.safe}>
-        <View style={modalTopBarStyles.bar}>
-          <TouchableOpacity
-            onPress={dismiss}
-            style={modalTopBarStyles.closeButton}
-            accessibilityRole="button"
-            accessibilityLabel={variant === 'groups' ? 'Back' : 'Close'}
-          >
-            <Ionicons
-              name={variant === 'groups' ? 'chevron-back' : 'close'}
-              size={variant === 'groups' ? 26 : 26}
-              color={Colors.textSub}
-            />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }} />
-          {userId ? (
+        {variant !== 'groups' ? (
+          <View style={modalTopBarStyles.bar}>
             <TouchableOpacity
-              onPress={async () => {
-                try {
-                  await setWatchMutation.mutateAsync({ watching: !effectiveWatching });
-                } catch (e: unknown) {
-                  const err = e as { body?: { message?: string }; message?: string };
-                  Alert.alert(
-                    'Could not update poll notifications',
-                    err?.body?.message || err?.message || 'Please try again.',
-                  );
+              onPress={dismiss}
+              style={modalTopBarStyles.closeButton}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={26} color={Colors.textSub} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }} />
+            {userId ? (
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    await setWatchMutation.mutateAsync({ watching: !effectiveWatching });
+                  } catch (e: unknown) {
+                    const err = e as { body?: { message?: string }; message?: string };
+                    Alert.alert(
+                      'Could not update poll notifications',
+                      err?.body?.message || err?.message || 'Please try again.',
+                    );
+                  }
+                }}
+                disabled={setWatchMutation.isPending}
+                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  effectiveWatching
+                    ? 'Watching this poll — tap to stop default notifications'
+                    : 'Not watching — tap to get default poll notifications'
                 }
-              }}
-              disabled={setWatchMutation.isPending}
-              style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-              accessibilityRole="button"
-              accessibilityLabel={
-                effectiveWatching
-                  ? 'Watching this poll — tap to stop default notifications'
-                  : 'Not watching — tap to get default poll notifications'
-              }
-            >
-              <Ionicons
-                name={effectiveWatching ? 'eye' : 'eye-off-outline'}
-                size={22}
-                color={effectiveWatching ? Colors.accent : Colors.textSub}
-              />
-            </TouchableOpacity>
-          ) : null}
-          {canEditPoll && id ? (
-            <TouchableOpacity
-              onPress={() => router.push(withReturnTo(`/create-poll?editId=${encodeURIComponent(id)}`, pathname))}
-              style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-              accessibilityRole="button"
-              accessibilityLabel="Edit poll"
-            >
-              <Ionicons name="pencil-outline" size={21} color={Colors.textSub} />
-            </TouchableOpacity>
-          ) : null}
-          {canDeletePoll ? (
-            <TouchableOpacity
-              onPress={onDeletePoll}
-              disabled={deletePollMutation.isPending}
-              style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-              accessibilityRole="button"
-              accessibilityLabel="Delete poll"
-            >
-              <Ionicons name="trash-outline" size={20} color={Colors.text} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
+              >
+                <Ionicons
+                  name={effectiveWatching ? 'eye' : 'eye-off-outline'}
+                  size={22}
+                  color={effectiveWatching ? Colors.accent : Colors.textSub}
+                />
+              </TouchableOpacity>
+            ) : null}
+            {canEditPoll && id ? (
+              <TouchableOpacity
+                onPress={() => router.push(withReturnTo(`/create-poll?editId=${encodeURIComponent(id)}`, pathname))}
+                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Edit poll"
+              >
+                <Ionicons name="pencil-outline" size={21} color={Colors.textSub} />
+              </TouchableOpacity>
+            ) : null}
+            {canDeletePoll ? (
+              <TouchableOpacity
+                onPress={onDeletePoll}
+                disabled={deletePollMutation.isPending}
+                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Delete poll"
+              >
+                <Ionicons name="trash-outline" size={20} color={Colors.text} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
 
         <ScrollView
           ref={scrollViewRef}
@@ -502,18 +569,95 @@ export function PollDetailScreen({
                 }}
               >
                 <View style={{ paddingHorizontal: 16, paddingTop: 18 }}>
-                  <TouchableOpacity
-                    style={styles.groupChipAboveTitle}
-                    onPress={() => router.push(withReturnTo(`/(tabs)/groups/${poll.groupId}`, pathname))}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
-                    <Text style={styles.navGroupName} numberOfLines={1}>
-                      {group?.name ?? 'Group'}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
-                  </TouchableOpacity>
-                  <Text style={styles.eventTitle}>{poll.title}</Text>
+                  {variant === 'groups' ? (
+                    <>
+                      <View style={styles.groupNameRow}>
+                        <TouchableOpacity
+                          style={[styles.groupChipAboveTitle, styles.groupChipInRow]}
+                          onPress={() => router.push(withReturnTo(`/(tabs)/groups/${poll.groupId}`, pathname))}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
+                          <Text style={styles.navGroupName} numberOfLines={1}>
+                            {group?.name ?? 'Group'}
+                          </Text>
+                          <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
+                        </TouchableOpacity>
+                        <View style={styles.groupPollToolbar}>
+                          {userId ? (
+                            <TouchableOpacity
+                              onPress={async () => {
+                                try {
+                                  await setWatchMutation.mutateAsync({ watching: !effectiveWatching });
+                                } catch (e: unknown) {
+                                  const err = e as { body?: { message?: string }; message?: string };
+                                  Alert.alert(
+                                    'Could not update poll notifications',
+                                    err?.body?.message || err?.message || 'Please try again.',
+                                  );
+                                }
+                              }}
+                              disabled={setWatchMutation.isPending}
+                              style={styles.groupPollIconBtn}
+                              accessibilityRole="button"
+                              accessibilityLabel={
+                                effectiveWatching
+                                  ? 'Watching this poll — tap to stop default notifications'
+                                  : 'Not watching — tap to get default poll notifications'
+                              }
+                            >
+                              <Ionicons
+                                name={effectiveWatching ? 'eye' : 'eye-off-outline'}
+                                size={22}
+                                color={effectiveWatching ? Colors.accent : Colors.textSub}
+                              />
+                            </TouchableOpacity>
+                          ) : null}
+                          {canEditPoll && id ? (
+                            <TouchableOpacity
+                              onPress={() =>
+                                router.push(withReturnTo(`/create-poll?editId=${encodeURIComponent(id)}`, pathname))
+                              }
+                              style={styles.groupPollIconBtn}
+                              accessibilityRole="button"
+                              accessibilityLabel="Edit poll"
+                            >
+                              <Ionicons name="pencil-outline" size={21} color={Colors.textSub} />
+                            </TouchableOpacity>
+                          ) : null}
+                          {canDeletePoll ? (
+                            <TouchableOpacity
+                              onPress={onDeletePoll}
+                              disabled={deletePollMutation.isPending}
+                              style={styles.groupPollIconBtn}
+                              accessibilityRole="button"
+                              accessibilityLabel="Delete poll"
+                            >
+                              <Ionicons name="trash-outline" size={20} color={Colors.text} />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      </View>
+                      <Text style={styles.eventTitle} numberOfLines={8}>
+                        {poll.title}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={styles.groupChipAboveTitle}
+                        onPress={() => router.push(withReturnTo(`/(tabs)/groups/${poll.groupId}`, pathname))}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
+                        <Text style={styles.navGroupName} numberOfLines={1}>
+                          {group?.name ?? 'Group'}
+                        </Text>
+                        <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
+                      </TouchableOpacity>
+                      <Text style={styles.eventTitle}>{poll.title}</Text>
+                    </>
+                  )}
                   {poll.description?.trim() ? (
                     <View style={[styles.descBox, { marginTop: 10 }]}>
                       <Text style={styles.descText}>{poll.description.trim()}</Text>
@@ -984,6 +1128,7 @@ export function PollDetailScreen({
                 );
                 })}
 
+                <View style={styles.pollFooterActions}>
                 <TouchableOpacity
                   style={[
                     styles.submitVoteBtn,
@@ -1073,11 +1218,8 @@ export function PollDetailScreen({
                     <Text style={styles.closePollBtnText}>Close poll</Text>
                   </TouchableOpacity>
                 ) : null}
-                {poll?.closedAt ? (
-                  <Text style={styles.closedByText}>
-                    Closed by {poll.closedByName || 'Unknown'} on {new Date(poll.closedAt).toLocaleString()}
-                  </Text>
-                ) : null}
+                {pollClosedLine ? <Text style={styles.closedByText}>{pollClosedLine}</Text> : null}
+                </View>
               </View>
             </View>
           )}
@@ -1221,6 +1363,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     overflow: 'hidden',
+  },
+  groupNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+    minHeight: 40,
+  },
+  groupChipInRow: {
+    flex: 1,
+    minWidth: 0,
+    marginBottom: 0,
+    alignSelf: 'center',
+  },
+  groupPollToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexShrink: 0,
+  },
+  groupPollIconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   groupChipAboveTitle: {
     flexDirection: 'row',
@@ -1502,6 +1670,9 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.semiBold,
     color: '#4B5563',
   },
+  pollFooterActions: {
+    paddingBottom: 13,
+  },
   submitVoteBtn: {
     marginHorizontal: 16,
     marginTop: 18,
@@ -1520,7 +1691,6 @@ const styles = StyleSheet.create({
   closePollBtn: {
     marginHorizontal: 16,
     marginTop: 10,
-    marginBottom: 16,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: '#D5DAE1',
@@ -1536,7 +1706,7 @@ const styles = StyleSheet.create({
   closedByText: {
     marginHorizontal: 16,
     marginTop: 10,
-    marginBottom: 14,
+    marginBottom: 0,
     fontSize: 12,
     color: Colors.textMuted,
     fontFamily: Fonts.regular,

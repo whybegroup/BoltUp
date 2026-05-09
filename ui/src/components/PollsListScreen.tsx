@@ -1,5 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  StyleSheet,
+  Platform,
+  RefreshControl,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, usePathname } from 'expo-router';
@@ -56,7 +64,20 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
   const router = useRouter();
   const pathname = usePathname();
   const { userId: currentUserId } = useCurrentUserContext();
-  const { data: polls = [] } = usePolls(currentUserId ?? '');
+  const isGroupEmbedded = !!(embedded && lockedGroupId);
+  const { data: polls = [], refetch: refetchPolls } = usePolls(
+    currentUserId ?? '',
+    isGroupEmbedded ? { refetchIntervalMs: 3000 } : undefined
+  );
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const onPollsPullRefresh = useCallback(async () => {
+    setPullRefreshing(true);
+    try {
+      await refetchPolls();
+    } finally {
+      setPullRefreshing(false);
+    }
+  }, [refetchPolls]);
   const { data: allGroups = [] } = useGroups(currentUserId ?? '');
   const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId ?? '');
@@ -527,6 +548,16 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
       <ScrollView
         style={styles.pollsScroll}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 100 }}
+        refreshControl={
+          isGroupEmbedded ? (
+            <RefreshControl
+              refreshing={pullRefreshing}
+              onRefresh={onPollsPullRefresh}
+              tintColor={Colors.textSub}
+              colors={[Colors.textSub]}
+            />
+          ) : undefined
+        }
       >
         {sortedPolls.length === 0 ? (
           <View style={styles.emptyState}>

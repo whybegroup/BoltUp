@@ -120,15 +120,28 @@ export function PollRow({
 }: PollRowProps) {
   const p = getGroupColor(groupColorHex || (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899'));
   const dl = deadlineForPoll(poll);
-  const closedAt = (poll as Poll & { closedAt?: string }).closedAt;
+  const pollWithCloseState = poll as Poll & {
+    closedAt?: string;
+    closedBy?: string;
+    closedByName?: string;
+  };
+  const closedAt = pollWithCloseState.closedAt;
   const closedAtDate = closedAt ? new Date(closedAt) : null;
-  const isClosedEarly = pollIsEffectivelyClosed(poll);
+  const hasClosedMarker = pollIsEffectivelyClosed(poll);
   const now = Date.now();
   const isPastByDeadline = dl ? dl.getTime() <= now : false;
-  const isPast = isClosedEarly || isPastByDeadline;
-  const closesLine = isClosedEarly
+  const isClosed = hasClosedMarker || isPastByDeadline;
+  const isPast = isClosed;
+  const closedOnDate = hasClosedMarker
     ? closedAtDate && Number.isFinite(closedAtDate.getTime())
-      ? formatClosedByLine(closedAtDate)
+      ? closedAtDate
+      : dl
+    : isPastByDeadline
+      ? dl
+      : null;
+  const closesLine = isClosed
+    ? closedOnDate
+      ? formatClosedByLine(closedOnDate)
       : 'Closed'
     : dl
       ? formatClosesByLine(dl)

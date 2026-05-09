@@ -41,11 +41,18 @@ async function deletePollNetwork(pollId: string, uid: string): Promise<void> {
   }
 }
 
-export function usePolls(userId: string) {
+export type UsePollsOptions = {
+  /** Refetch list on this interval (ms). Used for embedded group polls view. */
+  refetchIntervalMs?: number;
+};
+
+export function usePolls(userId: string, opts?: UsePollsOptions) {
   return useQuery<Poll[]>({
     queryKey: queryKeys.polls.list(userId),
     queryFn: () => PollsService.listPolls(userId),
     enabled: !!userId,
+    refetchInterval: opts?.refetchIntervalMs ?? false,
+    refetchIntervalInBackground: false,
   });
 }
 
