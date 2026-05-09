@@ -8,6 +8,7 @@ import {
   type ComponentProps,
   type ComponentRef,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import {
   View,
@@ -21,11 +22,8 @@ import {
   Linking,
   Alert,
   Animated,
-  Easing,
   type StyleProp,
   type TextStyle,
-  type NativeSyntheticEvent,
-  type TextInputContentSizeChangeEventData,
   Platform,
   ActivityIndicator,
   Dimensions,
@@ -36,8 +34,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { EventFormPopoverChrome } from '../../components/EventFormPopoverChrome';
 import { modalTopBarStyles } from '../../components/modalTopBarStyles';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter, usePathname, type Href } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Colors, Fonts, Radius, Shadows } from '../../constants/theme';
@@ -56,7 +52,10 @@ import {
 import { computeMentionUserIdsForPost, type MentionMemberRow } from '../../utils/mentionUtils';
 import { Avatar, Sheet, Toggle, formSectionTitleStyle } from '../../components/ui';
 import { CommentMentionInput } from '../../components/CommentMentionInput';
-import { CommentsSection } from '../../components/CommentsSection';
+import {
+  ThreadedCommentsSection,
+  mapApiEventCommentsToThread,
+} from '../../components/ThreadedCommentsSection';
 import { UserAvatar } from '../../components/UserAvatar';
 import { UserAvatarStack } from '../../components/UserAvatarStack';
 import {
@@ -93,17 +92,7 @@ import { ReactionEmojiGlyph } from '../../components/ReactionEmojiGlyph';
 import { EmojiBar } from '../../components/EmojiBar';
 import { ImageLightboxModal } from '../../components/ImageLightboxModal';
 import { AddImageButton } from '../../components/AddImageButton';
-import { CommentReplyQuote } from '../../components/CommentReplyQuote';
-import {
-  pickImageFromLibrary,
-  pickImageFromCamera,
-  uploadPickedImageAsset,
-  uploadWebImageFile,
-  isCancelled,
-  pickAndUploadCoverPhoto,
-  takeAndUploadCoverPhoto,
-  type PickedImageAsset,
-} from '../../services/pickAndUploadImage';
+import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../../services/pickAndUploadImage';
 import { useResolvedImageUrls } from '../../hooks/useResolvedImageUrls';
 import { firstSearchParam, parseReturnToParam, withReturnTo } from '../../utils/navigationReturn';
 import Toast from 'react-native-toast-message';
@@ -117,31 +106,20 @@ import {
 } from '../../utils/datetimeUtc';
 import { SERIES_SCOPE_OPTIONS, type SeriesUpdateScope } from '../../utils/seriesUpdateScopeOptions';
 
-type PendingCommentPhoto = {
-  id: string;
-  uri: string;
-  /** Local file/asset to upload, or an https URL to attach without uploading */
-  pendingUpload: PickedImageAsset | File | string;
-};
-
-const COMPOSER_INPUT_MIN_H = 38;
-const COMPOSER_INPUT_MAX_H = 140;
-const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\.(?:png|jpe?g|gif|webp|bmp|heic|heif|avif|svg)(?:\?[^\s)]*)?(?=$|\s)/gi;
-
-function extractImageUrlsFromText(text: string): { cleanedText: string; imageUrls: string[] } {
-  const imageUrls: string[] = [];
-  const cleanedText = text
-    .replace(IMAGE_URL_RE, (url) => {
-      imageUrls.push(url);
-      return ' ';
-    })
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/[ \t]{2,}/g, ' ');
-  return { cleanedText, imageUrls };
-}
-
 /** Must match API soft-delete text when an admin removes someone else's comment */
 const COMMENT_DELETED_BY_ADMIN_MSG = 'This message was deleted by admin';
+
+/** Same timestamp format as group forum threaded comments */
+function formatForumCommentTime(value: string | number | Date): string {
+  const date = typeof value === 'string' ? new Date(value) : new Date(value as number);
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 function rsvpSavedToastTitle(status: RSVPInput.status): string {
   switch (status) {
@@ -156,21 +134,6 @@ function rsvpSavedToastTitle(status: RSVPInput.status): string {
     default:
       return 'RSVP updated';
   }
-}
-
-function reactionEmojiShortcode(emoji: string): string {
-  const map: Record<string, string> = {
-    '👍': ':+1:',
-    '🙏': ':pray:',
-    '😮': ':open_mouth:',
-    '✍️': ':writing_hand:',
-    '😂': ':joy:',
-    '😋': ':yum:',
-    '❤️': ':heart:',
-    '🔥': ':fire:',
-    '👀': ':eyes:',
-  };
-  return map[emoji] ?? '';
 }
 
 function webDetailTimeInputStyle(errored: boolean): Record<string, string | number> {
@@ -528,39 +491,31 @@ export default function EventDetailScreen() {
 
   const [showAttend,  setShowAttend]  = useState(false);
   const [memoFor,     setMemoFor]     = useState<RSVPInput.status | null>(null);
-  const [composerInput, setComposerInput] = useState('');
-  const [composerFieldHeight, setComposerFieldHeight] = useState(COMPOSER_INPUT_MIN_H);
-  const [composerPendingPhotos, setComposerPendingPhotos] = useState<PendingCommentPhoto[]>([]);
-  const composerPendingPhotosRef = useRef<PendingCommentPhoto[]>([]);
-  composerPendingPhotosRef.current = composerPendingPhotos;
-  /** Inline edit drafts keyed by comment id (multiple edits allowed). */
-  const [commentEditDrafts, setCommentEditDrafts] = useState<
-    Record<string, { text: string; photos: PendingCommentPhoto[] }>
-  >({});
-  const commentEditDraftsRef = useRef(commentEditDrafts);
-  commentEditDraftsRef.current = commentEditDrafts;
-  /** Where the next picked / URL-added photo should go: composer or a comment being edited. */
-  const commentPhotoTargetRef = useRef<'composer' | string>('composer');
-  const [showCommentPhotoModal, setShowCommentPhotoModal] = useState(false);
-  const [commentPhotoUrl, setCommentPhotoUrl] = useState('');
-  const [pendingPreviewLightbox, setPendingPreviewLightbox] = useState<{ urls: string[]; index: number } | null>(null);
-  const commentPhotoFileInputRef = useRef<{ click: () => void } | null>(null);
-  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; name: string; ts: Date } | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [commentPostBusy, setCommentPostBusy] = useState(false);
-  const [composerReplyTo, setComposerReplyTo] = useState<{
+  const [commentDraft, setCommentDraft] = useState('');
+  const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
+  const [commentEdit, setCommentEdit] = useState<{ commentId: string } | null>(null);
+  const [commentEditText, setCommentEditText] = useState('');
+  const [commentEditParentId, setCommentEditParentId] = useState<string | null>(null);
+  const [reactionQuickPickerTarget, setReactionQuickPickerTarget] = useState<{
+    kind: 'comment';
     id: string;
-    label: string;
-    preview: string;
   } | null>(null);
-  const [reactionDetailModal, setReactionDetailModal] = useState<{
+  const [reactionQuickPickerAnchor, setReactionQuickPickerAnchor] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [reactionPickerTarget, setReactionPickerTarget] = useState<{
+    kind: 'comment';
+    id: string;
+  } | null>(null);
+  const [reactionDetailModalForum, setReactionDetailModalForum] = useState<{
     emoji: string;
     userIds: string[];
   } | null>(null);
-  const [reactionDetailSheetVisible, setReactionDetailSheetVisible] = useState(false);
-  const [commentActionMenu, setCommentActionMenu] = useState<{ commentId: string } | null>(null);
-  /** Full emoji grid opened from the smiley+ button (same comment id). */
-  const [commentReactionFullPickerFor, setCommentReactionFullPickerFor] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; name: string; ts: Date } | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [newActivityLabel, setNewActivityLabel] = useState('');
   const [showTimeSuggestModal, setShowTimeSuggestModal] = useState(false);
   const [suggestStartDate, setSuggestStartDate] = useState('');
@@ -572,161 +527,56 @@ export default function EventDetailScreen() {
   const [showSuggestStartTimePicker, setShowSuggestStartTimePicker] = useState(false);
   const [showSuggestEndTimePicker, setShowSuggestEndTimePicker] = useState(false);
   const scrollRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
+  const scrollViewportYRef = useRef(0);
   const scrollOffsetYRef = useRef(0);
-  const commentsThreadSectionYRef = useRef(0);
-  const commentsThreadCardYRef = useRef(0);
-  const commentRowTopInCardRef = useRef<Record<string, number>>({});
-  const replyScrollRestoreYRef = useRef<number | null>(null);
-  /** When jumping from a reply row’s quote, we shake this id after tapping “Back to Reply Message”. */
-  const replyScrollRestoreShakeIdRef = useRef<string | null>(null);
-  /** Skip chip `onPress` when the same chip just fired `onLongPress` (both can run on release). */
-  const reactionChipLastLongPressRef = useRef<{ key: string; at: number } | null>(null);
-  const [replyScrollBackVisible, setReplyScrollBackVisible] = useState(false);
-  const [inputBarHeight, setInputBarHeight] = useState(96);
-  const [shakeCommentId, setShakeCommentId] = useState<string | null>(null);
-  const shakeX = useRef(new Animated.Value(0)).current;
-  const highlightOpacityByIdRef = useRef<Record<string, Animated.Value>>({});
-  const [highlightedCommentIds, setHighlightedCommentIds] = useState<Record<string, true>>({});
+  const [eventCommentsAncestorTopPx, setEventCommentsAncestorTopPx] = useState(0);
+  const reactionButtonRefs = useRef<Record<string, View | null>>({});
   const insets = useSafeAreaInsets();
 
-  const runCommentShake = useCallback(
-    (commentId: string) => {
-      setShakeCommentId(commentId);
-      shakeX.setValue(0);
-      if (Platform.OS !== 'web') {
-        void Haptics.selectionAsync();
-      }
-      Animated.sequence([
-        Animated.timing(shakeX, {
-          toValue: -6,
-          duration: 42,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-          toValue: 6,
-          duration: 48,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-          toValue: -5,
-          duration: 40,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-          toValue: 5,
-          duration: 40,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-          toValue: -3,
-          duration: 36,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(shakeX, {
-          toValue: 0,
-          duration: 44,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        setShakeCommentId(null);
-        shakeX.setValue(0);
-      });
+  const applyReactionAndDismissForum = useCallback(
+    (emoji: string) => {
+      const target = reactionQuickPickerTarget ?? reactionPickerTarget;
+      if (!target) return;
+      commentReactionMutation.mutate({ commentId: target.id, emoji });
+      setReactionQuickPickerTarget(null);
+      setReactionQuickPickerAnchor(null);
+      setReactionPickerTarget(null);
     },
-    [shakeX]
+    [reactionQuickPickerTarget, reactionPickerTarget, commentReactionMutation],
   );
 
-  const scrollToCommentById = useCallback((commentId: string) => {
-    const row = commentRowTopInCardRef.current[commentId];
-    if (row === undefined) return;
-    const y =
-      commentsThreadSectionYRef.current + commentsThreadCardYRef.current + row - 18;
-    scrollRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
-  }, []);
-
-  const getHighlightOpacity = useCallback((commentId: string) => {
-    if (!highlightOpacityByIdRef.current[commentId]) {
-      highlightOpacityByIdRef.current[commentId] = new Animated.Value(0);
+  const openReactionQuickPickerForum = useCallback((commentId: string) => {
+    const nextTarget = { kind: 'comment' as const, id: commentId };
+    const node = reactionButtonRefs.current[`comment:${commentId}`] as
+      | (View & { measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => void })
+      | null;
+    if (!node?.measureInWindow) {
+      setReactionQuickPickerAnchor(null);
+      setReactionQuickPickerTarget(nextTarget);
+      return;
     }
-    return highlightOpacityByIdRef.current[commentId];
+    node.measureInWindow((x, y, width, height) => {
+      setReactionQuickPickerAnchor({ x, y, width, height });
+      setReactionQuickPickerTarget(nextTarget);
+    });
   }, []);
 
-  const runCommentHighlightFade = useCallback(
-    (commentId: string) => {
-      const opacity = getHighlightOpacity(commentId);
-      setHighlightedCommentIds((prev) => ({ ...prev, [commentId]: true }));
-      opacity.stopAnimation();
-      opacity.setValue(1);
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 1500,
-        useNativeDriver: true,
-      }).start(() => {
-        setHighlightedCommentIds((prev) => {
-          if (!prev[commentId]) return prev;
-          const next = { ...prev };
-          delete next[commentId];
-          return next;
-        });
-      });
-    },
-    [getHighlightOpacity]
-  );
-
-  const jumpToCommentWithRestore = useCallback(
-    (targetCommentId: string) => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollToCommentById(targetCommentId);
-          setTimeout(() => runCommentHighlightFade(targetCommentId), 400);
-        });
-      });
-    },
-    [scrollToCommentById, runCommentHighlightFade]
-  );
-
-  const openReactionDetailSheet = useCallback((payload: { emoji: string; userIds: string[] }) => {
-    setReactionDetailModal(payload);
-    setReactionDetailSheetVisible(true);
+  const openReactionDetailModalForum = useCallback((payload: { emoji: string; userIds: string[] }) => {
+    setReactionDetailModalForum(payload);
   }, []);
 
-  const closeReactionDetailSheet = useCallback(() => {
-    setReactionDetailSheetVisible(false);
-  }, []);
-
-  useEffect(() => {
-    if (!reactionDetailSheetVisible && reactionDetailModal !== null) {
-      const t = setTimeout(() => setReactionDetailModal(null), 320);
-      return () => clearTimeout(t);
-    }
-  }, [reactionDetailSheetVisible, reactionDetailModal]);
-
-  /** Close long-press comment sheet only (keep full emoji picker open). */
-  const closeCommentActionSheet = useCallback(() => {
-    setCommentActionMenu(null);
-  }, []);
-
-  const dismissCommentActionMenu = useCallback(() => {
-    setCommentActionMenu(null);
-    setCommentReactionFullPickerFor(null);
-  }, []);
-
-  const applyCommentReactionAndDismiss = useCallback(
-    async (commentId: string, emoji: string) => {
-      try {
-        await commentReactionMutation.mutateAsync({ commentId, emoji });
-        dismissCommentActionMenu();
-      } catch {
-        /* react-query / global handlers surface errors */
-      }
-    },
-    [commentReactionMutation, dismissCommentActionMenu],
-  );
+  const quickPickerStyleForum = useMemo(() => {
+    const screenWidth = Dimensions.get('window').width;
+    const cardWidth = 316;
+    const cardHeight = 62;
+    const margin = 10;
+    if (!reactionQuickPickerAnchor) return { top: 120, left: (screenWidth - cardWidth) / 2 };
+    const centeredLeft =
+      reactionQuickPickerAnchor.x + reactionQuickPickerAnchor.width / 2 - cardWidth / 2;
+    const left = Math.max(margin, Math.min(screenWidth - cardWidth - margin, centeredLeft));
+    const top = Math.max(12, reactionQuickPickerAnchor.y - cardHeight - 8);
+    return { top, left };
+  }, [reactionQuickPickerAnchor]);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftDesc, setDraftDesc] = useState('');
   const [draftLocation, setDraftLocation] = useState('');
@@ -842,192 +692,6 @@ export default function EventDetailScreen() {
       controller.abort();
     };
   }, [draftLocation]);
-
-  const removePendingPhoto = useCallback((target: 'composer' | string, p: PendingCommentPhoto) => {
-    if (p.uri.startsWith('blob:')) {
-      URL.revokeObjectURL(p.uri);
-    }
-    if (target === 'composer') {
-      setComposerPendingPhotos((rows) => rows.filter((x) => x.id !== p.id));
-    } else {
-      setCommentEditDrafts((prev) => {
-        const d = prev[target];
-        if (!d) return prev;
-        return { ...prev, [target]: { ...d, photos: d.photos.filter((x) => x.id !== p.id) } };
-      });
-    }
-    setPendingPreviewLightbox((prev) => {
-      if (!prev) return null;
-      const removedIdx = prev.urls.indexOf(p.uri);
-      if (removedIdx < 0) return prev;
-      const urls = prev.urls.filter((u) => u !== p.uri);
-      if (urls.length === 0) return null;
-      let index = prev.index;
-      if (removedIdx < index) index -= 1;
-      else if (removedIdx === index) index = Math.min(index, urls.length - 1);
-      return { urls, index };
-    });
-  }, []);
-
-  const addPendingCommentPhoto = useCallback((previewUri: string, pendingUpload: PickedImageAsset | File | string) => {
-    const t = commentPhotoTargetRef.current;
-    const row: PendingCommentPhoto = { id: uid(), uri: previewUri, pendingUpload };
-    if (t === 'composer') {
-      setComposerPendingPhotos((rows) => [...rows, row]);
-    } else {
-      setCommentEditDrafts((prev) => {
-        const d = prev[t];
-        if (!d) return prev;
-        return { ...prev, [t]: { ...d, photos: [...d.photos, row] } };
-      });
-    }
-  }, []);
-
-  const pickCommentPhotoNative = useCallback(async () => {
-    if (!currentUserId) {
-      Alert.alert('Sign in', 'You must be signed in to add photos.');
-      return;
-    }
-    try {
-      const asset = await pickImageFromLibrary();
-      addPendingCommentPhoto(asset.uri, asset);
-    } catch (e) {
-      if (!isCancelled(e)) {
-        Alert.alert('Photo', e instanceof Error ? e.message : 'Could not pick image');
-      }
-    }
-  }, [addPendingCommentPhoto, currentUserId]);
-
-  const pickCommentPhotoCameraNative = useCallback(async () => {
-    if (!currentUserId) {
-      Alert.alert('Sign in', 'You must be signed in to add photos.');
-      return;
-    }
-    try {
-      const asset = await pickImageFromCamera();
-      addPendingCommentPhoto(asset.uri, asset);
-    } catch (e) {
-      if (!isCancelled(e)) {
-        Alert.alert('Photo', e instanceof Error ? e.message : 'Could not take photo');
-      }
-    }
-  }, [addPendingCommentPhoto, currentUserId]);
-
-  const onCommentWebPhotoChange = useCallback(
-    (e: ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      e.target.value = '';
-      if (!file) return;
-      if (!file.type.startsWith('image/')) {
-        Alert.alert('Upload', 'Please choose an image file.');
-        return;
-      }
-      const previewUri = URL.createObjectURL(file);
-      addPendingCommentPhoto(previewUri, file);
-    },
-    [addPendingCommentPhoto],
-  );
-
-  const onCommentPhotoButtonPress = useCallback((forCommentEditId?: string) => {
-    if (!currentUserId) {
-      Alert.alert('Sign in', 'You must be signed in to add photos.');
-      return;
-    }
-    commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
-    if (Platform.OS === 'web') {
-      commentPhotoFileInputRef.current?.click();
-    } else {
-      void pickCommentPhotoNative();
-    }
-  }, [currentUserId, pickCommentPhotoNative]);
-
-  const chooseCommentPhotoFromLibrary = useCallback(
-    async (forCommentEditId?: string) => {
-      if (!currentUserId) {
-        Alert.alert('Sign in', 'You must be signed in to add photos.');
-        return;
-      }
-      commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
-      if (Platform.OS === 'web') {
-        commentPhotoFileInputRef.current?.click();
-        return;
-      }
-      await pickCommentPhotoNative();
-    },
-    [currentUserId, pickCommentPhotoNative],
-  );
-
-  const takeCommentPhoto = useCallback(
-    async (forCommentEditId?: string) => {
-      if (!currentUserId) {
-        Alert.alert('Sign in', 'You must be signed in to add photos.');
-        return;
-      }
-      commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
-      if (Platform.OS === 'web') {
-        commentPhotoFileInputRef.current?.click();
-        return;
-      }
-      await pickCommentPhotoCameraNative();
-    },
-    [currentUserId, pickCommentPhotoCameraNative],
-  );
-
-  const insertCommentPhotoByLink = useCallback((url: string, forCommentEditId?: string) => {
-    const clean = url.trim();
-    if (!clean) return;
-    commentPhotoTargetRef.current = forCommentEditId ?? 'composer';
-    addPendingCommentPhoto(clean, clean);
-  }, [addPendingCommentPhoto]);
-
-  const absorbImageUrlsFromCommentText = useCallback(
-    (target: 'composer' | string, text: string): string => {
-      const { cleanedText, imageUrls } = extractImageUrlsFromText(text);
-      if (imageUrls.length === 0) return text;
-
-      if (target === 'composer') {
-        setComposerPendingPhotos((rows) => {
-          const existing = new Set(rows.map((r) => r.uri));
-          const added = imageUrls
-            .filter((url) => !existing.has(url))
-            .map((url) => ({ id: uid(), uri: url, pendingUpload: url as string }));
-          return added.length > 0 ? [...rows, ...added] : rows;
-        });
-      } else {
-        setCommentEditDrafts((prev) => {
-          const d = prev[target];
-          if (!d) return prev;
-          const existing = new Set(d.photos.map((p) => p.uri));
-          const added = imageUrls
-            .filter((url) => !existing.has(url))
-            .map((url) => ({ id: uid(), uri: url, pendingUpload: url as string }));
-          if (added.length === 0) return prev;
-          return { ...prev, [target]: { ...d, photos: [...d.photos, ...added] } };
-        });
-      }
-      return cleanedText;
-    },
-    []
-  );
-
-  const openCommentPhotoUrlModal = useCallback((target: 'composer' | string) => {
-    commentPhotoTargetRef.current = target;
-    setShowCommentPhotoModal(true);
-  }, []);
-
-  useEffect(() => {
-    if (composerInput.length === 0) setComposerFieldHeight(COMPOSER_INPUT_MIN_H);
-  }, [composerInput]);
-
-  const onComposerInputContentSizeChange = useCallback(
-    (e: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-      const contentH = e.nativeEvent.contentSize.height;
-      const padded = Math.ceil(contentH) + (Platform.OS === 'web' ? 20 : 18);
-      const next = Math.min(COMPOSER_INPUT_MAX_H, Math.max(COMPOSER_INPUT_MIN_H, padded));
-      setComposerFieldHeight((prev) => (prev === next ? prev : next));
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!showTimeSuggestModal || !ev?.start || !ev?.end) return;
@@ -1250,6 +914,180 @@ export default function EventDetailScreen() {
     [currentUserId, eventId, ev, updateEventMutation],
   );
 
+  const canCollaborateActivities = useMemo(() => {
+    if (!currentUserId) return false;
+    const g = group as GroupScoped | undefined;
+    if (!g) return false;
+    return (
+      g.membershipStatus === MembershipStatus.MEMBER ||
+      g.membershipStatus === MembershipStatus.ADMIN
+    );
+  }, [currentUserId, group]);
+
+  const comments = useMemo(() => {
+    const eventDetailed = ev as EventDetailed | undefined;
+    return (eventDetailed?.comments || [])
+      .map((c) => ({
+        ...c,
+        createdAt: new Date(c.createdAt),
+        photos: (c.photos || []).filter((u) => typeof u === 'string' && u.trim().length > 0),
+        reactions: c.reactions ?? [],
+        viewerReactionEmojis: c.viewerReactionEmojis ?? [],
+        replyTo: c.replyTo ?? null,
+        replyToCommentId: c.replyToCommentId ?? null,
+      }))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }, [ev]);
+
+  const threadComments = useMemo(() => {
+    const list = (ev as EventDetailed | undefined)?.comments ?? [];
+    return mapApiEventCommentsToThread(
+      list.map((c) => ({
+        id: c.id,
+        userId: c.userId,
+        text: c.text ?? '',
+        replyToCommentId: c.replyToCommentId ?? null,
+        createdAt: c.createdAt,
+        reactions: (c.reactions ?? []).map((r) => ({
+          emoji: r.emoji,
+          count: r.count,
+          userIds: r.userIds ?? [],
+        })),
+      }))
+    );
+  }, [ev]);
+
+  const submitEventThreadComment = useCallback(async () => {
+    if (!currentUserId) {
+      Alert.alert('Sign in', 'You must be signed in to comment.');
+      return;
+    }
+    if (!canCollaborateActivities) {
+      Alert.alert('Members only', 'Only group members can comment on events.');
+      return;
+    }
+    const raw = commentDraft.trim();
+    if (!raw) return;
+    try {
+      const newComment: CommentInput = {
+        id: uid(),
+        userId: currentUserId,
+        text: raw,
+      };
+      if (replyTargetCommentId) {
+        newComment.replyToCommentId = replyTargetCommentId;
+      }
+      const mids = computeMentionUserIdsForPost(raw, mentionMemberRows, currentUserId);
+      if (mids.length > 0) {
+        newComment.mentionedUserIds = mids;
+      }
+      try {
+        await createCommentMutation.mutateAsync(newComment);
+      } catch (firstErr: unknown) {
+        const fe = firstErr as { status?: number; response?: { status?: number } };
+        const st = fe?.status ?? fe?.response?.status;
+        if (st === 400 && Array.isArray(newComment.mentionedUserIds)) {
+          const { mentionedUserIds: _m, ...rest } = newComment;
+          await createCommentMutation.mutateAsync(rest as CommentInput);
+        } else {
+          throw firstErr;
+        }
+      }
+      setCommentDraft('');
+      setReplyTargetCommentId(null);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+    } catch (error: unknown) {
+      const err = error as { body?: { message?: string }; message?: string };
+      Alert.alert('Error', err?.body?.message || err?.message || 'Failed to post comment');
+    }
+  }, [
+    currentUserId,
+    canCollaborateActivities,
+    commentDraft,
+    replyTargetCommentId,
+    mentionMemberRows,
+    createCommentMutation,
+  ]);
+
+  const beginEditEventComment = useCallback(
+    (commentId: string) => {
+      const c = comments.find((x) => x.id === commentId);
+      if (!c) return;
+      const trimmed = (c.text || '').trim();
+      if (trimmed === COMMENT_DELETED_BY_ADMIN_MSG) return;
+      if (!trimmed && !(c.photos && c.photos.length > 0)) return;
+      setCommentEdit({ commentId });
+      setCommentEditText(trimmed);
+      setCommentEditParentId(c.replyToCommentId ?? null);
+      setReplyTargetCommentId(null);
+    },
+    [comments],
+  );
+
+  const cancelEditEventComment = useCallback(() => {
+    setCommentEdit(null);
+    setCommentEditText('');
+    setCommentEditParentId(null);
+  }, []);
+
+  const saveEditedEventComment = useCallback(async () => {
+    if (!currentUserId || !commentEdit) return;
+    const body = commentEditText.trim();
+    if (!body) {
+      Alert.alert('Error', 'Comment cannot be empty');
+      return;
+    }
+    try {
+      await updateCommentMutation.mutateAsync({
+        commentId: commentEdit.commentId,
+        input: {
+          actorId: currentUserId,
+          text: body,
+          replyToCommentId: commentEditParentId,
+        },
+      });
+      cancelEditEventComment();
+    } catch {
+      Alert.alert('Error', 'Failed to update comment');
+    }
+  }, [
+    currentUserId,
+    commentEdit,
+    commentEditText,
+    commentEditParentId,
+    updateCommentMutation,
+    cancelEditEventComment,
+  ]);
+
+  const confirmDeleteEventComment = useCallback(
+    (commentId: string) => {
+      if (!currentUserId) return;
+      const run = () => {
+        if (replyTargetCommentId === commentId) setReplyTargetCommentId(null);
+        if (commentEdit?.commentId === commentId) cancelEditEventComment();
+        void deleteCommentMutation
+          .mutateAsync({ commentId, actorId: currentUserId })
+          .catch(() => Alert.alert('Error', 'Failed to delete comment'));
+      };
+      const msg = 'Delete this comment?';
+      if (Platform.OS === 'web') {
+        if (window.confirm(msg)) run();
+      } else {
+        Alert.alert('Delete comment?', msg, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: run },
+        ]);
+      }
+    },
+    [
+      currentUserId,
+      replyTargetCommentId,
+      commentEdit,
+      cancelEditEventComment,
+      deleteCommentMutation,
+    ],
+  );
+
   if (!eventId) {
     return (
       <EventFormPopoverChrome onClose={requestClose}>
@@ -1261,23 +1099,6 @@ export default function EventDetailScreen() {
       </EventFormPopoverChrome>
     );
   }
-
-  const eventDetailed = ev as EventDetailed | undefined;
-  
-  const comments = (eventDetailed?.comments || [])
-    .map((c) => ({
-      ...c,
-      createdAt: new Date(c.createdAt),
-      photos: (c.photos || []).filter((u) => typeof u === 'string' && u.trim().length > 0),
-      reactions: c.reactions ?? [],
-      viewerReactionEmojis: c.viewerReactionEmojis ?? [],
-      replyTo: c.replyTo ?? null,
-    }))
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-
-  const commentMenuTarget = commentActionMenu
-    ? comments.find((x) => x.id === commentActionMenu.commentId) ?? null
-    : null;
 
   const users: Record<string, User> = {};
   allUsers.forEach(u => {
@@ -1358,11 +1179,6 @@ export default function EventDetailScreen() {
     (group.adminIds ?? []).includes(currentUserId);
   /** Host and group admins/super-admins may delete past occurrences (API matches). */
   const canDeleteEventLive = canDeleteEvent;
-  const gScoped = group as GroupScoped;
-  const canCollaborateActivities =
-    !!currentUserId &&
-    (gScoped.membershipStatus === MembershipStatus.MEMBER ||
-      gScoped.membershipStatus === MembershipStatus.ADMIN);
   const activityIdeasOn = ev.activityIdeasEnabled ?? false;
   const activityIdeasEffective = canEditLive ? draftActivityIdeasEnabled : activityIdeasOn;
   /** RSVP row follows saved event flag, not the Settings draft (organizers were losing Maybe while editing). */
@@ -1751,9 +1567,6 @@ export default function EventDetailScreen() {
     }
   };
 
-  const canModerateComments =
-    group.superAdminId === currentUserId || (group.adminIds ?? []).includes(currentUserId ?? '');
-
   const evWithWatch = ev as EventDetailed & {
     viewerWatching?: boolean;
     viewerWatchDefault?: boolean;
@@ -1880,213 +1693,6 @@ export default function EventDetailScreen() {
     }
   };
 
-  const handleAddCommentPhoto = () => {
-    const url = commentPhotoUrl.trim();
-    if (!url) return;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      Alert.alert('Invalid URL', 'Please enter a valid image URL (e.g. https://example.com/image.jpg)');
-      return;
-    }
-    const t = commentPhotoTargetRef.current;
-    const row: PendingCommentPhoto = { id: uid(), uri: url, pendingUpload: url };
-    if (t === 'composer') {
-      setComposerPendingPhotos((p) => [...p, row]);
-    } else {
-      setCommentEditDrafts((prev) => {
-        const d = prev[t];
-        if (!d) return prev;
-        return { ...prev, [t]: { ...d, photos: [...d.photos, row] } };
-      });
-    }
-    setCommentPhotoUrl('');
-    setShowCommentPhotoModal(false);
-  };
-
-  const beginEditComment = (commentId: string, text?: string | null, photos?: string[]) => {
-    const trimmed = (text || '').trim();
-    if (trimmed === COMMENT_DELETED_BY_ADMIN_MSG) return;
-    if (!trimmed && !(photos && photos.length)) return;
-    dismissCommentActionMenu();
-    setCommentEditDrafts((prev) => {
-      const old = prev[commentId];
-      if (old) {
-        for (const p of old.photos) {
-          if (p.uri.startsWith('blob:')) URL.revokeObjectURL(p.uri);
-        }
-      }
-      return {
-        ...prev,
-        [commentId]: {
-          text: trimmed,
-          photos: (photos || []).map((u) => ({ id: uid(), uri: u, pendingUpload: u })),
-        },
-      };
-    });
-  };
-
-  const cancelEditComment = (commentId: string) => {
-    dismissCommentActionMenu();
-    setCommentEditDrafts((prev) => {
-      const d = prev[commentId];
-      if (!d) return prev;
-      for (const p of d.photos) {
-        if (p.uri.startsWith('blob:')) URL.revokeObjectURL(p.uri);
-      }
-      const { [commentId]: _, ...rest } = prev;
-      return rest;
-    });
-  };
-
-  const updateEditDraftText = (commentId: string, text: string) => {
-    const nextText = absorbImageUrlsFromCommentText(commentId, text);
-    setCommentEditDrafts((prev) => {
-      const d = prev[commentId];
-      if (!d) return prev;
-      return { ...prev, [commentId]: { ...d, text: nextText } };
-    });
-  };
-
-  const handleDeleteComment = (commentId: string) => {
-    if (!currentUserId) return;
-    dismissCommentActionMenu();
-    Alert.alert('Delete comment', 'Are you sure you want to delete this comment?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteCommentMutation.mutateAsync({
-              commentId,
-              actorId: currentUserId,
-            });
-            setCommentEditDrafts((prev) => {
-              const d = prev[commentId];
-              if (!d) return prev;
-              for (const p of d.photos) {
-                if (p.uri.startsWith('blob:')) URL.revokeObjectURL(p.uri);
-              }
-              const { [commentId]: _, ...rest } = prev;
-              return rest;
-            });
-          } catch (error: any) {
-            Alert.alert('Error', error?.body?.message || error?.message || 'Failed to delete comment');
-          }
-        },
-      },
-    ]);
-  };
-
-  const uploadPendingPhotos = async (photosToUpload: PendingCommentPhoto[]) => {
-    return Promise.all(
-      photosToUpload.map(async (p) => {
-        const src = p.pendingUpload;
-        if (typeof src === 'string' && (src.startsWith('http://') || src.startsWith('https://'))) {
-          return src;
-        }
-        if (typeof File !== 'undefined' && src instanceof File) {
-          return uploadWebImageFile(currentUserId!, src);
-        }
-        return uploadPickedImageAsset(currentUserId!, src as PickedImageAsset);
-      }),
-    );
-  };
-
-  const saveCommentEdit = async (commentId: string) => {
-    if (!currentUserId) return;
-    const draft = commentEditDraftsRef.current[commentId];
-    if (!draft) return;
-    const photosToUpload = draft.photos;
-    const nextText = draft.text.trim();
-    if (!nextText && photosToUpload.length === 0) {
-      Alert.alert('Error', 'Comment cannot be empty');
-      return;
-    }
-    try {
-      const photoUrls = await uploadPendingPhotos(photosToUpload);
-      if (!nextText && photoUrls.length === 0) {
-        Alert.alert('Error', 'Comment cannot be empty');
-        return;
-      }
-      await updateCommentMutation.mutateAsync({
-        commentId,
-        input: { actorId: currentUserId, text: nextText, photos: photoUrls },
-      });
-      for (const p of photosToUpload) {
-        if (p.uri.startsWith('blob:')) URL.revokeObjectURL(p.uri);
-      }
-      dismissCommentActionMenu();
-      setCommentEditDrafts((prev) => {
-        const { [commentId]: _, ...rest } = prev;
-        return rest;
-      });
-    } catch (error: unknown) {
-      const err = error as { body?: { message?: string }; message?: string };
-      Alert.alert('Error', err?.body?.message || err?.message || 'Failed to save comment');
-    }
-  };
-
-  const postComment = async () => {
-    const photosToUpload = composerPendingPhotosRef.current;
-    if (!composerInput.trim() && !photosToUpload.length) return;
-    if (!currentUserId) {
-      Alert.alert('Sign in', 'You must be signed in to comment.');
-      return;
-    }
-    setCommentPostBusy(true);
-    try {
-      const photoUrls = await uploadPendingPhotos(photosToUpload);
-
-      const newComment: CommentInput = {
-        id: uid(),
-        userId: currentUserId,
-      };
-      if (composerReplyTo) {
-        newComment.replyToCommentId = composerReplyTo.id;
-      }
-      if (photoUrls.length > 0) {
-        newComment.photos = photoUrls;
-      }
-      if (composerInput.trim()) {
-        const trimmed = composerInput.trim();
-        newComment.text = trimmed;
-        const mids = computeMentionUserIdsForPost(trimmed, mentionMemberRows, currentUserId);
-        if (mids.length > 0) {
-          newComment.mentionedUserIds = mids;
-        }
-      }
-
-      try {
-        await createCommentMutation.mutateAsync(newComment);
-      } catch (firstErr: any) {
-        const st = firstErr?.status ?? firstErr?.response?.status;
-        const is400 = st === 400;
-        if (is400 && Array.isArray(newComment.mentionedUserIds)) {
-          const { mentionedUserIds: _m, ...rest } = newComment;
-          await createCommentMutation.mutateAsync(rest as CommentInput);
-        } else {
-          throw firstErr;
-        }
-      }
-
-      for (const p of photosToUpload) {
-        if (p.uri.startsWith('blob:')) URL.revokeObjectURL(p.uri);
-      }
-      setComposerInput('');
-      setComposerPendingPhotos([]);
-      setComposerReplyTo(null);
-      setReplyScrollBackVisible(false);
-      replyScrollRestoreYRef.current = null;
-      replyScrollRestoreShakeIdRef.current = null;
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
-    } catch (error: unknown) {
-      const err = error as { body?: { message?: string }; message?: string };
-      Alert.alert('Error', err?.body?.message || err?.message || 'Failed to post comment');
-    } finally {
-      setCommentPostBusy(false);
-    }
-  };
-
   const attendLabel = [
     going.length > 0     && `${going.length}${maxCapacity > 0 ? `/${maxCapacity}` : ''} Going`,
     waitlist.length > 0  && `${waitlist.length} Waitlist`,
@@ -2101,17 +1707,6 @@ export default function EventDetailScreen() {
   return (
     <EventFormPopoverChrome onClose={requestClose}>
     <View style={styles.safe}>
-      {Platform.OS === 'web' && (
-        <input
-          ref={(el) => {
-            commentPhotoFileInputRef.current = el;
-          }}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={onCommentWebPhotoChange}
-        />
-      )}
       {/* Nav */}
       <View style={modalTopBarStyles.bar}>
         <TouchableOpacity
@@ -2194,7 +1789,16 @@ export default function EventDetailScreen() {
       ) : null}
 
       <GestureScrollView
-        ref={scrollRef}
+        ref={(node) => {
+          scrollRef.current = node;
+          if (!node) return;
+          const measurable = node as ScrollView & {
+            measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void;
+          };
+          measurable.measureInWindow?.((_x, y) => {
+            scrollViewportYRef.current = y;
+          });
+        }}
         style={styles.eventScrollView}
         contentContainerStyle={styles.eventScrollContent}
         showsVerticalScrollIndicator={false}
@@ -3023,720 +2627,147 @@ export default function EventDetailScreen() {
           </View>
         </View>
 
-        {/* Comments */}
+        {/* Comments — matches group forum ThreadedCommentsSection */}
         <View
           style={[styles.eventScrollInset, styles.eventSectionGap]}
           onLayout={(e) => {
-            commentsThreadSectionYRef.current = e.nativeEvent.layout.y;
+            setEventCommentsAncestorTopPx(e.nativeEvent.layout.y);
           }}
         >
-          <Text style={styles.eventSectionLabel}>
-            Comments{comments.length > 0 ? ` · ${comments.length}` : ''}
-          </Text>
-          <CommentsSection
-            isEmpty={comments.length === 0}
-            containerStyle={styles.eventMainCard}
-            onLayout={(e) => {
-              commentsThreadCardYRef.current = e.nativeEvent.layout.y;
-            }}
-            emptyContent={
-              <View style={styles.commentsEmptyInsideCard}>
-                {isPast ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons name="camera-outline" size={18} color={Colors.textMuted} />
-                    <Text style={{ fontSize: 14, color: Colors.textMuted, fontFamily: Fonts.regular }}>
-                      Share a photo or memory!
-                    </Text>
-                  </View>
-                ) : (
-                  <Text style={{ fontSize: 14, color: Colors.textMuted, fontFamily: Fonts.regular }}>
-                    No comments yet — be the first!
-                  </Text>
-                )}
-              </View>
+          <Text style={styles.eventSectionLabel}>Comments</Text>
+          <ThreadedCommentsSection
+            comments={threadComments}
+            ancestorTopPx={eventCommentsAncestorTopPx}
+            scrollRef={scrollRef as RefObject<ScrollView | null>}
+            scrollViewportYRef={scrollViewportYRef}
+            scrollOffsetYRef={scrollOffsetYRef}
+            currentUserId={currentUserId}
+            getUserDisplayName={(uid) => getUserSafe(uid).displayName}
+            formatCommentTime={formatForumCommentTime}
+            draftText={commentDraft}
+            onDraftTextChange={setCommentDraft}
+            replyTargetId={replyTargetCommentId}
+            onReplyTargetChange={setReplyTargetCommentId}
+            onSubmitDraft={() => void submitEventThreadComment()}
+            commentEdit={commentEdit}
+            commentEditText={commentEditText}
+            onCommentEditTextChange={setCommentEditText}
+            commentEditParentId={commentEditParentId}
+            onCommentEditParentIdChange={setCommentEditParentId}
+            onCancelEdit={cancelEditEventComment}
+            onSaveEdit={() => void saveEditedEventComment()}
+            saveEditBusy={updateCommentMutation.isPending}
+            supportsEditReplyParent
+            onToggleReaction={(commentId, emoji) =>
+              commentReactionMutation.mutate({ commentId, emoji })
             }
-          >
-          {comments.map((c, i) => {
-            const commentTs = typeof c.createdAt === 'string' ? new Date(c.createdAt) : c.createdAt;
-            const isMine = c.userId === currentUserId;
-            const isAdminRemovedOnly = c.text === COMMENT_DELETED_BY_ADMIN_MSG;
-            const canReply = canCollaborateActivities && !isAdminRemovedOnly;
-            const canDelete = isMine || canModerateComments;
-            const canEditOwn =
-              isMine && !isAdminRemovedOnly && (!!((c.text || '').trim()) || c.photos.length > 0);
-            const hasActions = canDelete || canEditOwn || canReply;
-            const editDraft = commentEditDrafts[c.id];
-            const isEditingThis = editDraft !== undefined;
-            const borderBelow = i < comments.length - 1 && styles.commentBorder;
-            const savingThisComment =
-              updateCommentMutation.isPending && updateCommentMutation.variables?.commentId === c.id;
-            const shakeRowStyle =
-              shakeCommentId === c.id ? { transform: [{ translateX: shakeX }] } : undefined;
-            return (
-            <View
-              key={c.id}
-              onLayout={(e) => {
-                commentRowTopInCardRef.current[c.id] = e.nativeEvent.layout.y;
-              }}
-            >
-              {isAdminRemovedOnly ? (
-                <Animated.View style={shakeRowStyle}>
-                  <View style={[styles.commentAdminRemovedRow, borderBelow]}>
-                    <Text style={styles.commentAdminRemovedOnly}>{COMMENT_DELETED_BY_ADMIN_MSG}</Text>
-                  </View>
-                </Animated.View>
-              ) : isEditingThis && editDraft ? (
-                <Animated.View style={shakeRowStyle}>
-                <View style={[styles.commentRow, borderBelow]}>
-                  <Avatar name={getUserSafe(c.userId).displayName} size={34} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-                      <Text style={[styles.commentName, c.userId === currentUserId && { color: Colors.going }]}>
-                        {getUserSafe(c.userId).displayName}
-                      </Text>
-                      <Text style={styles.commentTime}>{timeAgo(commentTs)}</Text>
-                    </View>
-                    {editDraft.photos.length > 0 ? (
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        style={styles.commentInlineEditPhotoStrip}
-                        contentContainerStyle={styles.commentInlineEditPhotoStripContent}
-                        nestedScrollEnabled
-                      >
-                        {editDraft.photos.map((p, pi) => (
-                          <View key={p.id} style={styles.commentInlineEditPhotoWrap}>
-                            <TouchableOpacity
-                              activeOpacity={0.85}
-                              onPress={() =>
-                                setPendingPreviewLightbox({
-                                  urls: editDraft.photos.map((x) => x.uri),
-                                  index: pi,
-                                })
-                              }
-                              style={styles.pendingPhotoHit}
-                            >
-                              <ResolvableImage storedUrl={p.uri} style={styles.pendingPhoto} resizeMode="cover" />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              onPress={() => removePendingPhoto(c.id, p)}
-                              style={styles.pendingPhotoRemove}
-                            >
-                              <Ionicons name="close" size={11} color="#fff" />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </ScrollView>
-                    ) : null}
-                    <View style={styles.commentInlineEditBlock}>
-                      <CommentMentionInput
-                        stacked
-                        value={editDraft.text}
-                        onChangeText={(t) => updateEditDraftText(c.id, t)}
-                        members={mentionMembersForInput}
-                        currentUserId={currentUserId}
-                        placeholder={isPast ? 'Memory… (@ to mention)' : 'Comment… (@ to mention)'}
-                        placeholderTextColor={Colors.textMuted}
-                        style={[styles.commentInputField, styles.commentInlineEditInput]}
-                        onSubmitEditing={() => void saveCommentEdit(c.id)}
-                        multiline
-                        scrollEnabled
-                        autoFocus
-                        textAlignVertical="top"
-                      />
-                      <View style={styles.commentInlineEditToolbar}>
-                        <AddImageButton
-                          iconOnly
-                          triggerIconName="camera-outline"
-                          label="Add photo"
-                          onTakePhoto={() => takeCommentPhoto(c.id)}
-                          onChooseFromLibrary={() => chooseCommentPhotoFromLibrary(c.id)}
-                          onInsertLink={async (url) => {
-                            insertCommentPhotoByLink(url, c.id);
-                          }}
-                        />
-                        <TouchableOpacity
-                          onPress={() => cancelEditComment(c.id)}
-                          style={styles.commentInlineEditCancel}
-                        >
-                          <Text style={styles.commentInlineEditCancelText}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => void saveCommentEdit(c.id)}
-                          disabled={
-                            savingThisComment || !(editDraft.text.trim() || editDraft.photos.length)
-                          }
-                          style={[
-                            styles.postBtn,
-                            (savingThisComment || !(editDraft.text.trim() || editDraft.photos.length)) &&
-                              styles.postBtnDisabled,
-                          ]}
-                        >
-                          <Text style={styles.postBtnText}>Save</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-                </Animated.View>
-              ) : (
-                <View style={styles.commentPressable}>
-                  <Animated.View style={shakeRowStyle}>
-                  <View style={[styles.commentRow, borderBelow]}>
-                    {highlightedCommentIds[c.id] ? (
-                      <Animated.View
-                        pointerEvents="none"
-                        style={[
-                          styles.commentRowHighlightOverlay,
-                          {
-                            opacity: getHighlightOpacity(c.id),
-                          },
-                        ]}
-                      />
-                    ) : null}
-                  <Avatar name={getUserSafe(c.userId).displayName} size={34} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
-                      <Text style={[styles.commentName, c.userId === currentUserId && { color: Colors.going }]}>{getUserSafe(c.userId).displayName}</Text>
-                      <Text style={styles.commentTime}>{timeAgo(commentTs)}</Text>
-                    </View>
-                    {c.replyTo ? (
-                      <CommentReplyQuote
-                        onPress={() => jumpToCommentWithRestore(c.replyTo!.id)}
-                        author={c.replyTo.user.displayName ?? c.replyTo.user.name ?? 'Member'}
-                        preview={c.replyTo.preview}
-                        containerStyle={[styles.replyQuoteStrip, styles.replyQuotePressable]}
-                        pressedStyle={{ opacity: 0.88 }}
-                        accessibilityLabel="Jump to previous comment in thread"
-                        authorStyle={styles.replyQuoteAuthor}
-                        previewStyle={styles.replyQuotePreview}
-                      />
-                    ) : null}
-                    {c.photos.length > 0 && (
-                      <CommentPhotoGallery
-                        photos={c.photos}
-                        urlMap={resolvedImageMap}
-                        onPhotoPress={(url, photoIndex) =>
-                          setLightbox({
-                            urls: c.photos,
-                            index: photoIndex,
-                            name: getUserSafe(c.userId).displayName,
-                            ts: commentTs,
-                          })
-                        }
-                      />
-                    )}
-                    {!!(c.text || '').trim() && (
-                      <CommentMentionText
-                        text={c.text}
-                        style={[
-                          styles.commentText,
-                          (c.photos.length > 0 || c.replyTo) && { marginTop: 8 },
-                        ]}
-                      />
-                    )}
-                    {(c.reactions || []).some((r) => r.count > 0) ? (
-                      <View style={styles.reactionChipsRow}>
-                        {(c.reactions || [])
-                          .filter((r) => r.count > 0)
-                          .map((r) => (
-                            <Pressable
-                              key={r.emoji}
-                              delayLongPress={420}
-                              onPress={() => {
-                                if (!currentUserId) return;
-                                const key = `${c.id}:${r.emoji}`;
-                                const hit = reactionChipLastLongPressRef.current;
-                                if (hit && hit.key === key && Date.now() - hit.at < 500) {
-                                  reactionChipLastLongPressRef.current = null;
-                                  return;
-                                }
-                                void commentReactionMutation.mutateAsync({ commentId: c.id, emoji: r.emoji });
-                              }}
-                              onLongPress={() => {
-                                reactionChipLastLongPressRef.current = {
-                                  key: `${c.id}:${r.emoji}`,
-                                  at: Date.now(),
-                                };
-                                if (Platform.OS !== 'web') {
-                                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                }
-                                openReactionDetailSheet({ emoji: r.emoji, userIds: r.userIds });
-                              }}
-                              style={({ pressed }) => [styles.reactionChip, pressed && { opacity: 0.92 }]}
-                              accessibilityRole="button"
-                              accessibilityLabel={`${r.count} ${r.emoji} reactions`}
-                              accessibilityHint="Tap to react or remove your reaction. Long press to see who reacted."
-                            >
-                              <View style={styles.reactionChipInner}>
-                                <ReactionEmojiGlyph emoji={r.emoji} size={17} />
-                                <Text style={styles.reactionChipCount}>{r.count}</Text>
-                              </View>
-                            </Pressable>
-                          ))}
-                      </View>
-                    ) : null}
-                    <View style={styles.commentIconActionRow}>
-                      <TouchableOpacity
-                        style={styles.commentIconActionBtn}
-                        onPress={() => setCommentActionMenu({ commentId: c.id })}
-                        accessibilityLabel="Add reaction"
-                        activeOpacity={0.75}
-                      >
-                        <Ionicons name="happy-outline" size={15} color={Colors.textSub} />
-                      </TouchableOpacity>
-                      {canReply ? (
-                        <TouchableOpacity
-                          style={styles.commentIconActionBtn}
-                          onPress={() =>
-                            setComposerReplyTo({
-                              id: c.id,
-                              label: getUserSafe(c.userId).displayName,
-                              preview: c.text?.trim() || (c.photos.length ? 'Photo' : '(no text)'),
-                            })
-                          }
-                          accessibilityLabel="Reply"
-                          activeOpacity={0.75}
-                        >
-                          <Ionicons name="return-up-forward-outline" size={15} color={Colors.textSub} />
-                          <Text style={styles.commentIconActionText}>Reply</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                  </View>
-                  </View>
-                  </Animated.View>
-                </View>
-              )}
-            </View>
-            );
-          })}
-          </CommentsSection>
+            onReactionChipLongPress={openReactionDetailModalForum}
+            onOpenReactionQuickPicker={openReactionQuickPickerForum}
+            onBeginEdit={beginEditEventComment}
+            confirmDeleteComment={confirmDeleteEventComment}
+            containerStyle={styles.forumPostCommentsSection}
+            reactionButtonRefs={reactionButtonRefs}
+            renderAvatar={(userId, displayName) => (
+              <UserAvatar
+                seed={displayName}
+                backgroundColor={[users[userId]?.avatarSeed ?? '']}
+                thumbnail={users[userId]?.thumbnail}
+                size={34}
+              />
+            )}
+            renderCommentBody={(tc) => {
+              const c = comments.find((x) => x.id === tc.id);
+              if (!c) return null;
+              const commentTs =
+                typeof c.createdAt === 'string' ? new Date(c.createdAt) : c.createdAt;
+              return (
+                <>
+                  {c.photos.length > 0 ? (
+                    <CommentPhotoGallery
+                      photos={c.photos}
+                      urlMap={resolvedImageMap}
+                      onPhotoPress={(_url, photoIndex) =>
+                        setLightbox({
+                          urls: c.photos,
+                          index: photoIndex,
+                          name: getUserSafe(c.userId).displayName,
+                          ts: commentTs,
+                        })
+                      }
+                    />
+                  ) : null}
+                  {!!(c.text || '').trim() ? (
+                    <CommentMentionText
+                      text={c.text}
+                      style={[
+                        styles.commentText,
+                        (c.photos.length > 0 || c.replyTo) && { marginTop: 8 },
+                      ]}
+                    />
+                  ) : null}
+                </>
+              );
+            }}
+          />
         </View>
 
         <View style={{ height: 100 }} />
       </GestureScrollView>
 
-      <View
-        style={styles.inputBar}
-        onLayout={(e) => setInputBarHeight(e.nativeEvent.layout.height)}
-      >
-        {composerReplyTo ? (
-          <View style={styles.composerReplyBanner}>
-            <Ionicons name="arrow-undo-outline" size={18} color={Colors.accent} />
-            <Pressable
-              onPress={() => jumpToCommentWithRestore(composerReplyTo.id)}
-              style={({ pressed }) => [
-                styles.composerReplyBannerTap,
-                pressed && { opacity: 0.88 },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Scroll to comment you are replying to"
-            >
-              <Text style={styles.composerReplyBannerLabel} numberOfLines={1}>
-                Replying to {composerReplyTo.label}
-              </Text>
-              <Text style={styles.composerReplyBannerPreview} numberOfLines={2}>
-                {composerReplyTo.preview}
-              </Text>
-            </Pressable>
-            <TouchableOpacity
-              onPress={() => {
-                setComposerReplyTo(null);
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel="Cancel reply"
-            >
-              <Ionicons name="close-circle" size={22} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        {composerPendingPhotos.length > 0 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ marginBottom: 8 }}
-            contentContainerStyle={{ gap: 6 }}
-          >
-            {composerPendingPhotos.map((p, pi) => (
-              <View key={p.id} style={{ position: 'relative' }}>
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() =>
-                    setPendingPreviewLightbox({
-                      urls: composerPendingPhotos.map((x) => x.uri),
-                      index: pi,
-                    })
-                  }
-                  style={styles.pendingPhotoHit}
-                >
-                  <ResolvableImage storedUrl={p.uri} style={styles.pendingPhoto} resizeMode="cover" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => removePendingPhoto('composer', p)}
-                  style={styles.pendingPhotoRemove}
-                >
-                  <Ionicons name="close" size={11} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </ScrollView>
-        )}
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-          <AddImageButton
-            iconOnly
-            triggerIconName="camera-outline"
-            label="Add photo"
-            onTakePhoto={() => takeCommentPhoto()}
-            onChooseFromLibrary={() => chooseCommentPhotoFromLibrary()}
-            onInsertLink={async (url) => {
-              insertCommentPhotoByLink(url);
-            }}
-          />
-          <CommentMentionInput
-            value={composerInput}
-            onChangeText={(t) => setComposerInput(absorbImageUrlsFromCommentText('composer', t))}
-            members={mentionMembersForInput}
-            currentUserId={currentUserId}
-            placeholder={isPast ? 'Add a memory or photo… (@ to mention)' : 'Add a comment… (@ to mention)'}
-            placeholderTextColor={Colors.textMuted}
-            style={[
-              styles.commentInputField,
-              styles.commentInput,
-              styles.commentComposerInput,
-              { height: composerFieldHeight },
-            ]}
-            onSubmitEditing={postComment}
-            multiline
-            scrollEnabled={composerFieldHeight >= COMPOSER_INPUT_MAX_H - 2}
-            onContentSizeChange={onComposerInputContentSizeChange}
-            textAlignVertical="top"
-            {...(Platform.OS === 'web'
-              ? ({ rows: 1 } as { rows: number })
-              : { numberOfLines: 1 })}
-          />
-          <TouchableOpacity
-            onPress={postComment}
-            disabled={commentPostBusy || createCommentMutation.isPending}
-            style={[
-              styles.postBtn,
-              (!(composerInput.trim() || composerPendingPhotos.length) ||
-                commentPostBusy ||
-                createCommentMutation.isPending) &&
-                styles.postBtnDisabled,
-            ]}
-          >
-            <Text style={styles.postBtnText}>Post</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <ImageLightboxModal
-        visible={pendingPreviewLightbox !== null}
-        urls={pendingPreviewLightbox?.urls ?? []}
-        index={pendingPreviewLightbox?.index ?? 0}
-        onChangeIndex={(nextIndex) =>
-          setPendingPreviewLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
-        }
-        onClose={() => setPendingPreviewLightbox(null)}
-        showCounter
-      />
-
-      <Modal
-        visible={reactionDetailSheetVisible}
-        transparent
-        animationType="slide"
-        statusBarTranslucent
-        onRequestClose={closeReactionDetailSheet}
-      >
-        {reactionDetailModal ? (
-          <View style={styles.reactionSheetRoot}>
-            <Pressable
-              style={styles.reactionSheetBackdrop}
-              onPress={closeReactionDetailSheet}
-              accessibilityRole="button"
-              accessibilityLabel="Dismiss"
-            />
-            <View
-              style={[
-                styles.reactionSheetPanel,
-                {
-                  maxHeight: Dimensions.get('window').height * 0.74,
-                  paddingBottom: Math.max(insets.bottom, 14),
-                },
-              ]}
-            >
-              <View style={styles.reactionSheetGrabber} />
-              <View style={styles.reactionSheetTitleRow}>
-                {(() => {
-                  const n = reactionDetailModal.userIds.length;
-                  const sc = reactionEmojiShortcode(reactionDetailModal.emoji);
-                  const head = `${n} ${n === 1 ? 'person' : 'people'} reacted with `;
-                  return (
-                    <>
-                      <Text style={styles.reactionSheetTitleText} numberOfLines={3}>
-                        {head}
-                      </Text>
-                      <ReactionEmojiGlyph
-                        emoji={reactionDetailModal.emoji}
-                        size={20}
-                        containerStyle={styles.reactionSheetTitleEmoji}
-                      />
-                      {sc ? (
-                        <Text style={styles.reactionSheetTitleText} numberOfLines={1}>
-                          {` ${sc}`}
-                        </Text>
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </View>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                style={styles.reactionSheetList}
-                contentContainerStyle={styles.reactionSheetListContent}
-                showsVerticalScrollIndicator={false}
-              >
-                {reactionDetailModal.userIds.map((uid, ri) => {
-                  const u = getUserSafe(uid);
-                  return (
-                    <View
-                      key={uid}
-                      style={[styles.reactionSheetRow, ri === 0 && styles.reactionSheetRowFirst]}
-                    >
-                      <UserAvatar
-                        seed={u.displayName || u.name}
-                        backgroundColor={[u.avatarSeed]}
-                        thumbnail={u.thumbnail}
-                        size={42}
-                      />
-                      <Text style={styles.reactionSheetName} numberOfLines={1}>
-                        {u.displayName}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.reactionSheetRoot} />
-        )}
-      </Modal>
-
-      {commentActionMenu && commentMenuTarget ? (
+      {reactionQuickPickerTarget && currentUserId ? (
         <Modal
           visible
           transparent
           animationType="fade"
           presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
-          onRequestClose={dismissCommentActionMenu}
+          onRequestClose={() => {
+            setReactionQuickPickerTarget(null);
+            setReactionQuickPickerAnchor(null);
+          }}
           statusBarTranslucent
         >
-          <View style={styles.commentActionModalRoot}>
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: Colors.overlay }]} />
+          <View style={styles.commentReactionPickerRoot}>
             <Pressable
               style={StyleSheet.absoluteFill}
-              onPress={dismissCommentActionMenu}
+              onPress={() => {
+                setReactionQuickPickerTarget(null);
+                setReactionQuickPickerAnchor(null);
+              }}
               accessibilityRole="button"
-              accessibilityLabel="Dismiss"
+              accessibilityLabel="Close quick reactions"
             />
-            <View
-              pointerEvents="box-none"
-              style={[
-                StyleSheet.absoluteFill,
-                styles.commentActionModalCenter,
-                { paddingTop: Math.max(insets.top, 12), paddingBottom: Math.max(insets.bottom, 16) },
-              ]}
-            >
-              <View style={styles.commentActionSheet} pointerEvents="auto">
-                {(() => {
-                  const mc = commentMenuTarget;
-                  const menuRemoved = mc.text === COMMENT_DELETED_BY_ADMIN_MSG;
-                  const menuCanReply = canCollaborateActivities && !menuRemoved;
-                  /** Writer, group admin, or super admin — others only get reply + reactions in this menu. */
-                  const menuCanSeeEditDeleteCopy =
-                    !!currentUserId &&
-                    (mc.userId === currentUserId || canModerateComments);
-                  const menuCanEdit =
-                    menuCanSeeEditDeleteCopy &&
-                    mc.userId === currentUserId &&
-                    !menuRemoved &&
-                    (!!((mc.text || '').trim()) || mc.photos.length > 0);
-                  const menuCanDelete = menuCanSeeEditDeleteCopy;
-                  const menuTs =
-                    typeof mc.createdAt === 'string' ? new Date(mc.createdAt) : mc.createdAt;
-                  const previewText = (mc.text || '').trim();
-                  const isMinePreview = mc.userId === currentUserId;
-
-                  type MenuRowSpec = {
-                    key: string;
-                    label: string;
-                    icon: ComponentProps<typeof Ionicons>['name'];
-                    danger?: boolean;
-                    onPress: () => void;
-                  };
-                  const menuRows: MenuRowSpec[] = [];
-                  if (menuCanEdit) {
-                    menuRows.push({
-                      key: 'edit',
-                      label: 'Edit',
-                      icon: 'pencil-outline',
-                      onPress: () => {
-                        dismissCommentActionMenu();
-                        beginEditComment(mc.id, mc.text, mc.photos);
-                      },
-                    });
-                  }
-                  if (menuCanReply) {
-                    menuRows.push({
-                      key: 'reply',
-                      label: 'Reply in thread',
-                      icon: 'chatbubbles-outline',
-                      onPress: () => {
-                        const line =
-                          (mc.text || '').trim().split('\n')[0]?.slice(0, 100) ?? '';
-                        dismissCommentActionMenu();
-                        setComposerReplyTo({
-                          id: mc.id,
-                          label: getUserSafe(mc.userId).displayName,
-                          preview: line || (mc.photos.length ? 'Photo' : 'Message'),
-                        });
-                      },
-                    });
-                  }
-                  if (previewText && menuCanSeeEditDeleteCopy) {
-                    menuRows.push({
-                      key: 'copy',
-                      label: 'Copy text',
-                      icon: 'copy-outline',
-                      onPress: async () => {
-                        await Clipboard.setStringAsync(previewText);
-                        dismissCommentActionMenu();
-                        if (Platform.OS !== 'web') {
-                          Alert.alert('Copied', 'Comment text copied to clipboard.');
-                        }
-                      },
-                    });
-                  }
-                  if (menuCanDelete) {
-                    menuRows.push({
-                      key: 'delete',
-                      label: 'Delete',
-                      icon: 'trash-outline',
-                      danger: true,
-                      onPress: () => {
-                        dismissCommentActionMenu();
-                        handleDeleteComment(mc.id);
-                      },
-                    });
-                  }
-
-                  return (
-                    <>
-                      {currentUserId && menuCanReply ? (
-                        <EmojiBar
-                          style={styles.commentActionQuickReactionBar}
-                          quickReactions={commentQuickReactions}
-                          activeEmojis={mc.viewerReactionEmojis || []}
-                          onPressReaction={(emoji) => void applyCommentReactionAndDismiss(mc.id, emoji)}
-                          onPressViewAll={() => {
-                            setCommentReactionFullPickerFor(mc.id);
-                            closeCommentActionSheet();
-                          }}
-                          disabled={commentReactionMutation.isPending}
-                        />
-                      ) : null}
-
-                      <View
-                        style={[
-                          styles.commentActionPreviewAlign,
-                          isMinePreview && styles.commentActionPreviewAlignMine,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.commentActionPreviewBubble,
-                            isMinePreview && styles.commentActionPreviewBubbleMine,
-                          ]}
-                        >
-                          <Text style={styles.commentActionPreviewMetaLine} numberOfLines={1}>
-                            <Text style={styles.commentActionPreviewAuthor}>
-                              {getUserSafe(mc.userId).displayName}
-                            </Text>
-                            <Text style={styles.commentActionPreviewMetaMuted}>
-                              {' · '}
-                              {timeAgo(menuTs)}
-                            </Text>
-                          </Text>
-                          {previewText ? (
-                            <Text style={styles.commentActionPreviewBody} numberOfLines={8}>
-                              {previewText}
-                            </Text>
-                          ) : mc.photos.length > 0 ? (
-                            <View style={styles.commentActionPreviewPhotoRow}>
-                              <ReactionEmojiGlyph emoji="📷" size={18} />
-                              <Text style={styles.commentActionPreviewBody}> Photo</Text>
-                            </View>
-                          ) : (
-                            <Text style={[styles.commentActionPreviewBody, { opacity: 0.7 }]}>
-                              (no text)
-                            </Text>
-                          )}
-                        </View>
-                      </View>
-
-                      <View style={styles.commentActionMenuCard}>
-                        {menuRows.map((row, i) => (
-                          <TouchableOpacity
-                            key={row.key}
-                            style={[
-                              styles.commentActionMenuRow,
-                              i === 0 && styles.commentActionMenuRowFirst,
-                              i === menuRows.length - 1 && styles.commentActionMenuRowLast,
-                            ]}
-                            onPress={row.onPress}
-                            activeOpacity={0.65}
-                          >
-                            <Text
-                              style={
-                                row.danger
-                                  ? styles.commentActionMenuLabelDanger
-                                  : styles.commentActionMenuLabel
-                              }
-                            >
-                              {row.label}
-                            </Text>
-                            <Ionicons
-                              name={row.icon}
-                              size={22}
-                              color={row.danger ? Colors.todayRed : Colors.textSub}
-                            />
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </>
-                  );
-                })()}
+            <View style={styles.commentReactionQuickPickerRoot} pointerEvents="box-none">
+              <View style={[styles.commentReactionQuickPickerCard, quickPickerStyleForum]} pointerEvents="auto">
+                <EmojiBar
+                  quickReactions={commentQuickReactions}
+                  onPressReaction={applyReactionAndDismissForum}
+                  onPressViewAll={() => {
+                    setReactionPickerTarget(reactionQuickPickerTarget);
+                    setReactionQuickPickerTarget(null);
+                    setReactionQuickPickerAnchor(null);
+                  }}
+                  disabled={commentReactionMutation.isPending}
+                  viewAllAccessibilityLabel="View all emojis"
+                />
               </View>
             </View>
           </View>
         </Modal>
       ) : null}
 
-      {commentReactionFullPickerFor && currentUserId ? (
+      {reactionPickerTarget && currentUserId ? (
         <Modal
           visible
           transparent
           animationType="fade"
           presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
-          onRequestClose={() => setCommentReactionFullPickerFor(null)}
+          onRequestClose={() => setReactionPickerTarget(null)}
           statusBarTranslucent
         >
           <View style={styles.commentReactionPickerRoot}>
             <Pressable
               style={[StyleSheet.absoluteFill, { backgroundColor: Colors.overlay }]}
-              onPress={() => setCommentReactionFullPickerFor(null)}
+              onPress={() => setReactionPickerTarget(null)}
               accessibilityRole="button"
               accessibilityLabel="Close emoji picker"
             />
@@ -3753,9 +2784,7 @@ export default function EventDetailScreen() {
                   {COMMENT_REACTION_EMOJIS.map((emoji, emojiIdx) => (
                     <TouchableOpacity
                       key={`${emoji}-${emojiIdx}`}
-                      onPress={() =>
-                        void applyCommentReactionAndDismiss(commentReactionFullPickerFor, emoji)
-                      }
+                      onPress={() => applyReactionAndDismissForum(emoji)}
                       disabled={commentReactionMutation.isPending}
                       style={styles.commentActionEmojiHit}
                       accessibilityLabel={`React with ${emoji}`}
@@ -3763,6 +2792,57 @@ export default function EventDetailScreen() {
                       <ReactionEmojiGlyph emoji={emoji} size={22} />
                     </TouchableOpacity>
                   ))}
+                </ScrollView>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {reactionDetailModalForum ? (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
+          onRequestClose={() => setReactionDetailModalForum(null)}
+          statusBarTranslucent
+        >
+          <View style={styles.commentReactionPickerRoot}>
+            <Pressable
+              style={[StyleSheet.absoluteFill, { backgroundColor: Colors.overlay }]}
+              onPress={() => setReactionDetailModalForum(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Close reaction details"
+            />
+            <View style={styles.commentReactionPickerCenter} pointerEvents="box-none">
+              <View style={styles.forumReactionDetailCard} pointerEvents="auto">
+                <Text style={styles.forumReactionDetailTitle}>
+                  {reactionDetailModalForum.emoji} Reactions ({reactionDetailModalForum.userIds.length})
+                </Text>
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.forumReactionDetailScroll}
+                >
+                  {reactionDetailModalForum.userIds.map((uid) => {
+                    const user = users[uid];
+                    return (
+                      <View key={`${reactionDetailModalForum.emoji}-${uid}`} style={styles.forumReactionDetailRow}>
+                        <UserAvatar
+                          seed={getUserSafe(uid).displayName}
+                          backgroundColor={[user?.avatarSeed ?? '']}
+                          thumbnail={user?.thumbnail}
+                          size={28}
+                        />
+                        <Text style={styles.forumReactionDetailName}>
+                          {uid === currentUserId
+                            ? `${getUserSafe(uid).displayName} (you)`
+                            : getUserSafe(uid).displayName}
+                        </Text>
+                      </View>
+                    );
+                  })}
                 </ScrollView>
               </View>
             </View>
@@ -3802,49 +2882,6 @@ export default function EventDetailScreen() {
         }
         urlMap={Object.fromEntries(resolvedImageMap)}
       />
-
-      <Modal
-        visible={showCommentPhotoModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setShowCommentPhotoModal(false);
-          setCommentPhotoUrl('');
-        }}
-      >
-        <View style={styles.deleteOverlay}>
-          <View style={styles.deleteBox}>
-            <Text style={styles.deleteTitle}>Image from URL</Text>
-            <Text style={styles.deleteMessage}>
-              Paste a direct link to an image (https). Long-press the camera button to open this again.
-            </Text>
-            <TextInput
-              value={commentPhotoUrl}
-              onChangeText={setCommentPhotoUrl}
-              placeholder="https://…"
-              placeholderTextColor={Colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              style={[styles.commentInputField, { marginTop: 12 }]}
-            />
-            <View style={styles.deleteActions}>
-              <TouchableOpacity
-                onPress={() => {
-                  setShowCommentPhotoModal(false);
-                  setCommentPhotoUrl('');
-                }}
-                style={styles.deleteCancelBtn}
-              >
-                <Text style={styles.deleteCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleAddCommentPhoto} style={styles.deleteConfirmBtn}>
-                <Text style={styles.deleteConfirmText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {Platform.OS !== 'web' && showDetailStartDatePicker ? (
         <DateTimePicker
@@ -5158,6 +4195,62 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingBottom: 8,
   },
+  forumPostCommentsSection: {
+    marginTop: 8,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    overflow: 'hidden',
+  },
+  commentReactionQuickPickerRoot: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  commentReactionQuickPickerCard: {
+    position: 'absolute',
+    width: 316,
+    borderRadius: Radius['2xl'],
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    ...Shadows.md,
+  },
+  forumReactionDetailCard: {
+    width: '100%',
+    maxWidth: 340,
+    maxHeight: Dimensions.get('window').height * 0.62,
+    borderRadius: Radius.xl,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingTop: 14,
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    ...Shadows.md,
+  },
+  forumReactionDetailTitle: {
+    fontSize: 15,
+    fontFamily: Fonts.semiBold,
+    color: Colors.text,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  forumReactionDetailScroll: {
+    maxHeight: Dimensions.get('window').height * 0.46,
+  },
+  forumReactionDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  forumReactionDetailName: {
+    fontSize: 14,
+    fontFamily: Fonts.medium,
+    color: Colors.text,
+  },
   commentActionPreviewAlign: {
     alignSelf: 'stretch',
     marginBottom: 10,
@@ -5357,7 +4450,6 @@ const styles = StyleSheet.create({
   commentName:      { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.text },
   commentTime:      { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular },
   commentText:      { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, lineHeight: 20 },
-  inputBar:         { backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border, padding: 10, paddingHorizontal: 16 },
   photoBtn:         { width: 36, height: 36, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   /** Shared field chrome; use with `flex:1` (composer) or sizing on multiline inline edit. */
   commentInputField: {
@@ -5400,7 +4492,6 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   /** Width only; height comes from composerFieldHeight + onContentSizeChange. */
-  commentComposerInput: { flex: 1, minWidth: 120, maxHeight: COMPOSER_INPUT_MAX_H },
   commentInlineEditToolbar: {
     flexDirection: 'row',
     alignItems: 'center',

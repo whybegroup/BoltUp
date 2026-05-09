@@ -297,6 +297,11 @@ export interface CommentUpdateInput {
   text?: string;
   /** When set, replaces the full photo set for this comment */
   photos?: string[];
+  /**
+   * When set, changes which comment this row replies to (same event).
+   * Pass `null` for a top-level comment. When omitted, reply target is unchanged.
+   */
+  replyToCommentId?: string | null;
 }
 
 /** Input for deleting a comment */

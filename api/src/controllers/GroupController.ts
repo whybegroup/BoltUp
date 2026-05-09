@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Path,
+  Patch,
   Post,
   Put,
   Query,
@@ -20,8 +21,10 @@ import {
   MembershipRequestAction,
   GroupPost,
   GroupPostCreateInput,
+  GroupPostUpdateInput,
   GroupPostComment,
   GroupPostCommentCreateInput,
+  GroupPostCommentUpdateInput,
   GroupPostReactionInput,
   NotifPrefs,
   NotifPrefsPartial,
@@ -581,6 +584,31 @@ export class GroupController extends Controller {
     return this.groupService.createGroupPost(id, body);
   }
 
+  /** Update your own group post. */
+  @Patch('posts/{postId}')
+  public async updateGroupPost(
+    @Path() postId: string,
+    @Body() body: GroupPostUpdateInput
+  ): Promise<GroupPost> {
+    if (!body?.userId || !body?.body?.trim()) {
+      this.setStatus(400);
+      throw new Error('userId and body are required');
+    }
+    return this.groupService.updateGroupPost(postId, body);
+  }
+
+  /** Delete your own group post. */
+  @Delete('posts/{postId}')
+  @SuccessResponse('204', 'No Content')
+  public async deleteGroupPost(@Path() postId: string, @Query() userId: string): Promise<void> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    await this.groupService.deleteGroupPost(postId, userId);
+    this.setStatus(204);
+  }
+
   /** Toggle a reaction on a group post (same emoji removes it). */
   @Post('posts/{postId}/reactions')
   public async toggleGroupPostReaction(
@@ -607,6 +635,34 @@ export class GroupController extends Controller {
     }
     this.setStatus(201);
     return this.groupService.createGroupPostComment(postId, body);
+  }
+
+  /** Update your own group post comment. */
+  @Patch('post-comments/{commentId}')
+  public async updateGroupPostComment(
+    @Path() commentId: string,
+    @Body() body: GroupPostCommentUpdateInput
+  ): Promise<GroupPostComment> {
+    if (!body?.userId || !body?.body?.trim()) {
+      this.setStatus(400);
+      throw new Error('userId and body are required');
+    }
+    return this.groupService.updateGroupPostComment(commentId, body);
+  }
+
+  /** Delete your own group post comment. */
+  @Delete('post-comments/{commentId}')
+  @SuccessResponse('204', 'No Content')
+  public async deleteGroupPostComment(
+    @Path() commentId: string,
+    @Query() userId: string
+  ): Promise<void> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    await this.groupService.deleteGroupPostComment(commentId, userId);
+    this.setStatus(204);
   }
 
   /** Toggle a reaction on a group post comment (same emoji removes it). */
