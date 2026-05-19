@@ -69,12 +69,8 @@ function serializeCreateFormBaseline(
     allowMaybe: boolean;
     enableWaitlist: boolean;
     coverPhotoDrafts: CoverPhotoDraft[];
-    activityIdeasEnabled: boolean;
-    activityVotesAnonymous: boolean;
     recurrence: RecurrenceFormState;
-  },
-  activityOptionDrafts: { id: string; label: string }[],
-  newActivityLabel: string
+  }
 ): string {
   const coverKey = f.coverPhotoDrafts
     .map((d) => (d.kind === 'remote' ? `r:${d.url}` : `p:${d.previewUri}`))
@@ -94,11 +90,7 @@ function serializeCreateFormBaseline(
     allowMaybe: f.allowMaybe,
     enableWaitlist: f.enableWaitlist,
     coverKey,
-    activityIdeasEnabled: f.activityIdeasEnabled,
-    activityVotesAnonymous: f.activityVotesAnonymous,
     recurrence: f.recurrence,
-    activityOptionDrafts,
-    newActivityLabel,
   });
 }
 
@@ -155,7 +147,7 @@ function webEventTimeInputStyle(errored: boolean): Record<string, string | numbe
     padding: '6px 10px',
     borderRadius: 8,
     border: errored ? '1.5px solid #EF4444' : '1.5px solid #E5E5E5',
-    backgroundColor: '#FAFAFA',
+    backgroundColor: '#FFFFFF',
     fontSize: 13,
     color: '#1A1A1A',
     fontFamily: 'DMSans_400Regular',
@@ -200,8 +192,6 @@ export default function CreateEventScreen() {
       allowMaybe: false,
       enableWaitlist: false,
       coverPhotoDrafts: [] as CoverPhotoDraft[],
-      activityIdeasEnabled: false,
-      activityVotesAnonymous: false,
       recurrence: defaultRecurrenceFormState() as RecurrenceFormState,
     };
   });
@@ -217,8 +207,6 @@ export default function CreateEventScreen() {
     (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin',
   );
 
-  const [activityOptionDrafts, setActivityOptionDrafts] = useState<{ id: string; label: string }[]>([]);
-  const [newActivityLabel, setNewActivityLabel] = useState('');
   const [createFormBaselineSerialized, setCreateFormBaselineSerialized] = useState<string | null>(null);
 
   useEffect(() => {
@@ -329,10 +317,9 @@ export default function CreateEventScreen() {
   const createFormDirty = useMemo(() => {
     if (createFormBaselineSerialized == null) return false;
     return (
-      serializeCreateFormBaseline(form, activityOptionDrafts, newActivityLabel) !==
-      createFormBaselineSerialized
+      serializeCreateFormBaseline(form) !== createFormBaselineSerialized
     );
-  }, [createFormBaselineSerialized, form, activityOptionDrafts, newActivityLabel]);
+  }, [createFormBaselineSerialized, form]);
 
   const timeFieldsComplete =
     !!form.startDate?.trim() &&
@@ -401,15 +388,6 @@ export default function CreateEventScreen() {
         maxAttendees: form.maxAttendees.trim() ? parseInt(form.maxAttendees, 10) : undefined,
         enableWaitlist: form.maxAttendees.trim() ? form.enableWaitlist : undefined,
         allowMaybe: form.allowMaybe,
-        activityIdeasEnabled: form.activityIdeasEnabled,
-        ...(form.activityIdeasEnabled
-          ? {
-              activityVotesAnonymous: form.activityVotesAnonymous,
-              activityOptionLabels: activityOptionDrafts
-                .map((o) => o.label.trim())
-                .filter((s) => s.length > 0),
-            }
-          : {}),
         ...(recurrenceRule
           ? { recurrenceRule, viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }
           : {}),
@@ -420,17 +398,6 @@ export default function CreateEventScreen() {
     } catch {
       Alert.alert('Error', 'Failed to create event');
     }
-  };
-
-  const addActivityDraft = () => {
-    const label = newActivityLabel.trim();
-    if (!label) return;
-    setActivityOptionDrafts((prev) => [...prev, { id: uid(), label }]);
-    setNewActivityLabel('');
-  };
-
-  const removeActivityDraft = (id: string) => {
-    setActivityOptionDrafts((prev) => prev.filter((o) => o.id !== id));
   };
 
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -748,16 +715,9 @@ export default function CreateEventScreen() {
     if (createFormBaselineSerialized != null) return;
     if (!calendarPresetHydrated || !groupSelectHydrated) return;
     setCreateFormBaselineSerialized(
-      serializeCreateFormBaseline(form, activityOptionDrafts, newActivityLabel)
+      serializeCreateFormBaseline(form)
     );
-  }, [
-    createFormBaselineSerialized,
-    calendarPresetHydrated,
-    groupSelectHydrated,
-    form,
-    activityOptionDrafts,
-    newActivityLabel,
-  ]);
+  }, [createFormBaselineSerialized, calendarPresetHydrated, groupSelectHydrated, form]);
 
   const dismiss = useCallback(() => {
     if (router.canGoBack()) {
@@ -1124,80 +1084,6 @@ export default function CreateEventScreen() {
             {form.maxAttendees.trim() ? (
               <Toggle value={form.enableWaitlist} onChange={v => set('enableWaitlist', v)} label="Enable waitlist" />
             ) : null}
-            <Toggle
-              value={form.activityIdeasEnabled}
-              onChange={(v) => set('activityIdeasEnabled', v)}
-              label="Enable activity ideas"
-              style={form.activityIdeasEnabled ? { borderBottomWidth: 0 } : undefined}
-            />
-            {form.activityIdeasEnabled ? (
-              <View style={{ paddingHorizontal: 0, paddingBottom: 14, paddingTop: 4 }}>
-                <Text
-                  style={{
-                    fontSize: 13,
-                    color: Colors.textMuted,
-                    marginBottom: 10,
-                    fontFamily: Fonts.regular,
-                    paddingHorizontal: 0,
-                  }}
-                >
-                  Add options now — same as when editing an event. Members can vote after the event is created.
-                </Text>
-                {activityOptionDrafts.map((opt) => (
-                  <View
-                    key={opt.id}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      paddingVertical: 10,
-                      paddingHorizontal: 12,
-                      borderRadius: Radius.md,
-                      borderWidth: 1,
-                      borderColor: Colors.border,
-                      backgroundColor: Colors.bg,
-                      marginBottom: 8,
-                      gap: 8,
-                    }}
-                  >
-                    <Text
-                      style={{ flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text }}
-                      numberOfLines={3}
-                    >
-                      {opt.label}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => removeActivityDraft(opt.id)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="trash-outline" size={18} color={Colors.textMuted} />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, alignItems: 'center' }}>
-                  <TextInput
-                    value={newActivityLabel}
-                    onChangeText={setNewActivityLabel}
-                    placeholder="Add an activity idea"
-                    placeholderTextColor={Colors.textMuted}
-                    style={[styles.activityComposerInput, { flex: 1 }]}
-                    onSubmitEditing={addActivityDraft}
-                  />
-                  <TouchableOpacity
-                    onPress={addActivityDraft}
-                    style={[styles.activityAddBtn, !newActivityLabel.trim() && styles.activityAddBtnDisabled]}
-                    disabled={!newActivityLabel.trim()}
-                  >
-                    <Text style={styles.activityAddBtnText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
-                <Toggle
-                  value={form.activityVotesAnonymous}
-                  onChange={(v) => set('activityVotesAnonymous', v)}
-                  label="Anonymous votes (hide who voted)"
-                  style={{ paddingHorizontal: 0, paddingTop: 12, borderBottomWidth: 0 }}
-                />
-              </View>
-            ) : null}
           </View>
         </Field>
 
@@ -1365,7 +1251,18 @@ const styles = StyleSheet.create({
   headerBtnText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
   groupChip:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
   chipText:      { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
-  input:         { padding: 10, paddingHorizontal: 14, borderRadius: Radius.lg, borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
+  input:         {
+    padding: 10,
+    paddingHorizontal: 14,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    fontSize: 14,
+    color: Colors.text,
+    fontFamily: Fonts.regular,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
+  },
   inputError:    { borderColor: '#EF4444' },
   errorText:     { fontSize: 12, color: '#EF4444', fontFamily: Fonts.regular, marginBottom: 4 },
   datePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 8 },
@@ -1410,27 +1307,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   settingsCard:  { backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 16 },
-  activityComposerInput: {
-    padding: 9,
+  descBox:       { backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1.5, borderColor: Colors.border, overflow: 'hidden' },
+  descInput:     {
+    padding: 12,
     paddingHorizontal: 14,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bg,
     fontSize: 14,
     color: Colors.text,
     fontFamily: Fonts.regular,
+    minHeight: 100,
+    textAlignVertical: 'top',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
   },
-  activityAddBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.accent,
-  },
-  activityAddBtnDisabled: { backgroundColor: Colors.border },
-  activityAddBtnText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
-  descBox:       { backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1.5, borderColor: Colors.border, overflow: 'hidden' },
-  descInput:     { padding: 12, paddingHorizontal: 14, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, minHeight: 100, textAlignVertical: 'top' },
   descToolbar:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', padding: 8, paddingHorizontal: 12, borderTopWidth: 1, borderTopColor: Colors.border },
   photosSection: { marginTop: 0, marginBottom: 18 },
   photosCard:    { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
@@ -1503,7 +1392,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     borderWidth: 1.5,
     borderColor: Colors.border,
-    backgroundColor: Colors.bg,
+    backgroundColor: Colors.surface,
     justifyContent: 'center',
     minHeight: 40,
   },

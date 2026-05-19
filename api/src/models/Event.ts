@@ -37,13 +37,6 @@ export interface Event {
    * Null means no RSVP deadline.
    */
   rsvpDeadline?: Date | string | null;
-  /** When true, clients show the activity ideas (options + voting) UI. */
-  activityIdeasEnabled: boolean;
-  /**
-   * When true, activity vote counts are public but voter identities are hidden.
-   * When false, each option lists who voted (same group visibility as the event).
-   */
-  activityVotesAnonymous: boolean;
   /**
    * RFC 5545 RRULE (same string on every row in a series). Null on one-off events.
    * Used when creating/editing; not shown on the event detail screen in the app.
@@ -55,17 +48,6 @@ export interface Event {
   createdAt: Date;
   /** Timestamp when the event was last updated */
   updatedAt: Date;
-}
-
-/** Proposed activity for an event; members vote for one. */
-export interface EventActivityOption {
-  id: string;
-  label: string;
-  createdBy: string;
-  voteCount: number;
-  createdAt: Date;
-  /** Present when `activityVotesAnonymous` is false on the event; user ids who voted for this option. */
-  voterUserIds?: string[];
 }
 
 /** Alternate schedule proposed by a member; host may accept to update the event. */
@@ -89,10 +71,6 @@ export interface EventDetailed extends Event {
   rsvps: RSVP[];
   /** Array of comments on this event */
   comments: Comment[];
-  /** Activity choices; members add options and vote */
-  activityOptions: EventActivityOption[];
-  /** When the request included viewer `userId`: option ids this user voted for */
-  myActivityVoteOptionIds?: string[];
   /** Suggested time changes */
   timeSuggestions: EventTimeSuggestion[];
   /**
@@ -150,15 +128,6 @@ export interface EventInput {
   allowMaybe?: boolean;
   /** ISO instant; omit for no deadline on create. */
   rsvpDeadline?: string | null;
-  /** When true, members can suggest and vote on activity ideas on the event page. */
-  activityIdeasEnabled?: boolean;
-  /**
-   * When true with activity ideas, who voted is hidden (counts only).
-   * Default false: voters are visible on each option.
-   */
-  activityVotesAnonymous?: boolean;
-  /** Initial activity options (labels); creator is recorded as author */
-  activityOptionLabels?: string[];
   recurrenceRule?: string | null;
   /**
    * IANA zone (`Intl…resolvedOptions().timeZone`) so WEEKLY materialization matches the device calendar.
@@ -184,8 +153,6 @@ export interface EventUpdate {
   maxAttendees?: number | null;
   enableWaitlist?: boolean;
   allowMaybe?: boolean;
-  activityIdeasEnabled?: boolean;
-  activityVotesAnonymous?: boolean;
   /** ISO instant, or null to clear the deadline. Omit to leave unchanged. */
   rsvpDeadline?: string | null;
   updatedBy: string;
@@ -307,19 +274,6 @@ export interface CommentUpdateInput {
 /** Input for deleting a comment */
 export interface CommentDeleteInput {
   actorId: string;
-}
-
-/** Add an activity option to an event */
-export interface EventActivityOptionInput {
-  id: string;
-  userId: string;
-  label: string;
-}
-
-/** Cast or change vote for an activity option */
-export interface EventActivityVoteInput {
-  userId: string;
-  optionId: string;
 }
 
 /** Propose a new start/end time for the event */

@@ -60,6 +60,15 @@ import {
   takeAndUploadCoverPhoto,
   pickAndUploadFileFromDevice,
   uploadUrlToDownloadUrl,
+  type CoverPhotoDraft,
+  type PickedFileAsset,
+  coverPhotoDraftDisplayUri,
+  pickDeferredCoverPhotoNative,
+  pickDeferredCoverPhotoFromCamera,
+  pickFileFromDevice,
+  revokeCoverPhotoDraftPreview,
+  uploadCoverPhotoDrafts,
+  uploadPickedFileAsset,
 } from '../services/pickAndUploadImage';
 import {
   loadForumGroupDraft,
@@ -306,7 +315,12 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     Record<string, { w: number; h: number; bodyKey: string }>
   >({});
   const [draftComments, setDraftComments] = useState<Record<string, string>>({});
-  const [draftCommentPhotoUrlsByPost, setDraftCommentPhotoUrlsByPost] = useState<Record<string, string[]>>({});
+  const [draftCommentPhotoDraftsByPost, setDraftCommentPhotoDraftsByPost] = useState<
+    Record<string, CoverPhotoDraft[]>
+  >({});
+  const [draftCommentPendingFilesByPost, setDraftCommentPendingFilesByPost] = useState<
+    Record<string, Array<{ id: string; name: string; asset: PickedFileAsset }>>
+  >({});
   const [uploadingCommentPhotoPostId, setUploadingCommentPhotoPostId] = useState<string | null>(null);
   const [replyTargetByPost, setReplyTargetByPost] = useState<Record<string, string | null>>({});
   const [expandedCommentsByPost, setExpandedCommentsByPost] = useState<Record<string, boolean>>({});
@@ -1241,86 +1255,115 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
 
   const addComment = useCallback(
     async (postId: string) => {
-      if (!currentUserId) return;
-      const raw = draftComments[postId] ?? '';
-      const photoUrls = draftCommentPhotoUrlsByPost[postId] ?? [];
-      const merged = mergeCommentBodyForApi(raw, photoUrls).trim();
-      if (!merged) return;
-      await createCommentMutation.mutateAsync({
-        postId,
-        input: {
-          id: forumId('comment'),
-          userId: currentUserId,
-          body: merged,
-          parentCommentId: replyTargetByPost[postId] ?? undefined,
-        },
-      });
-      setDraftComments((prev) => ({ ...prev, [postId]: '' }));
-      setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [postId]: [] }));
-      setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
-    },
-    [createCommentMutation, currentUserId, draftCommentPhotoUrlsByPost, draftComments, replyTargetByPost]
-  );
-
-  const addCommentPhotoForPost = useCallback((postId: string, url: string) => {
-    setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [postId]: [...(prev[postId] ?? []), url] }));
-  }, []);
-
-  const uploadCommentPhotoForPost = useCallback(
-    async (postId: string) => {
       if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
+      const raw = draftComments[postId] ?? '';
+      const photoDrafts = draftCommentPhotoDraftsByPost[postId] ?? [];
+      const pendingFiles = draftCommentPendingFilesByPost[postId] ?? [];
+      const hasContent =
+        raw.trim().length > 0 || photoDrafts.length > 0 || pendingFiles.length > 0;
+      if (!hasContent) return;
       try {
         setUploadingCommentPhotoPostId(postId);
-        const publicUrl = await pickAndUploadCoverPhoto(currentUserId);
-        if (!publicUrl) return;
-        addCommentPhotoForPost(postId, publicUrl);
+        const photoUrls = await uploadCoverPhotoDrafts(currentUserId, photoDrafts);
+        let merged = mergeCommentBodyForApi(raw, photoUrls);
+        for (const f of pendingFiles) {
+          const publicUrl = await uploadPickedFileAsset(currentUserId, f.asset);
+          merged = appendMarkdownLink(merged, f.name, uploadUrlToDownloadUrl(publicUrl));
+        }
+        const body = merged.trim();
+        if (!body) return;
+        await createCommentMutation.mutateAsync({
+          postId,
+          input: {
+            id: forumId('comment'),
+            userId: currentUserId,
+            body,
+            parentCommentId: replyTargetByPost[postId] ?? undefined,
+          },
+        });
+        setDraftComments((prev) => ({ ...prev, [postId]: '' }));
+        setDraftCommentPhotoDraftsByPost((prev) => ({ ...prev, [postId]: [] }));
+        setDraftCommentPendingFilesByPost((prev) => ({ ...prev, [postId]: [] }));
+        setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+      } catch (e) {
+        Alert.alert('Comment', e instanceof Error ? e.message : 'Failed to post comment');
       } finally {
         setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
       }
     },
-    [addCommentPhotoForPost, currentUserId, uploadingCommentPhotoPostId]
+    [
+      createCommentMutation,
+      currentUserId,
+      draftCommentPendingFilesByPost,
+      draftCommentPhotoDraftsByPost,
+      draftComments,
+      replyTargetByPost,
+      uploadingCommentPhotoPostId,
+    ]
+  );
+
+  const addCommentPhotoDraftForPost = useCallback((postId: string, draft: CoverPhotoDraft) => {
+    setDraftCommentPhotoDraftsByPost((prev) => ({
+      ...prev,
+      [postId]: [...(prev[postId] ?? []), draft],
+    }));
+  }, []);
+
+  const removeCommentPhotoDraftAtPost = useCallback((postId: string, index: number) => {
+    setDraftCommentPhotoDraftsByPost((prev) => {
+      const list = prev[postId] ?? [];
+      const removed = list[index];
+      if (removed) revokeCoverPhotoDraftPreview(removed);
+      return { ...prev, [postId]: list.filter((_, i) => i !== index) };
+    });
+  }, []);
+
+  const pickCommentPhotoForPost = useCallback(
+    async (postId: string) => {
+      if (uploadingCommentPhotoPostId === postId) return;
+      const picked = await pickDeferredCoverPhotoNative();
+      if (!picked) return;
+      addCommentPhotoDraftForPost(postId, {
+        kind: 'pending',
+        previewUri: picked.previewUri,
+        pending: picked.pending,
+      });
+    },
+    [addCommentPhotoDraftForPost, uploadingCommentPhotoPostId]
   );
 
   const takeCommentPhotoForPost = useCallback(
     async (postId: string) => {
-      if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
-      try {
-        setUploadingCommentPhotoPostId(postId);
-        const publicUrl = await takeAndUploadCoverPhoto(currentUserId);
-        if (!publicUrl) return;
-        addCommentPhotoForPost(postId, publicUrl);
-      } catch (e) {
-        Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
-      } finally {
-        setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
-      }
+      if (uploadingCommentPhotoPostId === postId) return;
+      const picked = await pickDeferredCoverPhotoFromCamera();
+      if (!picked) return;
+      addCommentPhotoDraftForPost(postId, {
+        kind: 'pending',
+        previewUri: picked.previewUri,
+        pending: picked.pending,
+      });
     },
-    [addCommentPhotoForPost, currentUserId, uploadingCommentPhotoPostId]
+    [addCommentPhotoDraftForPost, uploadingCommentPhotoPostId]
   );
 
   const attachCommentFileForPost = useCallback(
     async (postId: string) => {
-      if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
+      if (uploadingCommentPhotoPostId === postId) return;
       try {
-        setUploadingCommentPhotoPostId(postId);
-        const uploaded = await pickAndUploadFileFromDevice(currentUserId);
-        if (!uploaded?.publicUrl) return;
-        setDraftComments((prev) => ({
+        const asset = await pickFileFromDevice();
+        setDraftCommentPendingFilesByPost((prev) => ({
           ...prev,
-          [postId]: appendMarkdownLink(
-            prev[postId] ?? '',
-            uploaded.fileName,
-            uploadUrlToDownloadUrl(uploaded.publicUrl)
-          ),
+          [postId]: [
+            ...(prev[postId] ?? []),
+            { id: forumId('comment-file'), name: asset.fileName, asset },
+          ],
         }));
       } catch (e) {
         if (e instanceof Error && e.message === 'cancelled') return;
-        Alert.alert('Upload', e instanceof Error ? e.message : 'Could not attach file');
-      } finally {
-        setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
+        Alert.alert('Attach file', e instanceof Error ? e.message : 'Could not attach file');
       }
     },
-    [currentUserId, uploadingCommentPhotoPostId]
+    [uploadingCommentPhotoPostId]
   );
 
   const beginEditComment = useCallback((postId: string, c: GroupPostComment) => {
@@ -1921,13 +1964,27 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                     onDraftTextChange={(v) =>
                       setDraftComments((prev) => ({ ...prev, [post.id]: v }))
                     }
-                    draftPhotoUrls={draftCommentPhotoUrlsByPost[post.id] ?? []}
-                    onDraftPhotoUrlsChange={(urls) =>
-                      setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [post.id]: urls }))
+                    draftPhotoUrls={(draftCommentPhotoDraftsByPost[post.id] ?? []).map(
+                      coverPhotoDraftDisplayUri
+                    )}
+                    onRemoveDraftPhotoAtIndex={(index) =>
+                      removeCommentPhotoDraftAtPost(post.id, index)
                     }
-                    onUploadDraftPhoto={() => uploadCommentPhotoForPost(post.id)}
+                    draftPendingFiles={(draftCommentPendingFilesByPost[post.id] ?? []).map((f) => ({
+                      id: f.id,
+                      name: f.name,
+                    }))}
+                    onRemoveDraftPendingFile={(fileId) =>
+                      setDraftCommentPendingFilesByPost((prev) => ({
+                        ...prev,
+                        [post.id]: (prev[post.id] ?? []).filter((f) => f.id !== fileId),
+                      }))
+                    }
+                    onUploadDraftPhoto={() => pickCommentPhotoForPost(post.id)}
                     onTakeDraftPhoto={() => takeCommentPhotoForPost(post.id)}
-                    onAddDraftPhotoByUrl={(url) => addCommentPhotoForPost(post.id, url)}
+                    onAddDraftPhotoByUrl={(url) =>
+                      addCommentPhotoDraftForPost(post.id, { kind: 'remote', url: url.trim() })
+                    }
                     draftPhotoBusy={uploadingCommentPhotoPostId === post.id}
                     onAttachDraftFile={() => attachCommentFileForPost(post.id)}
                     onOpenDraftPhoto={({ urls, index }) =>

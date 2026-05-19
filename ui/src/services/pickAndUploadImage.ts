@@ -266,6 +266,20 @@ export async function pickDeferredCoverPhotoNative(): Promise<{
   }
 }
 
+export async function pickDeferredCoverPhotoFromCamera(): Promise<{
+  previewUri: string;
+  pending: PendingAvatarFile;
+} | null> {
+  try {
+    const asset = await pickImageFromCamera();
+    return { previewUri: asset.uri, pending: { kind: 'native', asset } };
+  } catch (e) {
+    if (isCancelled(e)) return null;
+    Alert.alert('Photo', e instanceof Error ? e.message : 'Could not take photo');
+    return null;
+  }
+}
+
 export function createWebDeferredCoverPhoto(file: File): { previewUri: string; pending: PendingAvatarFile } {
   const objectUrl = URL.createObjectURL(file);
   return { previewUri: objectUrl, pending: { kind: 'web', file, objectUrl } };

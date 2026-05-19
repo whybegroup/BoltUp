@@ -219,12 +219,25 @@ interface SheetProps {
   visible: boolean;
   onClose: () => void;
   children: React.ReactNode;
-  /** Matches comment / reaction dark panels (`#2c2c2e`, dim backdrop). */
+  /** Matches comment / reaction dark panels (`#2c2c2e`). */
   variant?: 'light' | 'dark';
+  /** When false, backdrop stays transparent (popover-style). Default true. */
+  dimBackdrop?: boolean;
 }
-export function Sheet({ visible, onClose, children, variant = 'light' }: SheetProps) {
+export function Sheet({
+  visible,
+  onClose,
+  children,
+  variant = 'light',
+  dimBackdrop = true,
+}: SheetProps) {
   const insets = useSafeAreaInsets();
   const isDark = variant === 'dark';
+  const overlayStyle = !dimBackdrop
+    ? styles.sheetOverlayTransparent
+    : isDark
+      ? styles.sheetOverlayDark
+      : styles.sheetOverlay;
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
@@ -233,7 +246,7 @@ export function Sheet({ visible, onClose, children, variant = 'light' }: SheetPr
         keyboardVerticalOffset={0}
       >
         <TouchableOpacity
-          style={isDark ? styles.sheetOverlayDark : styles.sheetOverlay}
+          style={overlayStyle}
           onPress={onClose}
           activeOpacity={1}
         >
@@ -375,7 +388,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   navTitleOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 96,
@@ -392,6 +405,7 @@ const styles = StyleSheet.create({
   navRight: { alignItems: 'flex-end', justifyContent: 'center', flexShrink: 0 },
   sheetOverlay: { flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end' },
   sheetOverlayDark: { flex: 1, backgroundColor: 'rgba(0,0,0,0.52)', justifyContent: 'flex-end' },
+  sheetOverlayTransparent: { flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-end' },
   sheetContainer: {
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 16, borderTopRightRadius: 16,

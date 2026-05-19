@@ -5,8 +5,6 @@ import {
   type EventUpdate,
   type EventDetailed,
   type EventWatchInput,
-  type EventActivityOptionInput,
-  type EventActivityVoteInput,
   type EventTimeSuggestionInput,
 } from '@moijia/client';
 import { queryKeys } from '../../config/queryClient';
@@ -151,50 +149,6 @@ export function useTruncateRecurrenceSeries(userId: string) {
 function invalidateEventQueries(queryClient: ReturnType<typeof useQueryClient>, eventId: string, userId: string) {
   queryClient.invalidateQueries({ queryKey: ['events'] });
   queryClient.invalidateQueries({ queryKey: queryKeys.events.detail(eventId, userId) });
-}
-
-export function useAddActivityOption(eventId: string, userId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: EventActivityOptionInput) => {
-      if (!userId) throw new Error('Not signed in');
-      return EventsService.addActivityOption(eventId, userId, body);
-    },
-    onSuccess: () => invalidateEventQueries(queryClient, eventId, userId),
-  });
-}
-
-export function useDeleteActivityOption(eventId: string, userId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (optionId: string) => {
-      if (!userId) throw new Error('Not signed in');
-      return EventsService.deleteActivityOption(eventId, optionId, userId);
-    },
-    onSuccess: () => invalidateEventQueries(queryClient, eventId, userId),
-  });
-}
-
-export function useSetActivityVote(eventId: string, userId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: EventActivityVoteInput) => {
-      if (!userId) throw new Error('Not signed in');
-      return EventsService.setActivityVote(eventId, userId, body);
-    },
-    onSuccess: () => invalidateEventQueries(queryClient, eventId, userId),
-  });
-}
-
-export function useClearActivityVote(eventId: string, userId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => {
-      if (!userId) throw new Error('Not signed in');
-      return EventsService.clearActivityVote(eventId, userId);
-    },
-    onSuccess: () => invalidateEventQueries(queryClient, eventId, userId),
-  });
 }
 
 export function useCreateTimeSuggestion(eventId: string, userId: string) {

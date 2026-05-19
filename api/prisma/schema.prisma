@@ -32,9 +32,7 @@ model User {
   comments                Comment[]
   commentReactions        CommentReaction[]
   eventWatches            EventWatch[]
-  eventActivityVotes      EventActivityVote[]
   authoredTimeSuggestions EventTimeSuggestion[] @relation("TimeSuggestionAuthor")
-  createdActivityOptions  EventActivityOption[] @relation("ActivityOptionAuthor")
   createdPolls            Poll[]               @relation("PollCreator")
   closedPolls             Poll[]               @relation("PollCloser")
   pollOptionVotes         PollOptionVote[]
@@ -199,10 +197,6 @@ model Event {
   allowMaybe     Boolean   @default(true)
   /// When set, new/changed RSVPs are rejected after this instant (UTC). Null = no deadline.
   rsvpDeadline   DateTime?
-  /// When true, the event detail shows the activity ideas (options + voting) section.
-  activityIdeasEnabled Boolean @default(false)
-  /// When true, activity vote counts are shown but not who voted; when false, voter names are visible.
-  activityVotesAnonymous Boolean @default(false)
   /// iCalendar RRULE line (same on every row in a series). Null on one-off events.
   recurrenceRule String?
   /// Shared id for all event rows created from one recurrence (null = not part of a series).
@@ -217,41 +211,10 @@ model Event {
   rsvps             RSVP[]
   comments          Comment[]
   watches           EventWatch[]
-  activityOptions   EventActivityOption[]
-  activityVotes     EventActivityVote[]
   timeSuggestions   EventTimeSuggestion[]
 
   @@index([recurrenceSeriesId])
   @@map("events")
-}
-
-model EventActivityOption {
-  id        String   @id @default(uuid())
-  eventId   String
-  label     String
-  createdBy String
-  createdAt DateTime @default(now())
-
-  event   Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  creator User                @relation("ActivityOptionAuthor", fields: [createdBy], references: [id], onDelete: Cascade)
-  votes   EventActivityVote[]
-
-  @@map("event_activity_options")
-}
-
-model EventActivityVote {
-  id        String   @id @default(uuid())
-  eventId   String
-  optionId  String
-  userId    String
-  createdAt DateTime @default(now())
-
-  event  Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  option EventActivityOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
-  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([eventId, userId, optionId])
-  @@map("event_activity_votes")
 }
 
 /// Group member proposes alternate start/end; host (or admin) may accept to update the event.

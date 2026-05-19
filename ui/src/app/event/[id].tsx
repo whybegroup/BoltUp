@@ -74,9 +74,6 @@ import {
   useTruncateRecurrenceSeries,
   useSetEventWatch,
   useUpdateEvent,
-  useAddActivityOption,
-  useDeleteActivityOption,
-  useSetActivityVote,
   useCreateTimeSuggestion,
   useAcceptTimeSuggestion,
   useRejectTimeSuggestion,
@@ -445,9 +442,6 @@ export default function EventDetailScreen() {
   }, [ev, viewEv]);
   const setWatchMutation = useSetEventWatch(eventId || '', currentUserId ?? undefined);
   const updateEventMutation = useUpdateEvent(eventId || '', currentUserId ?? '');
-  const addActivityOptionMutation = useAddActivityOption(eventId || '', currentUserId ?? '');
-  const deleteActivityOptionMutation = useDeleteActivityOption(eventId || '', currentUserId ?? '');
-  const setActivityVoteMutation = useSetActivityVote(eventId || '', currentUserId ?? '');
   const createTimeSuggestionMutation = useCreateTimeSuggestion(eventId || '', currentUserId ?? '');
   const acceptTimeSuggestionMutation = useAcceptTimeSuggestion(eventId || '', currentUserId ?? '');
   const rejectTimeSuggestionMutation = useRejectTimeSuggestion(eventId || '', currentUserId ?? '');
@@ -530,7 +524,6 @@ export default function EventDetailScreen() {
   } | null>(null);
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; name: string; ts: Date } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [newActivityLabel, setNewActivityLabel] = useState('');
   const [showTimeSuggestModal, setShowTimeSuggestModal] = useState(false);
   const [suggestStartDate, setSuggestStartDate] = useState('');
   const [suggestStartTime, setSuggestStartTime] = useState('19:00');
@@ -601,8 +594,6 @@ export default function EventDetailScreen() {
   const [draftMinAttendees, setDraftMinAttendees] = useState('');
   const [draftMaxAttendees, setDraftMaxAttendees] = useState('');
   const [draftAllowMaybe, setDraftAllowMaybe] = useState(false);
-  const [draftActivityIdeasEnabled, setDraftActivityIdeasEnabled] = useState(false);
-  const [draftActivityVotesAnonymous, setDraftActivityVotesAnonymous] = useState(false);
   const [draftStartDate, setDraftStartDate] = useState('');
   const [draftStartTime, setDraftStartTime] = useState('');
   const [draftEndDate, setDraftEndDate] = useState('');
@@ -731,8 +722,6 @@ export default function EventDetailScreen() {
     setDraftMinAttendees(ev.minAttendees != null && ev.minAttendees > 0 ? String(ev.minAttendees) : '');
     setDraftMaxAttendees(ev.maxAttendees != null && ev.maxAttendees > 0 ? String(ev.maxAttendees) : '');
     setDraftAllowMaybe(!!ev.allowMaybe);
-    setDraftActivityIdeasEnabled(ev.activityIdeasEnabled ?? false);
-    setDraftActivityVotesAnonymous(ev.activityVotesAnonymous ?? false);
     setDraftRsvpDeadlineEnabled(!!ev.rsvpDeadline);
     if (ev.rsvpDeadline) {
       setDraftRsvpDeadlineDate(formatWallDateFromUtcIso(ev.rsvpDeadline as string));
@@ -754,8 +743,6 @@ export default function EventDetailScreen() {
     ev?.minAttendees,
     ev?.maxAttendees,
     ev?.allowMaybe,
-    ev?.activityIdeasEnabled,
-    ev?.activityVotesAnonymous,
     ev?.rsvpDeadline,
   ]);
 
@@ -814,8 +801,6 @@ export default function EventDetailScreen() {
       draftMinAttendees.trim() !== minB ||
       draftMaxAttendees.trim() !== maxB ||
       draftAllowMaybe !== !!ev.allowMaybe ||
-      draftActivityIdeasEnabled !== (ev.activityIdeasEnabled ?? false) ||
-      draftActivityVotesAnonymous !== (ev.activityVotesAnonymous ?? false) ||
       timeFieldsDirty ||
       rsvpDeadlineDirty
     );
@@ -829,8 +814,6 @@ export default function EventDetailScreen() {
     draftMinAttendees,
     draftMaxAttendees,
     draftAllowMaybe,
-    draftActivityIdeasEnabled,
-    draftActivityVotesAnonymous,
     timeFieldsDirty,
     rsvpDeadlineDirty,
   ]);
@@ -903,30 +886,6 @@ export default function EventDetailScreen() {
     minTime.setHours(h, m + 1, 0, 0);
     return minTime;
   }, [draftStartDate, draftEndDate, draftStartTime]);
-
-  const persistActivityIdeasSettings = useCallback(
-    async (nextIdeasEnabled: boolean, nextVotesAnonymous: boolean) => {
-      if (!currentUserId || !eventId) return;
-      const inSeries = !!(ev as EventDetailed | undefined)?.recurrenceSeriesId?.trim();
-      try {
-        await updateEventMutation.mutateAsync({
-          activityIdeasEnabled: nextIdeasEnabled,
-          activityVotesAnonymous: nextVotesAnonymous,
-          updatedBy: currentUserId,
-          viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          ...(inSeries ? { seriesUpdateScope: EventUpdate.seriesUpdateScope.ALL_OCCURRENCES } : {}),
-        });
-      } catch (e: any) {
-        const msg =
-          e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to update activity settings';
-        if (Platform.OS === 'web') window.alert(msg);
-        else Alert.alert('Error', msg);
-        setDraftActivityIdeasEnabled(ev?.activityIdeasEnabled ?? false);
-        setDraftActivityVotesAnonymous(ev?.activityVotesAnonymous ?? false);
-      }
-    },
-    [currentUserId, eventId, ev, updateEventMutation],
-  );
 
   const canCollaborateActivities = useMemo(() => {
     if (!currentUserId) return false;
@@ -1241,8 +1200,6 @@ export default function EventDetailScreen() {
     (group.adminIds ?? []).includes(currentUserId);
   /** Host and group admins/owners may delete past occurrences (API matches). */
   const canDeleteEventLive = canDeleteEvent;
-  const activityIdeasOn = ev.activityIdeasEnabled ?? false;
-  const activityIdeasEffective = canEditLive ? draftActivityIdeasEnabled : activityIdeasOn;
   /** RSVP row follows saved event flag, not the Settings draft (organizers were losing Maybe while editing). */
   const showMaybeRsvp = !!displayEv.allowMaybe;
   const rsvpDeadlineRaw = displayEv.rsvpDeadline as string | null | undefined;
@@ -1286,10 +1243,7 @@ export default function EventDetailScreen() {
   const rsvpSectionLabel = rsvpHeaderYmdSlashed
     ? `RSVP by ${rsvpHeaderYmdSlashed}${rsvpHeaderTimeLabel ? ` · ${rsvpHeaderTimeLabel}` : ''}`
     : 'RSVP';
-  const activityOptions = ev.activityOptions ?? [];
-  const activityVotesAnonymous = displayEv.activityVotesAnonymous ?? false;
   const timeSuggestions = ev.timeSuggestions ?? [];
-  const myActivityVoteOptionIds = ev.myActivityVoteOptionIds ?? [];
   const canResolveTimeSuggestions =
     ev.createdBy === currentUserId ||
     group.ownerId === currentUserId ||
@@ -1309,7 +1263,6 @@ export default function EventDetailScreen() {
       setDraftMinAttendees(ev.minAttendees != null && ev.minAttendees > 0 ? String(ev.minAttendees) : '');
       setDraftMaxAttendees(ev.maxAttendees != null && ev.maxAttendees > 0 ? String(ev.maxAttendees) : '');
       setDraftAllowMaybe(!!ev.allowMaybe);
-      setDraftActivityIdeasEnabled(ev.activityIdeasEnabled ?? false);
       setDraftRsvpDeadlineEnabled(!!ev.rsvpDeadline);
       if (ev.rsvpDeadline) {
         setDraftRsvpDeadlineDate(formatWallDateFromUtcIso(ev.rsvpDeadline as string));
@@ -1435,8 +1388,6 @@ export default function EventDetailScreen() {
         maxAttendees,
         enableWaitlist: hasMaxCap ? !!displayEv.enableWaitlist : false,
         allowMaybe: draftAllowMaybe,
-        activityIdeasEnabled: draftActivityIdeasEnabled,
-        activityVotesAnonymous: draftActivityVotesAnonymous,
         rsvpDeadline: rsvpDeadlineOut,
         updatedBy: currentUserId,
         viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -1484,47 +1435,6 @@ export default function EventDetailScreen() {
     !!draftEndDate?.trim() &&
     (draftAllDay || (!!draftStartTime?.trim() && !!draftEndTime?.trim()));
   const detailTimeRangeErrored = detailTimeFieldsComplete && !detailTimeRangeValid;
-
-  const submitNewActivityOption = async () => {
-    const label = newActivityLabel.trim();
-    if (!label || !currentUserId) return;
-    try {
-      await addActivityOptionMutation.mutateAsync({
-        id: uid(),
-        userId: currentUserId,
-        label,
-      });
-      setNewActivityLabel('');
-    } catch {
-      Alert.alert('Error', 'Could not add activity option');
-    }
-  };
-
-  const onPressActivityOption = async (optionId: string) => {
-    if (!currentUserId || !canCollaborateActivities) return;
-    try {
-      await setActivityVoteMutation.mutateAsync({ userId: currentUserId, optionId });
-    } catch {
-      Alert.alert('Error', 'Could not update vote');
-    }
-  };
-
-  const removeActivityOption = (optionId: string) => {
-    Alert.alert('Remove option', 'Remove this activity?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteActivityOptionMutation.mutateAsync(optionId);
-          } catch {
-            Alert.alert('Error', 'Could not remove option');
-          }
-        },
-      },
-    ]);
-  };
 
   const submitTimeSuggestion = async () => {
     if (!currentUserId || !suggestStartDate || !suggestEndDate) return;
@@ -1964,12 +1874,16 @@ export default function EventDetailScreen() {
                   <TextInput
                     value={draftDesc}
                     onChangeText={setDraftDesc}
-                    placeholder="Optional"
+                    placeholder="Add notes, directions, agenda, or a helpful link"
                     placeholderTextColor={Colors.textMuted}
                     style={styles.eventDescInput}
                     multiline
                     scrollEnabled
+                    maxLength={500}
                   />
+                  <View style={styles.eventDescToolbar}>
+                    <Text style={styles.eventDescCount}>{draftDesc.length}/500</Text>
+                  </View>
                 </View>
               </View>
             ) : displayEv.description?.trim() ? (
@@ -2418,100 +2332,6 @@ export default function EventDetailScreen() {
               </View>
             ) : null}
           </View>
-
-          <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
-            {activityIdeasEffective ? (
-              <View style={styles.activitiesSection}>
-                <Text style={formSectionTitleStyle}>Activities</Text>
-                {canCollaborateActivities ? (
-                  <Text style={{ fontSize: 13, color: Colors.textMuted, marginBottom: 10, fontFamily: Fonts.regular }}>
-                    Tap to vote for any options you like. Tap again on an option to remove your vote.
-                    {activityVotesAnonymous ? ' Votes are anonymous — only totals are shown.' : ''}
-                  </Text>
-                ) : (
-                  <Text style={{ fontSize: 13, color: Colors.textMuted, marginBottom: 10, fontFamily: Fonts.regular }}>
-                    What the group might do (voting is for members).
-                    {activityVotesAnonymous ? ' Votes are anonymous — only totals are shown.' : ''}
-                  </Text>
-                )}
-                {activityOptions.map((opt) => {
-                  const selected = myActivityVoteOptionIds.includes(opt.id);
-                  const canRemoveOpt = opt.createdBy === currentUserId || ev.createdBy === currentUserId;
-                  const voterIds = !activityVotesAnonymous ? opt.voterUserIds ?? [] : [];
-                  const votersLine =
-                    voterIds.length > 0
-                      ? voterIds.map((uid) => getUserSafe(uid).displayName).join(', ')
-                      : '';
-                  return (
-                    <View
-                      key={opt.id}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        paddingVertical: 10,
-                        paddingHorizontal: 12,
-                        borderRadius: Radius.md,
-                        borderWidth: 1,
-                        borderColor: selected ? p.dot : Colors.border,
-                        backgroundColor: selected ? p.row : Colors.bg,
-                        marginBottom: 8,
-                        gap: 8,
-                      }}
-                    >
-                      <TouchableOpacity
-                        style={{ flex: 1 }}
-                        onPress={() => void onPressActivityOption(opt.id)}
-                        disabled={!canCollaborateActivities || isPast}
-                        activeOpacity={0.75}
-                      >
-                        <Text style={{ fontSize: 15, fontFamily: Fonts.medium, color: Colors.text }}>{opt.label}</Text>
-                        <Text style={{ fontSize: 12, color: Colors.textMuted, marginTop: 2, fontFamily: Fonts.regular }}>
-                          {opt.voteCount} vote{opt.voteCount === 1 ? '' : 's'} · suggested by{' '}
-                          {getUserSafe(opt.createdBy).displayName}
-                        </Text>
-                        {votersLine ? (
-                          <Text
-                            style={{ fontSize: 12, color: Colors.textSub, marginTop: 4, fontFamily: Fonts.regular }}
-                            numberOfLines={4}
-                          >
-                            Voted by: {votersLine}
-                          </Text>
-                        ) : null}
-                      </TouchableOpacity>
-                      {selected ? <Ionicons name="checkmark-circle" size={22} color={p.dot} /> : null}
-                      {canRemoveOpt && !isPast ? (
-                        <TouchableOpacity
-                          onPress={() => removeActivityOption(opt.id)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Ionicons name="trash-outline" size={18} color={Colors.textMuted} />
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                  );
-                })}
-                {canCollaborateActivities && !isPast ? (
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, alignItems: 'center' }}>
-                    <TextInput
-                      value={newActivityLabel}
-                      onChangeText={setNewActivityLabel}
-                      placeholder="Add an activity idea"
-                      placeholderTextColor={Colors.textMuted}
-                      style={[styles.commentInputField, styles.commentInput]}
-                      onSubmitEditing={() => void submitNewActivityOption()}
-                    />
-                    <TouchableOpacity
-                      onPress={() => void submitNewActivityOption()}
-                      style={[styles.postBtn, !newActivityLabel.trim() && styles.postBtnDisabled]}
-                      disabled={!newActivityLabel.trim()}
-                    >
-                      <Text style={styles.postBtnText}>Add</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
-          </View>
             </View>
           </View>
         </View>
@@ -2672,16 +2492,18 @@ export default function EventDetailScreen() {
               onPress={() => setShowAttend(true)}
               style={[styles.attendRow, styles.attendRowBorderTop]}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {going.length > 0 ? (
-                  <UserAvatarStack
-                    userIds={going.map((r) => r.userId)}
-                    getUser={getUserSafe}
-                    size={24}
-                    max={5}
-                    dotUserIds={Array.from(usersWithMemos)}
-                  />
-                ) : null}
+              <View style={styles.attendRowSummary}>
+                <View style={styles.attendRowAvatarSlot}>
+                  {going.length > 0 ? (
+                    <UserAvatarStack
+                      userIds={going.map((r) => r.userId)}
+                      getUser={getUserSafe}
+                      size={24}
+                      max={5}
+                      dotUserIds={Array.from(usersWithMemos)}
+                    />
+                  ) : null}
+                </View>
                 <Text style={styles.attendText}>{attendLabel || 'No responses yet'}</Text>
               </View>
               <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>
@@ -3514,7 +3336,7 @@ function AttendanceSheet({ ev, group, users, visible, onClose }: { ev: EventDeta
 
   return (
     <>
-      <Sheet visible={visible} onClose={onClose} variant="dark">
+      <Sheet visible={visible} onClose={onClose} variant="dark" dimBackdrop={false}>
         <Text style={styles.reactionSheetTitle}>Attendance</Text>
         {going.length > 0 && (
           <>
@@ -3920,14 +3742,29 @@ const styles = StyleSheet.create({
   },
   eventDescField: { marginTop: 10 },
   eventDescBoxEdit: {
-    backgroundColor: Colors.bg,
+    backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
-    padding: 12,
     marginTop: 6,
     marginBottom: 16,
-    height: 112,
+    overflow: 'hidden',
+    minHeight: 112,
+  },
+  eventDescToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    padding: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  eventDescCount: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontFamily: Fonts.regular,
   },
   eventDescBoxReadOnly: {
     backgroundColor: Colors.bg,
@@ -3942,13 +3779,15 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     minHeight: 88,
-    padding: 0,
+    padding: 12,
+    paddingHorizontal: 14,
     margin: 0,
     fontSize: 14,
     fontFamily: Fonts.regular,
     color: Colors.text,
     lineHeight: 22,
     textAlignVertical: 'top',
+    backgroundColor: 'transparent',
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
   },
   eventLocationInput: {
@@ -4095,12 +3934,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
+    height: 52,
     paddingHorizontal: 16,
   },
   attendRowBorderTop: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
+  },
+  attendRowSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  /** Matches UserAvatarStack size={24}; fixed slot inside fixed-height attendRow. */
+  attendRowAvatarSlot: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
   },
   attendText:       { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
   commentRow:       { flexDirection: 'row', gap: 12, paddingVertical: 14, paddingHorizontal: 16, position: 'relative', overflow: 'hidden' },
@@ -4737,11 +4589,4 @@ const styles = StyleSheet.create({
   deleteConfirmText:{ fontSize: 14, fontFamily: Fonts.semiBold, color: '#fff' },
   smallActionBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   smallActionBtnText: { fontSize: 13, fontFamily: Fonts.semiBold, color: '#fff' },
-  activitiesSection: {
-    marginTop: 22,
-    paddingTop: 22,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
-    marginBottom: 4,
-  },
 });

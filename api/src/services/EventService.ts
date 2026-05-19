@@ -5,7 +5,6 @@ import {
   EventInput,
   EventUpdate,
   EventDetailed,
-  EventActivityOption,
   EventTimeSuggestion,
   RSVP,
   RSVPInput,
@@ -15,8 +14,6 @@ import {
   CommentDeleteInput,
   CommentReactionInput,
   EventWatchInput,
-  EventActivityOptionInput,
-  EventActivityVoteInput,
   EventTimeSuggestionInput,
 } from '../models';
 import { NotificationService } from './NotificationService';
@@ -34,14 +31,6 @@ import { seriesOccurrenceStartEndFromForm } from '../utils/seriesOccurrenceSched
 
 const prisma = new PrismaClient();
 
-/** Activity options on event detail/list: counts + per-vote user ids (mapper hides ids when anonymous). */
-const ACTIVITY_OPTIONS_EVENT_INCLUDE = {
-  orderBy: { createdAt: 'asc' as const },
-  include: {
-    _count: { select: { votes: true } },
-    votes: { select: { userId: true } },
-  },
-} as const;
 const notificationService = new NotificationService();
 const localUploads = new LocalUploadService();
 
@@ -218,7 +207,6 @@ export class EventService {
             createdAt: 'asc',
           },
         },
-        activityOptions: ACTIVITY_OPTIONS_EVENT_INCLUDE,
         timeSuggestions: {
           orderBy: { createdAt: 'desc' },
         },
@@ -271,7 +259,7 @@ export class EventService {
     }
   }
 
-  /** Active group member may collaborate on activities, votes, and time suggestions. */
+  /** Active group member may collaborate on time suggestions. */
   private async assertActiveMemberForEventEventRow(
     event: { groupId: string },
     actorId: string,
@@ -337,7 +325,6 @@ export class EventService {
             createdAt: 'asc',
           },
         },
-        activityOptions: ACTIVITY_OPTIONS_EVENT_INCLUDE,
         timeSuggestions: {
           orderBy: { createdAt: 'desc' },
         },
@@ -359,15 +346,7 @@ export class EventService {
       viewerUserId: userId,
     });
     if (userId) {
-      const withWatch = await this.enrichWithViewerWatch(detailed, id, userId);
-      const voteRows = await prisma.eventActivityVote.findMany({
-        where: { eventId: id, userId },
-        select: { optionId: true },
-      });
-      return {
-        ...withWatch,
-        myActivityVoteOptionIds: voteRows.map((r) => r.optionId),
-      };
+      return this.enrichWithViewerWatch(detailed, id, userId);
     }
     return detailed;
   }
@@ -555,7 +534,6 @@ export class EventService {
     const {
       coverPhotos = [],
       createdBy,
-      activityOptionLabels,
       recurrenceRule: rrIn,
       id: clientId,
       viewerTimeZone,
@@ -566,10 +544,6 @@ export class EventService {
 
     await this.assertCanCreateEvent(eventData.groupId, createdBy);
     const recurrenceRule = normalizeRecurrenceRule(rrIn ?? null);
-
-    const labels = (activityOptionLabels ?? [])
-      .map((s) => (typeof s === 'string' ? s.trim() : ''))
-      .filter((s) => s.length > 0);
 
     const start = utcInstantFromClient(String(eventData.start));
     const end = utcInstantFromClient(String(eventData.end));
@@ -590,8 +564,6 @@ export class EventService {
       enableWaitlist: eventData.enableWaitlist ?? false,
       allowMaybe: eventData.allowMaybe ?? true,
       isAllDay: eventData.isAllDay ?? false,
-      activityIdeasEnabled: eventData.activityIdeasEnabled ?? false,
-      activityVotesAnonymous: eventData.activityVotesAnonymous ?? false,
     };
 
     let event: Awaited<ReturnType<typeof prisma.event.create>> & { coverPhotos: { photoUrl: string }[] };
@@ -638,17 +610,6 @@ export class EventService {
               recurrenceRule,
               recurrenceSeriesId: seriesId,
               coverPhotos: { create: [...photoRows] },
-              ...(labels.length > 0
-                ? {
-                    activityOptions: {
-                      create: labels.map((label) => ({
-                        id: randomUUID(),
-                        label,
-                        createdBy,
-                      })),
-                    },
-                  }
-                : {}),
             },
             include: { coverPhotos: true },
           });
@@ -676,17 +637,6 @@ export class EventService {
           recurrenceRule: null,
           recurrenceSeriesId: null,
           coverPhotos: { create: [...photoRows] },
-          ...(labels.length > 0
-            ? {
-                activityOptions: {
-                  create: labels.map((label) => ({
-                    id: randomUUID(),
-                    label,
-                    createdBy,
-                  })),
-                },
-              }
-            : {}),
         },
         include: { coverPhotos: true, group: true },
       });
@@ -905,12 +855,6 @@ export class EventService {
       if (eventData.enableWaitlist !== undefined) seriesPatch.enableWaitlist = eventData.enableWaitlist;
       if (eventData.allowMaybe !== undefined) seriesPatch.allowMaybe = eventData.allowMaybe;
       if (eventData.isAllDay !== undefined) seriesPatch.isAllDay = eventData.isAllDay;
-      if (eventData.activityIdeasEnabled !== undefined) {
-        seriesPatch.activityIdeasEnabled = eventData.activityIdeasEnabled;
-      }
-      if (eventData.activityVotesAnonymous !== undefined) {
-        seriesPatch.activityVotesAnonymous = eventData.activityVotesAnonymous;
-      }
       if (Object.keys(seriesPatch).length > 1) {
         const canPatchThisAndFollowing = scope !== 'this_and_following' || !!subsetIdsThisAndFollowing?.length;
         if (canPatchThisAndFollowing) {
@@ -933,8 +877,6 @@ export class EventService {
         'enableWaitlist',
         'allowMaybe',
         'isAllDay',
-        'activityIdeasEnabled',
-        'activityVotesAnonymous',
         'rsvpDeadline',
       ] as const) {
         if (k in updateData) delete updateData[k];
@@ -1734,133 +1676,6 @@ export class EventService {
     throw { status: 403, message: 'Not allowed to delete this comment' };
   }
 
-  public async addActivityOption(
-    eventId: string,
-    input: EventActivityOptionInput,
-  ): Promise<EventActivityOption> {
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      select: { groupId: true, createdBy: true, activityIdeasEnabled: true },
-    });
-    if (!event) {
-      throw Object.assign(new Error('Event not found'), { status: 404 });
-    }
-    if (!event.activityIdeasEnabled) {
-      throw Object.assign(new Error('Activity ideas are not enabled for this event'), { status: 400 });
-    }
-    await this.assertActiveMemberForEventEventRow(event, input.userId);
-    const label = (input.label || '').trim();
-    if (!label) {
-      throw Object.assign(new Error('Activity label is required'), { status: 400 });
-    }
-    const row = await prisma.eventActivityOption.create({
-      data: {
-        id: input.id,
-        eventId,
-        label,
-        createdBy: input.userId,
-      },
-      include: {
-        _count: { select: { votes: true } },
-      },
-    });
-    return {
-      id: row.id,
-      label: row.label,
-      createdBy: row.createdBy,
-      voteCount: row._count.votes,
-      createdAt: row.createdAt,
-    };
-  }
-
-  public async deleteActivityOption(
-    eventId: string,
-    optionId: string,
-    actorId: string,
-  ): Promise<void> {
-    const option = await prisma.eventActivityOption.findFirst({
-      where: { id: optionId, eventId },
-      include: {
-        event: { select: { groupId: true, createdBy: true, activityIdeasEnabled: true } },
-      },
-    });
-    if (!option) {
-      throw Object.assign(new Error('Activity option not found'), { status: 404 });
-    }
-    if (!option.event.activityIdeasEnabled) {
-      throw Object.assign(new Error('Activity ideas are not enabled for this event'), { status: 400 });
-    }
-    const isAuthor = option.createdBy === actorId;
-    const isHost = option.event.createdBy === actorId;
-    if (!isAuthor && !isHost) {
-      throw Object.assign(
-        new Error('Only the option author or event host can remove this option'),
-        { status: 403 },
-      );
-    }
-    await prisma.eventActivityOption.delete({ where: { id: optionId } });
-  }
-
-  public async setActivityVote(eventId: string, input: EventActivityVoteInput): Promise<void> {
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      select: { groupId: true, activityIdeasEnabled: true },
-    });
-    if (!event) {
-      throw Object.assign(new Error('Event not found'), { status: 404 });
-    }
-    if (!event.activityIdeasEnabled) {
-      throw Object.assign(new Error('Activity ideas are not enabled for this event'), { status: 400 });
-    }
-    await this.assertActiveMemberForEventEventRow(event, input.userId);
-    const opt = await prisma.eventActivityOption.findFirst({
-      where: { id: input.optionId, eventId },
-    });
-    if (!opt) {
-      throw Object.assign(new Error('Activity option not found'), { status: 404 });
-    }
-    const existing = await prisma.eventActivityVote.findUnique({
-      where: {
-        eventId_userId_optionId: {
-          eventId,
-          userId: input.userId,
-          optionId: input.optionId,
-        },
-      },
-    });
-    if (existing) {
-      await prisma.eventActivityVote.delete({
-        where: { id: existing.id },
-      });
-    } else {
-      await prisma.eventActivityVote.create({
-        data: {
-          id: randomUUID(),
-          eventId,
-          optionId: input.optionId,
-          userId: input.userId,
-        },
-      });
-    }
-  }
-
-  public async clearActivityVote(eventId: string, userId: string): Promise<void> {
-    const event = await prisma.event.findUnique({
-      where: { id: eventId },
-      select: { groupId: true, activityIdeasEnabled: true },
-    });
-    if (!event) {
-      throw Object.assign(new Error('Event not found'), { status: 404 });
-    }
-    if (!event.activityIdeasEnabled) {
-      throw Object.assign(new Error('Activity ideas are not enabled for this event'), { status: 400 });
-    }
-    await this.assertActiveMemberForEventEventRow(event, userId);
-    await prisma.eventActivityVote.deleteMany({
-      where: { eventId, userId },
-    });
-  }
-
   public async createTimeSuggestion(
     eventId: string,
     input: EventTimeSuggestionInput,
@@ -2038,8 +1853,6 @@ export class EventService {
       enableWaitlist: event.enableWaitlist,
       allowMaybe: event.allowMaybe,
       rsvpDeadline: event.rsvpDeadline ?? null,
-      activityIdeasEnabled: Boolean(event.activityIdeasEnabled),
-      activityVotesAnonymous: Boolean(event.activityVotesAnonymous),
       recurrenceRule: event.recurrenceRule ?? null,
       recurrenceSeriesId: event.recurrenceSeriesId ?? null,
       createdAt: event.createdAt,
@@ -2054,25 +1867,6 @@ export class EventService {
     event: any,
     extras?: { recurrenceSeriesMemberCount?: number; viewerUserId?: string }
   ): EventDetailed {
-    const votesPublic = !event.activityVotesAnonymous;
-    const activityOptions: EventActivityOption[] = (event.activityOptions ?? []).map((o: any) => {
-      const voteCount = typeof o._count?.votes === 'number' ? o._count.votes : (o.votes?.length ?? 0);
-      const base: EventActivityOption = {
-        id: o.id,
-        label: o.label,
-        createdBy: o.createdBy,
-        voteCount,
-        createdAt: o.createdAt,
-      };
-      if (votesPublic && Array.isArray(o.votes) && o.votes.length > 0) {
-        const rawIds: string[] = o.votes.map((v: { userId?: string }) =>
-          String(v.userId ?? '').trim(),
-        );
-        const ids = [...new Set(rawIds.filter(Boolean))].sort();
-        if (ids.length > 0) base.voterUserIds = ids;
-      }
-      return base;
-    });
     const timeSuggestions: EventTimeSuggestion[] = (event.timeSuggestions ?? []).map((s: any) => ({
       id: s.id,
       suggestedBy: s.suggestedBy,
@@ -2095,7 +1889,6 @@ export class EventService {
         updatedAt: r.updatedAt,
       })),
       comments: event.comments.map((c: any) => this.mapCommentWithPhotos(c, extras?.viewerUserId)),
-      activityOptions,
       timeSuggestions,
     };
   }

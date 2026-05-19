@@ -16,7 +16,6 @@ import {
   EventInput,
   EventUpdate,
   EventDetailed,
-  EventActivityOption,
   EventTimeSuggestion,
   RSVPInput,
   RSVP,
@@ -25,8 +24,6 @@ import {
   CommentUpdateInput,
   CommentReactionInput,
   EventWatchInput,
-  EventActivityOptionInput,
-  EventActivityVoteInput,
   EventTimeSuggestionInput,
   RecurrenceTruncateSeriesInput,
   RecurrenceTruncateResult,
@@ -251,82 +248,6 @@ export class EventController extends Controller {
   ): Promise<Comment> {
     this.setStatus(201);
     return this.eventService.createComment(id, body);
-  }
-
-  /**
-   * Add an activity option (any active group member).
-   */
-  @Post('{id}/activity-options')
-  @SuccessResponse('201', 'Created')
-  public async addActivityOption(
-    @Path() id: string,
-    @Query() userId: string,
-    @Body() body: EventActivityOptionInput,
-  ): Promise<EventActivityOption> {
-    if (!userId) {
-      this.setStatus(400);
-      throw new Error('userId is required');
-    }
-    if (body.userId !== userId) {
-      this.setStatus(403);
-      throw new Error('userId in body must match authenticated user');
-    }
-    this.setStatus(201);
-    return this.eventService.addActivityOption(id, body);
-  }
-
-  /**
-   * Remove an activity option (author, host, or group admin).
-   */
-  @Delete('{id}/activity-options/{optionId}')
-  @SuccessResponse('204', 'No Content')
-  public async deleteActivityOption(
-    @Path() id: string,
-    @Path() optionId: string,
-    @Query() userId: string,
-  ): Promise<void> {
-    if (!userId) {
-      this.setStatus(400);
-      throw new Error('userId is required');
-    }
-    await this.eventService.deleteActivityOption(id, optionId, userId);
-    this.setStatus(204);
-  }
-
-  /**
-   * Toggle vote for an activity (users may vote for multiple options; same request removes vote).
-   */
-  @Put('{id}/activity-vote')
-  @SuccessResponse('204', 'No Content')
-  public async setActivityVote(
-    @Path() id: string,
-    @Query() userId: string,
-    @Body() body: EventActivityVoteInput,
-  ): Promise<void> {
-    if (!userId) {
-      this.setStatus(400);
-      throw new Error('userId is required');
-    }
-    if (body.userId !== userId) {
-      this.setStatus(403);
-      throw new Error('userId in body must match authenticated user');
-    }
-    await this.eventService.setActivityVote(id, body);
-    this.setStatus(204);
-  }
-
-  /**
-   * Clear the current user's activity vote.
-   */
-  @Delete('{id}/activity-vote')
-  @SuccessResponse('204', 'No Content')
-  public async clearActivityVote(@Path() id: string, @Query() userId: string): Promise<void> {
-    if (!userId) {
-      this.setStatus(400);
-      throw new Error('userId is required');
-    }
-    await this.eventService.clearActivityVote(id, userId);
-    this.setStatus(204);
   }
 
   /**

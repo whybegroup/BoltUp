@@ -19,6 +19,7 @@ import {
   NotifPrefsPartial,
 } from '../models';
 import { mergeNotifPrefs, parseNotifPrefsJson } from '../utils/notifPrefsCore';
+import { extractUploadUrlsFromForumBody } from '../utils/groupPostBodyUploads';
 import { NotificationService } from './NotificationService';
 import { LocalUploadService } from './LocalUploadService';
 import { UserService } from './UserService';
@@ -700,14 +701,26 @@ export class GroupService {
   public async deleteGroupPost(postId: string, userId: string): Promise<void> {
     const post = await prisma.groupPost.findUnique({
       where: { id: postId },
-      select: { groupId: true, userId: true },
+      select: {
+        groupId: true,
+        userId: true,
+        body: true,
+        comments: { select: { body: true } },
+      },
     });
     if (!post) throw new Error('Post not found');
     if (post.userId !== userId) {
       throw new Error('You can only delete your own post');
     }
     await this.requireActiveMember(post.groupId, userId);
+    const urlsToPurge = [
+      ...new Set([
+        ...extractUploadUrlsFromForumBody(post.body),
+        ...post.comments.flatMap((c) => extractUploadUrlsFromForumBody(c.body)),
+      ]),
+    ];
     await prisma.groupPost.delete({ where: { id: postId } });
+    await Promise.all(urlsToPurge.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
   }
 
   public async toggleGroupPostReaction(postId: string, input: GroupPostReactionInput): Promise<GroupPost> {
@@ -866,7 +879,9 @@ export class GroupService {
       throw new Error('You can only delete your own comment');
     }
     await this.requireActiveMember(comment.post.groupId, userId);
+    const urlsToPurge = extractUploadUrlsFromForumBody(comment.body);
     await prisma.groupPostComment.delete({ where: { id: commentId } });
+    await Promise.all(urlsToPurge.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
   }
 
   public async toggleGroupPostCommentReaction(

@@ -176,7 +176,7 @@ export function GroupDetailView({
     const { inProgressCount, upcomingCount } = groupEventsSummary;
     const parts: string[] = [];
     if (inProgressCount > 0) parts.push(`${inProgressCount} in progress`);
-    if (upcomingCount > 0) parts.push(`${upcomingCount} upcoming`);
+    if (upcomingCount > 0) parts.push(`${upcomingCount} upcoming events`);
     return parts.join(' · ');
   }, [groupEventsSummary.inProgressCount, groupEventsSummary.upcomingCount]);
   const eventEligibleGroupCount = useMemo(

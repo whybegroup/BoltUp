@@ -107,6 +107,11 @@ export type ThreadedCommentsSectionProps = {
   onDraftTextChange: (text: string) => void;
   draftPhotoUrls?: string[];
   onDraftPhotoUrlsChange?: (urls: string[]) => void;
+  /** Prefer over filtering `draftPhotoUrls` when removing a staged photo (e.g. deferred uploads). */
+  onRemoveDraftPhotoAtIndex?: (index: number) => void;
+  /** Staged file attachments (uploaded on submit by parent). */
+  draftPendingFiles?: Array<{ id: string; name: string }>;
+  onRemoveDraftPendingFile?: (id: string) => void;
   onUploadDraftPhoto?: () => Promise<void> | void;
   onTakeDraftPhoto?: () => Promise<void> | void;
   onAddDraftPhotoByUrl?: (url: string) => Promise<void> | void;
@@ -168,6 +173,9 @@ export function ThreadedCommentsSection({
   onDraftTextChange,
   draftPhotoUrls = [],
   onDraftPhotoUrlsChange,
+  onRemoveDraftPhotoAtIndex,
+  draftPendingFiles = [],
+  onRemoveDraftPendingFile,
   onUploadDraftPhoto,
   onTakeDraftPhoto,
   onAddDraftPhotoByUrl,
@@ -621,7 +629,8 @@ export function ThreadedCommentsSection({
   const showCopy = copyText.length > 0;
   const showEdit = canEditDelete;
   const showDelete = canEditDelete;
-  const canSubmitDraft = draftText.trim().length > 0 || draftPhotoUrls.length > 0;
+  const canSubmitDraft =
+    draftText.trim().length > 0 || draftPhotoUrls.length > 0 || draftPendingFiles.length > 0;
 
   return (
     <>
@@ -704,7 +713,8 @@ export function ThreadedCommentsSection({
                   ) : null}
                 </View>
               ) : null}
-              {draftPhotoUrls.length > 0 && onDraftPhotoUrlsChange ? (
+              {draftPhotoUrls.length > 0 &&
+              (onDraftPhotoUrlsChange || onRemoveDraftPhotoAtIndex) ? (
                 <View style={styles.commentComposerPhotoRow}>
                   {draftPhotoUrls.map((uri, i) => (
                     <View key={`${uri}-${i}`} style={styles.commentComposerPhotoThumbWrap}>
@@ -719,13 +729,36 @@ export function ThreadedCommentsSection({
                         />
                       </TouchableOpacity>
                       <TouchableOpacity
-                        onPress={() =>
-                          onDraftPhotoUrlsChange(draftPhotoUrls.filter((_, idx) => idx !== i))
-                        }
+                        onPress={() => {
+                          if (onRemoveDraftPhotoAtIndex) {
+                            onRemoveDraftPhotoAtIndex(i);
+                          } else if (onDraftPhotoUrlsChange) {
+                            onDraftPhotoUrlsChange(draftPhotoUrls.filter((_, idx) => idx !== i));
+                          }
+                        }}
                         style={styles.commentComposerPhotoRemoveBtn}
                         accessibilityLabel="Remove photo"
                       >
                         <Ionicons name="close" size={11} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              {draftPendingFiles.length > 0 && onRemoveDraftPendingFile ? (
+                <View style={styles.commentComposerPendingFilesRow}>
+                  {draftPendingFiles.map((f) => (
+                    <View key={f.id} style={styles.commentComposerPendingFileChip}>
+                      <Ionicons name="document-outline" size={14} color={Colors.textSub} />
+                      <Text style={styles.commentComposerPendingFileName} numberOfLines={1}>
+                        {f.name}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => onRemoveDraftPendingFile(f.id)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        accessibilityLabel="Remove file"
+                      >
+                        <Ionicons name="close-circle" size={16} color={Colors.textMuted} />
                       </TouchableOpacity>
                     </View>
                   ))}
@@ -996,6 +1029,29 @@ const styles = StyleSheet.create({
     borderColor: Colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  commentComposerPendingFilesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  commentComposerPendingFileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '100%',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  commentComposerPendingFileName: {
+    flexShrink: 1,
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+    color: Colors.textSub,
   },
   commentRow: {
     flexDirection: 'row',

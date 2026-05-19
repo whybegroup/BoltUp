@@ -60,6 +60,8 @@ export default function GroupsScreen() {
   };
 
   const unread = notifs.filter((n) => !n.read).length;
+  const now = new Date();
+  const upcomingWeekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -90,7 +92,7 @@ export default function GroupsScreen() {
                   const announcementTrim = (g.announcement ?? '').trim();
                   const evCount = events.filter((e) => {
                     const start = new Date(e.start);
-                    return e.groupId === g.id && start >= new Date();
+                    return e.groupId === g.id && start >= now && start <= upcomingWeekEnd;
                   }).length;
                   const hasMore = i < activeGroups.length - 1;
                   return (

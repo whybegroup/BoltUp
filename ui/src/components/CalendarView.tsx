@@ -11,6 +11,7 @@ import {
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -302,6 +303,10 @@ const SCOPE_OPTIONS: { key: CalendarScopeMode; label: string }[] = [
 ];
 
 const TIME_GUTTER_W = 44;
+const MONTH_GRID_PAD_H = 4;
+const MONTH_CELL_MARGIN_H = 2;
+const MONTH_COL_COUNT = 7;
+const MONTH_CELL_H_GUTTER = MONTH_CELL_MARGIN_H * 2;
 
 export function CalendarView({
   events,
@@ -335,6 +340,8 @@ export function CalendarView({
 
   /** Actual width of the week day strip (avoids using full window width when parent is narrower). */
   const [weekDaysStripMeasuredW, setWeekDaysStripMeasuredW] = useState<number | null>(null);
+  /** Month grid row width (weekday header + day cells share column widths). */
+  const [monthGridMeasuredW, setMonthGridMeasuredW] = useState<number | null>(null);
 
   const controlledFocus = focusDateProp != null && onCalendarFocusDateChange != null;
   const controlledScope = scopeModeProp != null && onCalendarScopeModeChange != null;
@@ -551,6 +558,35 @@ export function CalendarView({
 
   const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
 
+  useEffect(() => {
+    if (scopeMode !== 'month') setMonthGridMeasuredW(null);
+  }, [scopeMode, winW, year, month]);
+
+  const onMonthCalendarLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      const w = Math.round(e.nativeEvent.layout.width);
+      if (w < 1 || scopeMode !== 'month') return;
+      setMonthGridMeasuredW(w);
+    },
+    [scopeMode]
+  );
+
+  const monthColWidthResolved =
+    monthGridMeasuredW == null
+      ? null
+      : Math.max(
+          28,
+          (monthGridMeasuredW - MONTH_COL_COUNT * MONTH_CELL_H_GUTTER) / MONTH_COL_COUNT
+        );
+  const monthStripLayoutWidth =
+    monthColWidthResolved != null
+      ? MONTH_COL_COUNT * monthColWidthResolved + MONTH_COL_COUNT * MONTH_CELL_H_GUTTER
+      : null;
+  const monthColLayoutStyle =
+    monthColWidthResolved != null
+      ? ({ width: monthColWidthResolved, marginHorizontal: MONTH_CELL_MARGIN_H } as const)
+      : ({ flex: 1, minWidth: 0, marginHorizontal: MONTH_CELL_MARGIN_H } as const);
+
   /** Square month tile in year horizontal strip; mini calendar cells derive from this. */
   const yearMonthCardSize = useMemo(
     () => Math.min(200, Math.max(96, Math.round(winW - 48))),
@@ -713,6 +749,24 @@ export function CalendarView({
       ? dayColWidth
       : Math.max(56, (weekDaysStripMeasuredW - 7 * dayColGutter) / 7);
 
+  const weekUseExplicitColWidths =
+    scopeMode === 'week' && !weekNeedsHorizontalScroll && weekDaysStripMeasuredW != null;
+  const weekStripLayoutWidth =
+    scopeMode === 'week' && (weekNeedsHorizontalScroll || weekUseExplicitColWidths)
+      ? weekNeedsHorizontalScroll
+        ? weekScrollContentWidth
+        : 7 * dayColWidthResolved + 7 * dayColGutter
+      : null;
+
+  const onWeekDaysStripLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      const w = Math.round(e.nativeEvent.layout.width);
+      if (w < 1 || scopeMode !== 'week' || weekNeedsHorizontalScroll) return;
+      setWeekDaysStripMeasuredW(w);
+    },
+    [scopeMode, weekNeedsHorizontalScroll]
+  );
+
   const maxAllDayBandHeight = useMemo(() => {
     let m = 0;
     for (const day of timelineDays) {
@@ -758,9 +812,11 @@ export function CalendarView({
 
   const timelineParts = useMemo(() => {
     const colLayoutStyle =
-      scopeMode === 'day' || !weekNeedsHorizontalScroll
+      scopeMode === 'day'
         ? ({ flex: 1, minWidth: 0, flexBasis: 0, flexGrow: 1 } as const)
-        : ({ width: dayColWidthResolved } as const);
+        : weekNeedsHorizontalScroll || weekUseExplicitColWidths
+          ? ({ width: dayColWidthResolved } as const)
+          : ({ flex: 1, minWidth: 0, flexBasis: 0, flexGrow: 1 } as const);
     const header = (
       <View
         style={[
@@ -805,18 +861,19 @@ export function CalendarView({
             );
           }
           return (
-            <TouchableOpacity
-              key={dateKey(day)}
-              style={[
-                styles.weekDayHeaderCell,
-                colLayoutStyle,
-                sel && styles.weekDayHeaderCellSelected,
-              ]}
-              onPress={() => setFocusDate(day)}
-              activeOpacity={0.75}
-            >
-              {label}
-            </TouchableOpacity>
+            <View key={dateKey(day)} style={[styles.weekHeaderCellWrap, colLayoutStyle]} collapsable={false}>
+              <TouchableOpacity
+                style={[
+                  styles.weekDayHeaderCell,
+                  styles.weekDayHeaderCellWeek,
+                  sel && styles.weekDayHeaderCellSelected,
+                ]}
+                onPress={() => setFocusDate(day)}
+                activeOpacity={0.75}
+              >
+                {label}
+              </TouchableOpacity>
+            </View>
           );
         })}
       </View>
@@ -938,6 +995,7 @@ export function CalendarView({
     focusDate,
     scopeMode,
     weekNeedsHorizontalScroll,
+    weekUseExplicitColWidths,
     dayColWidthResolved,
     events,
     groupsMap,
@@ -1065,14 +1123,16 @@ export function CalendarView({
                   <View style={{ width: weekScrollContentWidth }}>{timelineParts.header}</View>
                 </GestureScrollView>
               ) : (
-                <View
-                  style={styles.weekScrollableDays}
-                  onLayout={(e) => {
-                    const w = e.nativeEvent.layout.width;
-                    if (w > 0) setWeekDaysStripMeasuredW(w);
-                  }}
-                >
-                  <View style={styles.weekDaysInnerStretch}>{timelineParts.header}</View>
+                <View style={styles.weekScrollableDays}>
+                  <View
+                    style={[
+                      styles.weekDaysInnerStretch,
+                      weekStripLayoutWidth != null && styles.weekDaysInnerFixedWidth,
+                      weekStripLayoutWidth != null && { width: weekStripLayoutWidth },
+                    ]}
+                  >
+                    {timelineParts.header}
+                  </View>
                 </View>
               )}
             </View>
@@ -1113,8 +1173,16 @@ export function CalendarView({
                     <View style={{ width: weekScrollContentWidth }}>{timelineParts.body}</View>
                   </GestureScrollView>
                 ) : (
-                  <View style={styles.weekScrollableDays}>
-                    <View style={styles.weekDaysInnerStretch}>{timelineParts.body}</View>
+                  <View style={styles.weekScrollableDays} onLayout={onWeekDaysStripLayout}>
+                    <View
+                      style={[
+                        styles.weekDaysInnerStretch,
+                        weekStripLayoutWidth != null && styles.weekDaysInnerFixedWidth,
+                        weekStripLayoutWidth != null && { width: weekStripLayoutWidth },
+                      ]}
+                    >
+                      {timelineParts.body}
+                    </View>
                   </View>
                 )}
               </View>
@@ -1136,75 +1204,91 @@ export function CalendarView({
         >
           {renderMonthNavigation()}
           <View style={styles.weekdayRowStickyWrap}>
-            <View style={styles.weekdayRow}>
-              {WEEKDAYS.map((d) => (
-                <Text key={d} style={styles.weekdayCell}>
-                  {d}
-                </Text>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.grid}>
-            {grid.map((row, ri) => (
-              <View key={ri} style={styles.gridRow}>
-                {row.map((cell, ci) => {
-                  if (!cell) return <View key={ci} style={styles.cell} />;
-                  const key = `${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`;
-                  const dayEvents = eventsByDate.get(key) ?? [];
-                  const selected = isSameDay(cell, focusDate);
-                  const today = isToday(cell);
-                  return (
-                    <TouchableOpacity
-                      key={ci}
-                      style={[
-                        styles.cell,
-                        selected && styles.cellSelected,
-                        today && !selected && styles.cellToday,
-                      ]}
-                      onPress={() => setFocusDate(cell)}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.cellText,
-                          selected && styles.cellTextSelected,
-                          today && !selected && styles.cellTextToday,
-                        ]}
-                      >
-                        {cell.getDate()}
-                      </Text>
-                      {dayEvents.length > 0 && (
-                        <View style={styles.dotWrap}>
-                          {dayEvents.slice(0, 2).map((ev) => {
-                            const group = groupsMap[ev.groupId];
-                            const userColorHex =
-                              groupColors[ev.groupId] ||
-                              (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
-                            const p = getGroupColor(userColorHex);
-                            return (
-                              <View
-                                key={eventOccurrenceKey(ev)}
-                                style={[
-                                  styles.dot,
-                                  selected && styles.dotSelected,
-                                  { backgroundColor: p.dot },
-                                ]}
-                              />
-                            );
-                          })}
-                          {dayEvents.length > 2 && (
-                            <Text style={[styles.dotMore, selected && styles.dotMoreSelected]}>
-                              +{dayEvents.length - 2}
-                            </Text>
-                          )}
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
+            <View style={styles.monthCalendarWrap} onLayout={onMonthCalendarLayout}>
+              <View
+                style={[
+                  styles.weekdayRow,
+                  monthStripLayoutWidth != null && styles.monthStripFixedWidth,
+                  monthStripLayoutWidth != null && { width: monthStripLayoutWidth },
+                ]}
+              >
+                {WEEKDAYS.map((d) => (
+                  <View key={d} style={[styles.monthColWrap, monthColLayoutStyle]}>
+                    <Text style={styles.weekdayCell}>{d}</Text>
+                  </View>
+                ))}
               </View>
-            ))}
+
+              <View style={styles.grid}>
+                {grid.map((row, ri) => (
+                  <View key={ri} style={styles.gridRow}>
+                    {row.map((cell, ci) => {
+                      if (!cell) {
+                        return (
+                          <View
+                            key={ci}
+                            style={[styles.monthColWrap, monthColLayoutStyle, styles.monthCellEmpty]}
+                          />
+                        );
+                      }
+                      const key = `${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`;
+                      const dayEvents = eventsByDate.get(key) ?? [];
+                      const selected = isSameDay(cell, focusDate);
+                      const today = isToday(cell);
+                      return (
+                        <View key={ci} style={[styles.monthColWrap, monthColLayoutStyle]} collapsable={false}>
+                          <TouchableOpacity
+                            style={[
+                              styles.monthCellInner,
+                              selected && styles.cellSelected,
+                              today && !selected && styles.cellToday,
+                            ]}
+                            onPress={() => setFocusDate(cell)}
+                            activeOpacity={0.7}
+                          >
+                            <Text
+                              style={[
+                                styles.cellText,
+                                selected && styles.cellTextSelected,
+                                today && !selected && styles.cellTextToday,
+                              ]}
+                            >
+                              {cell.getDate()}
+                            </Text>
+                            {dayEvents.length > 0 && (
+                              <View style={styles.dotWrap}>
+                                {dayEvents.slice(0, 2).map((ev) => {
+                                  const group = groupsMap[ev.groupId];
+                                  const userColorHex =
+                                    groupColors[ev.groupId] ||
+                                    (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
+                                  const p = getGroupColor(userColorHex);
+                                  return (
+                                    <View
+                                      key={eventOccurrenceKey(ev)}
+                                      style={[
+                                        styles.dot,
+                                        selected && styles.dotSelected,
+                                        { backgroundColor: p.dot },
+                                      ]}
+                                    />
+                                  );
+                                })}
+                                {dayEvents.length > 2 && (
+                                  <Text style={[styles.dotMore, selected && styles.dotMoreSelected]}>
+                                    +{dayEvents.length - 2}
+                                  </Text>
+                                )}
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+            </View>
           </View>
 
           <View style={styles.monthDayEventsSection}>
@@ -1280,12 +1364,8 @@ export function CalendarView({
               const monthGrid = getMonthGrid(year, m);
               const monthHighlighted = sameCalendarMonth(focusDate, monthStart);
               return (
-                <TouchableOpacity
+                <View
                   key={m}
-                  activeOpacity={0.88}
-                  onPress={() =>
-                    setFocusDate(clampDayInMonth(year, m, focusDate.getDate()))
-                  }
                   style={[
                     styles.yearMonthSquareCard,
                     {
@@ -1296,9 +1376,18 @@ export function CalendarView({
                     monthHighlighted && styles.yearMiniMonthCardSelected,
                   ]}
                 >
-                  <Text style={styles.yearMiniMonthTitle} numberOfLines={1}>
-                    {monthStart.toLocaleString('default', { month: 'short' })}
-                  </Text>
+                  <Pressable
+                    onPress={() =>
+                      setFocusDate(clampDayInMonth(year, m, focusDate.getDate()))
+                    }
+                    style={({ pressed }) => [pressed && styles.yearMiniMonthTitlePressed]}
+                    accessibilityRole="button"
+                    accessibilityLabel={monthStart.toLocaleString('default', { month: 'long' })}
+                  >
+                    <Text style={styles.yearMiniMonthTitle} numberOfLines={1}>
+                      {monthStart.toLocaleString('default', { month: 'short' })}
+                    </Text>
+                  </Pressable>
                   <View style={styles.yearMiniWeekdayRow}>
                     {WEEKDAYS.map((d) => (
                       <View key={d} style={styles.yearMiniWeekdayCellFlex}>
@@ -1378,7 +1467,7 @@ export function CalendarView({
                       </View>
                     ))}
                   </View>
-                </TouchableOpacity>
+                </View>
               );
             })}
           </ScrollView>
@@ -1543,12 +1632,27 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     width: '100%',
   },
+  monthCalendarWrap: {
+    paddingHorizontal: MONTH_GRID_PAD_H,
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  monthStripFixedWidth: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
   weekdayRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 8,
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  monthColWrap: {
+    minWidth: 0,
   },
   weekdayCell: {
-    flex: 1,
+    width: '100%',
     textAlign: 'center',
     fontSize: 11,
     fontFamily: Fonts.semiBold,
@@ -1616,6 +1720,18 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'stretch',
   },
+  /** Keeps header/body day columns the same width when the strip is narrower than the row (e.g. vertical scrollbar). */
+  weekDaysInnerFixedWidth: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  weekHeaderCellWrap: {
+    marginHorizontal: 2,
+    minWidth: 0,
+    flexBasis: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+  },
   weekDayHeaderRow: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -1641,6 +1757,12 @@ const styles = StyleSheet.create({
     flexBasis: 0,
     flexGrow: 1,
     alignSelf: 'stretch',
+  },
+  weekDayHeaderCellWeek: {
+    width: '100%',
+    minWidth: 0,
+    alignSelf: 'stretch',
+    marginHorizontal: 0,
   },
   weekDayHeaderCellDay: {
     width: '100%',
@@ -1755,16 +1877,19 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.regular,
     marginTop: 1,
   },
-  grid: { paddingHorizontal: 4 },
-  gridRow: { flexDirection: 'row' },
-  cell: {
-    flex: 1,
+  grid: {},
+  gridRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  monthCellEmpty: {
+    aspectRatio: 1,
+    maxHeight: 44,
+  },
+  monthCellInner: {
+    width: '100%',
     aspectRatio: 1,
     maxHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 22,
-    margin: 2,
   },
   cellSelected: {
     backgroundColor: Colors.accent,
@@ -1867,6 +1992,9 @@ const styles = StyleSheet.create({
   },
   yearMiniMonthCardSelected: {
     borderColor: Colors.accent,
+  },
+  yearMiniMonthTitlePressed: {
+    opacity: 0.88,
   },
   yearMiniMonthTitle: {
     fontSize: 12,
