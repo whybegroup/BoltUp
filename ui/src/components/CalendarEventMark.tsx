@@ -1,6 +1,7 @@
 import { View, StyleSheet } from 'react-native';
 import { Colors } from '../constants/theme';
 import { isGrayedCalendarVisual, type CalendarRsvpVisual } from '../utils/calendarEventRsvp';
+import { groupColorWithOpacity } from '../utils/helpers';
 import { CalendarEventRsvpFill } from './CalendarEventRsvpFill';
 
 const GRAYED_MARK_BG = '#E4E4E7';
@@ -43,7 +44,7 @@ export function CalendarEventMark({
       <View
         style={[
           variant === 'month' ? styles.monthSolidMark : styles.yearSolidMark,
-          { borderLeftColor: borderColor, backgroundColor: Colors.surface },
+          { borderLeftColor: borderColor, backgroundColor: groupColorWithOpacity(accentColor, 0.2) },
         ]}
       />
     );

@@ -62,7 +62,7 @@ export function getCalendarEventAppearance(
       striped: false,
       stripeTone: 'neutral',
       grayed: false,
-      backgroundColor: Colors.surface,
+      backgroundColor: groupPalette.fill,
       borderLeftColor: groupPalette.dot,
       textColor: Colors.text,
       dotColor: groupPalette.dot,

@@ -138,6 +138,17 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | nul
   } : null;
 }
 
+export function groupColorWithOpacity(hex: string, opacity: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    const a = Math.round(opacity * 255)
+      .toString(16)
+      .padStart(2, '0');
+    return `${hex}${a}`;
+  }
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${opacity})`;
+}
+
 /** Border radius for group avatar wrapper - matches My Groups (12 for 44px). */
 export function groupAvatarBorderRadius(size: number): number {
   return Math.round(size * 12 / 44);
@@ -146,20 +157,23 @@ export function groupAvatarBorderRadius(size: number): number {
 export function getGroupColor(colorHex?: string) {
   const hex = colorHex || '#EC4899';
   const rgb = hexToRgb(hex);
-  
+  const fill = groupColorWithOpacity(hex, 0.05);
+
   if (!rgb) return {
     dot: hex,
     cal: hex,
     row: `${hex}10`,
     label: `${hex}20`,
+    fill,
     text: hex,
   };
-  
+
   return {
     dot: hex,
     cal: hex,
     row: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`,
     label: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15)`,
+    fill,
     text: hex,
   };
 }

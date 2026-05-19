@@ -955,7 +955,8 @@ export function CalendarView({
                         />
                         <Text
                           style={[styles.allDayChipText, styles.calendarEventForeground, { color: appearance.textColor }]}
-                          numberOfLines={2}
+                          numberOfLines={1}
+                          ellipsizeMode="tail"
                         >
                           {ev.title}
                         </Text>
@@ -1020,7 +1021,8 @@ export function CalendarView({
                             styles.calendarEventForeground,
                             { color: appearance.textColor },
                           ]}
-                          numberOfLines={2}
+                          numberOfLines={1}
+                          ellipsizeMode="tail"
                         >
                           {ev.title}
                         </Text>
@@ -1900,6 +1902,7 @@ const styles = StyleSheet.create({
   allDayChipText: {
     fontSize: 11,
     fontFamily: Fonts.semiBold,
+    flexShrink: 1,
   },
   hourGrid: {
     position: 'relative',
@@ -1942,6 +1945,7 @@ const styles = StyleSheet.create({
   timedEventTitle: {
     fontSize: 10,
     fontFamily: Fonts.bold,
+    flexShrink: 1,
   },
   timedEventTime: {
     fontSize: 9,
