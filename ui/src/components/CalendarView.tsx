@@ -21,6 +21,13 @@ import {
 } from 'react-native-gesture-handler';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
+import {
+  filterCalendarEvents,
+  getMyCalendarRsvpVisual,
+  calendarAppearanceForEvent,
+} from '../utils/calendarEventRsvp';
+import { CalendarEventRsvpFill } from './CalendarEventRsvpFill';
+import { CalendarEventMark } from './CalendarEventMark';
 import { isSameDay, isToday } from '../utils/helpers';
 import type { EventDetailed, GroupScoped } from '@moijia/client';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
@@ -52,6 +59,8 @@ interface CalendarViewProps {
   /** Persisted horizontal scroll of the year mini-month strip (see `onCalendarYearMonthStripCommit`). */
   calendarYearMonthStrip?: { year: number; x: number };
   onCalendarYearMonthStripCommit?: (payload: { year: number; x: number }) => void;
+  /** RSVP filter from events screen; can't-go events show only when `notGoing` is included. */
+  filterRsvp?: string[];
 }
 
 const YEAR_STRIP_PAD_H = 12;
@@ -323,6 +332,7 @@ export function CalendarView({
   calendarScrollPrefsReady = false,
   calendarYearMonthStrip,
   onCalendarYearMonthStripCommit,
+  filterRsvp = [],
 }: CalendarViewProps) {
   const { userId: meId } = useCurrentUserContext();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -679,25 +689,30 @@ export function CalendarView({
     return map;
   }, [groups]);
 
+  const calendarEvents = useMemo(
+    () => filterCalendarEvents(events, meId ?? undefined, filterRsvp),
+    [events, meId, filterRsvp]
+  );
+
   const eventsByDate = useMemo(() => {
     const map = new Map<string, EventDetailed[]>();
-    for (const ev of events) {
+    for (const ev of calendarEvents) {
       const d = new Date(ev.start);
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(ev);
     }
     return map;
-  }, [events]);
+  }, [calendarEvents]);
 
   const monthSelectedDayEvents = useMemo(
-    () => eventsOverlappingCalendarDay(focusDate, events),
-    [focusDate, events]
+    () => eventsOverlappingCalendarDay(focusDate, calendarEvents),
+    [focusDate, calendarEvents]
   );
 
   const yearSelectedMonthEvents = useMemo(
-    () => eventsOverlappingCalendarMonth(year, month, events),
-    [year, month, events]
+    () => eventsOverlappingCalendarMonth(year, month, calendarEvents),
+    [year, month, calendarEvents]
   );
 
   const prevNav = () => {
@@ -770,10 +785,10 @@ export function CalendarView({
   const maxAllDayBandHeight = useMemo(() => {
     let m = 0;
     for (const day of timelineDays) {
-      m = Math.max(m, estimateAllDayBandHeight(allDayEventsForDay(day, events).length));
+      m = Math.max(m, estimateAllDayBandHeight(allDayEventsForDay(day, calendarEvents).length));
     }
     return m;
-  }, [timelineDays, events]);
+  }, [timelineDays, calendarEvents]);
 
   const navCenterLabel = useMemo(() => {
     if (scopeMode === 'day') {
@@ -881,9 +896,9 @@ export function CalendarView({
     const body = (
       <View style={[styles.weekTimelineBody, { alignSelf: 'stretch', width: '100%' }]}>
         {timelineDays.map((day) => {
-            const allDay = allDayEventsForDay(day, events);
+            const allDay = allDayEventsForDay(day, calendarEvents);
             const timed: TimedSeg[] = [];
-            for (const ev of events) {
+            for (const ev of calendarEvents) {
               const seg = timedSegmentForDay(ev, day);
               if (seg) timed.push({ ev, ...seg });
             }
@@ -911,14 +926,37 @@ export function CalendarView({
                       groupColors[ev.groupId] ||
                       (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                     const p = getGroupColor(userColorHex);
+                    const appearance = calendarAppearanceForEvent(
+                      ev,
+                      p,
+                      meId ?? undefined
+                    );
+                    const occKey = eventOccurrenceKey(ev);
                     return (
                       <RectButton
-                        key={eventOccurrenceKey(ev)}
+                        key={occKey}
                         onPress={() => onSelectEvent(ev)}
                         underlayColor="rgba(0,0,0,0.2)"
-                        style={[styles.allDayChip, { backgroundColor: p.label, borderLeftColor: p.dot }]}
+                        style={[
+                          styles.allDayChip,
+                          {
+                            borderLeftColor: appearance.borderLeftColor,
+                            backgroundColor: appearance.striped
+                              ? 'transparent'
+                              : appearance.backgroundColor,
+                          },
+                        ]}
                       >
-                        <Text style={[styles.allDayChipText, { color: p.text }]} numberOfLines={2}>
+                        <CalendarEventRsvpFill
+                          striped={appearance.striped}
+                          backgroundColor={appearance.backgroundColor}
+                          patternId={`allday-${occKey}`}
+                          stripeTone={appearance.stripeTone}
+                        />
+                        <Text
+                          style={[styles.allDayChipText, styles.calendarEventForeground, { color: appearance.textColor }]}
+                          numberOfLines={2}
+                        >
                           {ev.title}
                         </Text>
                       </RectButton>
@@ -942,6 +980,11 @@ export function CalendarView({
                       groupColors[ev.groupId] ||
                       (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                     const p = getGroupColor(userColorHex);
+                    const appearance = calendarAppearanceForEvent(
+                      ev,
+                      p,
+                      meId ?? undefined
+                    );
                     const wPct = 100 / laneCount;
                     const leftPct = lane * wPct;
                     const segKey = `wk-${ev.id}-${String(ev.start)}-${dateKey(day)}`;
@@ -958,16 +1001,35 @@ export function CalendarView({
                             height,
                             left: `${leftPct}%`,
                             width: `${wPct}%`,
-                            backgroundColor: p.label,
-                            borderLeftColor: p.dot,
+                            borderLeftColor: appearance.borderLeftColor,
+                            backgroundColor: appearance.striped
+                              ? 'transparent'
+                              : appearance.backgroundColor,
                           },
                         ]}
                       >
-                        <Text style={[styles.timedEventTitle, { color: p.text }]} numberOfLines={2}>
+                        <CalendarEventRsvpFill
+                          striped={appearance.striped}
+                          backgroundColor={appearance.backgroundColor}
+                          patternId={`timed-${segKey}`}
+                          stripeTone={appearance.stripeTone}
+                        />
+                        <Text
+                          style={[
+                            styles.timedEventTitle,
+                            styles.calendarEventForeground,
+                            { color: appearance.textColor },
+                          ]}
+                          numberOfLines={2}
+                        >
                           {ev.title}
                         </Text>
                         <Text
-                          style={[styles.timedEventTime, { color: p.text, opacity: 0.75 }]}
+                          style={[
+                            styles.timedEventTime,
+                            styles.calendarEventForeground,
+                            { color: appearance.textColor, opacity: 0.75 },
+                          ]}
                           numberOfLines={1}
                         >
                           {new Date(ev.start).toLocaleTimeString('default', {
@@ -997,13 +1059,14 @@ export function CalendarView({
     weekNeedsHorizontalScroll,
     weekUseExplicitColWidths,
     dayColWidthResolved,
-    events,
+    calendarEvents,
     groupsMap,
     groupColors,
     maxAllDayBandHeight,
     onSelectEvent,
     setFocusDate,
     nowLineTop,
+    meId,
   ]);
 
   const weekHeaderHRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
@@ -1263,14 +1326,15 @@ export function CalendarView({
                                     groupColors[ev.groupId] ||
                                     (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                                   const p = getGroupColor(userColorHex);
+                                  const visual = getMyCalendarRsvpVisual(ev, meId ?? undefined);
                                   return (
-                                    <View
+                                    <CalendarEventMark
                                       key={eventOccurrenceKey(ev)}
-                                      style={[
-                                        styles.dot,
-                                        selected && styles.dotSelected,
-                                        { backgroundColor: p.dot },
-                                      ]}
+                                      visual={visual}
+                                      accentColor={p.dot}
+                                      patternId={`month-${eventOccurrenceKey(ev)}`}
+                                      selected={selected}
+                                      variant="month"
                                     />
                                   );
                                 })}
@@ -1438,14 +1502,15 @@ export function CalendarView({
                                       groupColors[ev.groupId] ||
                                       (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                                     const p = getGroupColor(userColorHex);
+                                    const visual = getMyCalendarRsvpVisual(ev, meId ?? undefined);
                                     return (
-                                      <View
+                                      <CalendarEventMark
                                         key={eventOccurrenceKey(ev)}
-                                        style={[
-                                          styles.yearMiniDot,
-                                          selected && styles.yearMiniDotSelected,
-                                          { backgroundColor: p.dot },
-                                        ]}
+                                        visual={visual}
+                                        accentColor={p.dot}
+                                        patternId={`year-${eventOccurrenceKey(ev)}`}
+                                        selected={selected}
+                                        variant="year"
                                       />
                                     );
                                   })}
@@ -1829,6 +1894,8 @@ const styles = StyleSheet.create({
     borderRadius: Radius.sm,
     paddingHorizontal: 6,
     paddingVertical: 4,
+    overflow: 'hidden',
+    position: 'relative',
   },
   allDayChipText: {
     fontSize: 11,
@@ -1858,6 +1925,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.todayRed,
     zIndex: 10,
     marginTop: -1,
+  },
+  calendarEventForeground: {
+    position: 'relative',
+    zIndex: 1,
   },
   timedEventBlock: {
     position: 'absolute',
@@ -1903,18 +1974,12 @@ const styles = StyleSheet.create({
   cellTextToday: { color: Colors.todayRed },
   dotWrap: {
     position: 'absolute',
-    bottom: 4,
+    bottom: 3,
     height: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: 3,
   },
-  dot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-  },
-  dotSelected: {},
   dotMore: {
     fontSize: 9,
     fontFamily: Fonts.semiBold,
@@ -2054,12 +2119,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 1,
   },
-  yearMiniDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-  },
-  yearMiniDotSelected: {},
   yearMiniDotMore: {
     fontSize: 7,
     fontFamily: Fonts.semiBold,

@@ -99,3 +99,55 @@ export async function saveEventsScreenPrefs(prefs: EventsScreenPersistedV1): Pro
     /* ignore */
   }
 }
+
+export type EventListFilterPrefs = Pick<
+  EventsScreenPersistedV1,
+  | 'filterRsvp'
+  | 'filterNeeds'
+  | 'showAdvancedFilters'
+  | 'startDateText'
+  | 'endDateText'
+  | 'startMode'
+  | 'endMode'
+>;
+
+export async function loadEventListFilterPrefs(): Promise<Partial<EventListFilterPrefs>> {
+  const partial = await loadEventsScreenPrefs();
+  if (!partial) return {};
+  return {
+    filterRsvp: partial.filterRsvp,
+    filterNeeds: partial.filterNeeds,
+    showAdvancedFilters: partial.showAdvancedFilters,
+    startDateText: partial.startDateText,
+    endDateText: partial.endDateText,
+    startMode: partial.startMode,
+    endMode: partial.endMode,
+  };
+}
+
+function defaultEventsScreenPrefs(): EventsScreenPersistedV1 {
+  return {
+    v: 1,
+    viewMode: 'list',
+    calendarScopeMode: 'week',
+    calendarFocusIso: new Date().toISOString(),
+    selectedGroupIds: [],
+    filterRsvp: [],
+    filterNeeds: false,
+    showAdvancedFilters: false,
+    startDateText: '',
+    endDateText: '',
+    startMode: 'now',
+    endMode: 'allTime',
+  };
+}
+
+export async function saveEventListFilterPrefs(patch: Partial<EventListFilterPrefs>): Promise<void> {
+  const partial = await loadEventsScreenPrefs();
+  await saveEventsScreenPrefs({
+    ...defaultEventsScreenPrefs(),
+    ...partial,
+    v: 1,
+    ...patch,
+  });
+}

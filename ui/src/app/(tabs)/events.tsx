@@ -694,6 +694,7 @@ export default function EventsScreen() {
         ) : (
           <CalendarView
             events={filtered}
+            filterRsvp={filterRsvp}
             groups={groups}
             groupColors={groupColors}
             onSelectEvent={(ev) =>

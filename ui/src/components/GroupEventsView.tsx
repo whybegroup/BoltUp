@@ -26,6 +26,9 @@ import { GroupsTopHeader } from './GroupsTopHeader';
 import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
 import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { ListView } from './ListView';
+import { EventsListFiltersPanel } from './EventsListFiltersPanel';
+import { useEventListFilterState } from '../hooks/useEventListFilterState';
+import { filterEventsForList } from '../utils/eventListFilters';
 import { withReturnTo } from '../utils/navigationReturn';
 
 export type GroupEventsViewProps = {
@@ -42,61 +45,34 @@ export function GroupEventsView({
   const router = useRouter();
   const pathname = usePathname();
   const { userId: currentUserId } = useCurrentUserContext();
+  const filterState = useEventListFilterState();
 
   const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
   const { data: allGroupsForChrome = [] } = useGroups(currentUserId ?? '', true);
   const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
 
-  const groupEventsFetchWindow = useMemo(() => {
-    const now = new Date();
-    const lookback = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-    const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return {
-      startAfter: lookback.toISOString(),
-      startBefore: weekEnd.toISOString(),
-      weekEndMs: weekEnd.getTime(),
-    };
-  }, [groupId]);
-
-  const fetchGroupWeekEvents =
+  const fetchGroupEvents =
     !!currentUserId &&
     !!group &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
-  const { data: groupWeekEvents = [], isLoading: groupWeekEventsLoading, refetch: refetchGroupEvents } = useEvents({
+
+  const { data: groupEvents = [], isLoading: groupEventsLoading } = useEvents({
     userId: currentUserId ?? '',
     groupId,
-    startAfter: groupEventsFetchWindow.startAfter,
-    startBefore: groupEventsFetchWindow.startBefore,
-    limit: 200,
-    enabled: fetchGroupWeekEvents,
+    enabled: fetchGroupEvents,
   });
-  const [eventsSummaryRefreshTick, setEventsSummaryRefreshTick] = useState(0);
-  const groupEventsSummary = useMemo(() => {
-    const nowMs = Date.now();
-    const { weekEndMs } = groupEventsFetchWindow;
-    const eventsForModal: EventDetailed[] = [];
-    for (const ev of groupWeekEvents) {
-      const s = new Date(ev.start).getTime();
-      const e = new Date(ev.end).getTime();
-      if (s <= nowMs && e > nowMs) {
-        eventsForModal.push(ev);
-      } else if (s > nowMs && s <= weekEndMs) {
-        eventsForModal.push(ev);
-      }
-    }
-    eventsForModal.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-    return { eventsForModal };
-  }, [groupWeekEvents, groupEventsFetchWindow, eventsSummaryRefreshTick]);
 
-  useEffect(() => {
-    if (!fetchGroupWeekEvents) return;
-    const interval = setInterval(() => {
-      refetchGroupEvents();
-      setEventsSummaryRefreshTick((t) => t + 1);
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [fetchGroupWeekEvents, refetchGroupEvents]);
+  const filteredEvents = useMemo(() => {
+    return filterEventsForList(groupEvents, filterState.filters, currentUserId ?? undefined);
+  }, [groupEvents, filterState.filters, currentUserId]);
+
+  const hasFilters = !!(
+    filterState.filterRsvp.length ||
+    filterState.filterNeeds ||
+    filterState.startMode !== 'now' ||
+    filterState.endMode !== 'allTime'
+  );
 
   const goToOverview = useCallback(() => {
     router.replace('/(tabs)/groups');
@@ -168,18 +144,22 @@ export function GroupEventsView({
     />
   );
 
-  const body = !fetchGroupWeekEvents ? null : groupWeekEventsLoading && groupEventsSummary.eventsForModal.length === 0 ? (
+  const body = !fetchGroupEvents ? null : groupEventsLoading && filteredEvents.length === 0 ? (
     <View style={styles.emptyWrap}>
       <ActivityIndicator color={Colors.textSub} />
     </View>
-  ) : groupEventsSummary.eventsForModal.length === 0 ? (
+  ) : filteredEvents.length === 0 ? (
     <View style={styles.emptyWrap}>
-      <Text style={styles.emptyText}>No in-progress or upcoming events</Text>
+      <Ionicons name="calendar-outline" size={56} color={Colors.textMuted} style={styles.emptyGlyph} />
+      <Text style={styles.emptyTitle}>No events</Text>
+      <Text style={styles.emptyDesc}>
+        {hasFilters ? 'Try adjusting your filters' : 'No events in this group yet'}
+      </Text>
     </View>
   ) : (
     <ListView
       listContainerStyle={styles.list}
-      events={groupEventsSummary.eventsForModal}
+      events={filteredEvents}
       groups={[group]}
       groupColors={groupColors}
       onSelect={(ev: EventDetailed) => {
@@ -191,6 +171,7 @@ export function GroupEventsView({
       showGroup={false}
     />
   );
+
   const switchMenuWidth = 240;
   const windowWidth = Dimensions.get('window').width;
   const switchMenuLeft = Math.max(
@@ -203,6 +184,7 @@ export function GroupEventsView({
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {groupsTopHeader}
       <GroupsBreadcrumbTrail segments={breadcrumbSegments} />
+      {fetchGroupEvents ? <EventsListFiltersPanel {...filterState} /> : null}
       {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
           <View style={styles.switchGroupsOverlay}>
@@ -252,11 +234,19 @@ const styles = StyleSheet.create({
   content: { flex: 1, paddingTop: 8, minHeight: 0 },
   list: { flex: 1, paddingHorizontal: 20 },
   emptyWrap: { flex: 1, paddingTop: 48, paddingHorizontal: 20, alignItems: 'center' },
-  emptyText: {
+  emptyGlyph: { marginBottom: 16 },
+  emptyTitle: {
+    fontSize: 20,
+    fontFamily: Fonts.bold,
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  emptyDesc: {
     fontSize: 14,
     fontFamily: Fonts.regular,
     color: Colors.textMuted,
     textAlign: 'center',
+    lineHeight: 20,
   },
   switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
   switchGroupsCard: {
