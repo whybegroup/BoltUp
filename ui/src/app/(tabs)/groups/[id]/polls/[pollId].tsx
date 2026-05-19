@@ -1,8 +1,8 @@
-import { useMemo, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { GroupPollDetailView } from '../../../../../components/GroupPollDetailView';
-import { useGroups } from '../../../../../hooks/api';
 import { useCurrentUserContext } from '../../../../../contexts/CurrentUserContext';
+import { useOrderedSwitcherGroups } from '../../../../../hooks/useOrderedSwitcherGroups';
 import { firstSearchParam } from '../../../../../utils/navigationReturn';
 
 export default function GroupPollDetailRoute() {
@@ -12,25 +12,7 @@ export default function GroupPollDetailRoute() {
   const groupId = Array.isArray(params.id) ? params.id[0] : params.id;
   const pollId = Array.isArray(params.pollId) ? params.pollId[0] : params.pollId;
 
-  const { data: allGroups = [] } = useGroups(currentUserId ?? '', true);
-  const listGroups = useMemo(
-    () =>
-      allGroups.filter(
-        (g) =>
-          g.membershipStatus === 'member' ||
-          g.membershipStatus === 'admin' ||
-          g.membershipStatus === 'pending'
-      ),
-    [allGroups]
-  );
-
-  const switchableGroups = useMemo(
-    () =>
-      listGroups
-        .filter((g) => g.id !== groupId)
-        .map((g) => ({ id: g.id, name: g.name })),
-    [listGroups, groupId]
-  );
+  const { orderedSwitcherGroups } = useOrderedSwitcherGroups(currentUserId ?? '');
 
   const onSwitchGroup = useCallback(
     (nextId: string) => {
@@ -49,7 +31,7 @@ export default function GroupPollDetailRoute() {
     <GroupPollDetailView
       groupId={groupId}
       pollId={pollId}
-      switchableGroups={switchableGroups}
+      orderedSwitcherGroups={orderedSwitcherGroups}
       onSwitchGroup={onSwitchGroup}
     />
   );

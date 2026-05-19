@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import { User, UserInput, UserUpdate } from '../models';
 import { mergeNotifPrefs, parseNotifPrefsJson } from '../utils/notifPrefsCore';
+import { parseGroupOrderJson, serializeGroupOrderJson } from '../utils/groupOrder';
+import type { GroupOrderInput } from '../models/GroupOrder';
 
 const prisma = new PrismaClient();
 
@@ -85,6 +87,49 @@ export class UserService {
       data,
     });
     return this.mapUser(row);
+  }
+
+  /**
+   * Save preferred group display order for a user.
+   * Each id must be a group the user belongs to (member, admin, or pending).
+   */
+  public async setGroupOrder(userId: string, input: GroupOrderInput): Promise<string[]> {
+    const uniqueIds = [...new Set(input.groupIds.filter((id) => typeof id === 'string' && id.length > 0))];
+    if (uniqueIds.length === 0) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { groupOrderJson: serializeGroupOrderJson([]) },
+      });
+      return [];
+    }
+
+    const memberships = await prisma.groupMember.findMany({
+      where: {
+        userId,
+        status: { in: ['active', 'pending'] },
+        groupId: { in: uniqueIds },
+      },
+      select: { groupId: true },
+    });
+    const allowed = new Set(memberships.map((m) => m.groupId));
+    const ordered = uniqueIds.filter((id) => allowed.has(id));
+    if (ordered.length !== uniqueIds.length) {
+      throw new Error('groupIds must only include groups you belong to');
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { groupOrderJson: serializeGroupOrderJson(ordered) },
+    });
+    return ordered;
+  }
+
+  public async getGroupOrder(userId: string): Promise<string[]> {
+    const row = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { groupOrderJson: true },
+    });
+    return parseGroupOrderJson(row?.groupOrderJson);
   }
 
   /**

@@ -57,6 +57,7 @@ import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrum
 import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { withReturnTo } from '../utils/navigationReturn';
+import { useGroupsBreadcrumbGroupSwitch } from './groupsBreadcrumbDropdown';
 import { AddImageButton } from './AddImageButton';
 
 const AVATAR_SIZE = 56;
@@ -77,14 +78,14 @@ export type GroupDetailViewProps = {
   /** When `router.back()` is not available, navigate here (decoded in-app path). */
   returnToHref?: string;
   /** Other groups the user can open from detail mode (excludes current `groupId`). */
-  switchableGroups?: GroupDetailSwitchableGroup[];
+  orderedSwitcherGroups?: GroupDetailSwitchableGroup[];
   onSwitchGroup?: (groupId: string) => void;
 };
 
 export function GroupDetailView({
   groupId,
   returnToHref,
-  switchableGroups = [],
+  orderedSwitcherGroups = [],
   onSwitchGroup,
 }: GroupDetailViewProps) {
   const router = useRouter();
@@ -172,7 +173,7 @@ export function GroupDetailView({
     }
     return { inProgressCount, upcomingCount };
   }, [groupWeekEvents, groupEventsFetchWindow, eventsSummaryRefreshTick]);
-  const groupEventsSummaryButtonLine = useMemo(() => {
+    const groupEventsSummaryButtonLine = useMemo(() => {
     const { inProgressCount, upcomingCount } = groupEventsSummary;
     const parts: string[] = [];
     if (inProgressCount > 0) parts.push(`${inProgressCount} in progress`);
@@ -247,8 +248,6 @@ export function GroupDetailView({
   const [showLeave,   setShowLeave]   = useState(false);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showSwitchGroups, setShowSwitchGroups] = useState(false);
-  const [switchGroupsAnchor, setSwitchGroupsAnchor] = useState<{ x: number; y: number } | null>(null);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showGroupSettingsModal, setShowGroupSettingsModal] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
@@ -290,7 +289,11 @@ export function GroupDetailView({
     return membersMap[userId] || usersMap[userId] || { id: userId, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   };
 
-  const titleIsSwitchable = switchableGroups.length > 0 && !!onSwitchGroup;
+  const { chevronProps: groupChevronProps, modal: groupSwitchModal } = useGroupsBreadcrumbGroupSwitch(
+    group ? { id: groupId, name: group.name } : null,
+    orderedSwitcherGroups,
+    onSwitchGroup
+  );
 
   useEffect(() => {
     setDescExpanded(false);
@@ -338,16 +341,10 @@ export function GroupDetailView({
       {
         label: group.name,
         onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
-        showSwitchChevron: titleIsSwitchable,
-        onSwitchChevronPress: titleIsSwitchable
-          ? (anchor) => {
-              setSwitchGroupsAnchor(anchor);
-              setShowSwitchGroups(true);
-            }
-          : undefined,
+        ...groupChevronProps,
       },
     ];
-  }, [group, groupId, titleIsSwitchable, requestOverview, router]);
+  }, [group, groupId, requestOverview, router, groupChevronProps]);
 
   if (!group) {
     return null;
@@ -1082,7 +1079,7 @@ export function GroupDetailView({
                     <Text style={styles.memberHandle}>
                       {groupEventsSummaryButtonLine
                         ? groupEventsSummaryButtonLine
-                        : 'In-progress and upcoming'}
+                        : 'Events for this group'}
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
@@ -1501,48 +1498,7 @@ export function GroupDetailView({
         </Modal>
       ) : null}
 
-      {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
-          <View style={styles.switchGroupsOverlay}>
-            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSwitchGroups(false)} activeOpacity={1} />
-            <View
-              style={[
-                styles.switchGroupsCard,
-                {
-                  top: Math.max(12, (switchGroupsAnchor?.y ?? 0) + 10),
-                  left: Math.max(
-                    12,
-                    Math.min((switchGroupsAnchor?.x ?? Dimensions.get('window').width - 12) - 220, Dimensions.get('window').width - 252)
-                  ),
-                  width: 240,
-                },
-              ]}
-            >
-              <ScrollView style={styles.switchGroupsList} keyboardShouldPersistTaps="handled">
-                {switchableGroups.map((g, idx) => (
-                  <TouchableOpacity
-                    key={g.id}
-                    onPress={() => {
-                      setShowSwitchGroups(false);
-                      onSwitchGroup(g.id);
-                    }}
-                    style={[
-                      styles.switchGroupsRow,
-                      idx === 0 && styles.switchGroupsRowFirst,
-                      (idx === 0 || idx === switchableGroups.length - 1) && styles.switchGroupsRowEdge,
-                    ]}
-                  >
-                    <Text style={styles.switchGroupsRowText} numberOfLines={2}>
-                      {g.name}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-      ) : null}
+      {groupSwitchModal}
 
       {showAnnouncementReadModal ? (
         <Modal visible animationType="slide" onRequestClose={closeAnnouncementModal}>
@@ -1917,30 +1873,6 @@ const styles = StyleSheet.create({
   membersModalClose: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   membersModalScroll: { flex: 1 },
   membersModalCardWrap: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 40 },
-  switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
-  switchGroupsCard: {
-    position: 'absolute',
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 0,
-    maxHeight: 320,
-    ...Shadows.lg,
-  },
-  switchGroupsList: { maxHeight: 300 },
-  switchGroupsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
-  },
-  switchGroupsRowFirst: { borderTopWidth: 0 },
-  switchGroupsRowEdge: { paddingVertical: 12 },
-  switchGroupsRowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
   announcementSection: {
     paddingHorizontal: 20,
     paddingTop: 10,

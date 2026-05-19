@@ -22,6 +22,8 @@ model User {
   thumbnail  String?  // Optional custom avatar image URL
   /// JSON: global in-app notification toggles (see NotifPrefs in API)
   notifPrefsJson String?
+  /// JSON: ordered group ids for list / switcher UI (user preference)
+  groupOrderJson String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
