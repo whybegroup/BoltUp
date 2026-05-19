@@ -70,6 +70,35 @@ export function timeAgo(d: Date): string {
   return `${Math.floor(m / 1440)}d`;
 }
 
+/**
+ * Format stored filter datetime (`YYYY-MM-DD HH:mm`, local wall time) for chip display:
+ * 12-hour clock, AM/PM, **zero-padded hour and minute** (`09:05 PM`) so labels share stable width.
+ */
+export function formatFilterDatetimeTwelveHour(storage: string): string {
+  const t = storage.trim();
+  if (!t) return storage;
+  const [datePart, timePart] = t.split(' ');
+  if (!datePart || !timePart) return storage;
+  const dp = datePart.split('-');
+  if (dp.length !== 3) return storage;
+  const [ys, ms, ds] = dp;
+  const y = Number(ys);
+  const mo = Number(ms);
+  const d = Number(ds);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return storage;
+  const [hs, mins] = timePart.split(':');
+  const hh = Number(hs) || 0;
+  const mm = Number(mins) || 0;
+  const dt = new Date(y, mo - 1, d, hh, mm, 0, 0);
+  if (Number.isNaN(dt.getTime())) return storage;
+  const ampm = dt.getHours() >= 12 ? 'PM' : 'AM';
+  let h12 = dt.getHours() % 12;
+  if (h12 === 0) h12 = 12;
+  const hStr = String(h12).padStart(2, '0');
+  const mmStr = String(dt.getMinutes()).padStart(2, '0');
+  return `${datePart} ${hStr}:${mmStr} ${ampm}`;
+}
+
 // ── Color helpers ────────────────────────────────────────────────────────────
 /** Convert HSL to hex. h 0–360, s and l 0–100. */
 export function hslToHex(h: number, s: number, l: number): string {

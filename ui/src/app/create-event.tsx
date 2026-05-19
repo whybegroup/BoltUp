@@ -17,6 +17,8 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -100,6 +102,54 @@ function serializeCreateFormBaseline(
   });
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** Local wall clock rounded to nearest hour (e.g. 8:30pm → 9:00pm). */
+function roundLocalDateTimeToNearestHour(d: Date): Date {
+  const totalM = d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+  let rounded = Math.round(totalM / 60) * 60;
+  const out = new Date(d);
+  if (rounded >= 24 * 60) {
+    out.setDate(out.getDate() + 1);
+    out.setHours(0, 0, 0, 0);
+  } else {
+    out.setHours(Math.floor(rounded / 60), rounded % 60, 0, 0);
+  }
+  return out;
+}
+
+function getDefaultEventWallTimes() {
+  let start = roundLocalDateTimeToNearestHour(new Date());
+  while (start.getTime() <= Date.now()) {
+    const bumped = new Date(start);
+    bumped.setHours(start.getHours() + 1, 0, 0, 0);
+    start = bumped;
+  }
+  const end = new Date(start);
+  end.setHours(end.getHours() + 1, 0, 0, 0);
+  return {
+    startDate: formatLocalDateInput(start),
+    startTime: `${pad2(start.getHours())}:${pad2(start.getMinutes())}`,
+    endDate: formatLocalDateInput(end),
+    endTime: `${pad2(end.getHours())}:${pad2(end.getMinutes())}`,
+  };
+}
+
+function parseYmdLocal(ymd: string): Date {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return new Date();
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
+}
+
+function wallDateAndHmToDate(dateYmd: string, hm: string): Date {
+  const [hh, mm] = hm.split(':').map(Number);
+  const [y, mo, d] = dateYmd.split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return new Date();
+  return new Date(y, mo - 1, d, hh || 0, mm || 0, 0, 0);
+}
+
 function webEventTimeInputStyle(errored: boolean): Record<string, string | number> {
   return {
     padding: '6px 10px',
@@ -133,14 +183,27 @@ export default function CreateEventScreen() {
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
   const createEventMutation = useCreateEvent(currentUserId ?? '');
 
-  const [form, setForm] = useState({
-    title: '', description: '', groupId: '',
-    startDate: today, startTime: '19:00', endDate: today, endTime: '21:00', allDay: false,
-    location: '', minAttendees: '1', maxAttendees: '',
-    allowMaybe: false, enableWaitlist: false, coverPhotoDrafts: [] as CoverPhotoDraft[],
-    activityIdeasEnabled: false,
-    activityVotesAnonymous: false,
-    recurrence: defaultRecurrenceFormState() as RecurrenceFormState,
+  const [form, setForm] = useState(() => {
+    const t = getDefaultEventWallTimes();
+    return {
+      title: '',
+      description: '',
+      groupId: '',
+      startDate: t.startDate,
+      startTime: t.startTime,
+      endDate: t.endDate,
+      endTime: t.endTime,
+      allDay: false,
+      location: '',
+      minAttendees: '1',
+      maxAttendees: '',
+      allowMaybe: false,
+      enableWaitlist: false,
+      coverPhotoDrafts: [] as CoverPhotoDraft[],
+      activityIdeasEnabled: false,
+      activityVotesAnonymous: false,
+      recurrence: defaultRecurrenceFormState() as RecurrenceFormState,
+    };
   });
   const [errors, setErrors] = useState({
     startDate: '',
@@ -375,13 +438,19 @@ export default function CreateEventScreen() {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [showEndTimePicker, setShowEndTimePicker] = useState(false);
 
-  const getTimeDate = (timeStr: string) => {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours || 0);
-    date.setMinutes(minutes || 0);
-    return date;
-  };
+  const scrollRef = useRef<ScrollView>(null);
+  const eventTimeSectionYRef = useRef(0);
+  const [iosStartDateDraft, setIosStartDateDraft] = useState(() => new Date());
+  const [iosEndDateDraft, setIosEndDateDraft] = useState(() => new Date());
+  const [iosStartTimeDraft, setIosStartTimeDraft] = useState(() => new Date());
+  const [iosEndTimeDraft, setIosEndTimeDraft] = useState(() => new Date());
+
+  const scrollToEventTimeSection = useCallback(() => {
+    requestAnimationFrame(() => {
+      const y = eventTimeSectionYRef.current;
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 16), animated: true });
+    });
+  }, []);
 
   const getMinimumStartTime = () => {
     const selectedDate = new Date(form.startDate);
@@ -569,6 +638,53 @@ export default function CreateEventScreen() {
     validateEndTime(timeStr, form.startTime, form.endDate, form.startDate, form.allDay);
   };
 
+  const startOfToday = useMemo(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  }, []);
+
+  const commitIosStartDate = () => {
+    const dateStr = formatLocalDateInput(iosStartDateDraft);
+    set('startDate', dateStr);
+    validateStartDate(dateStr);
+    validateStartTime(form.startTime, dateStr, form.allDay);
+    validateEndDate(form.endDate, dateStr);
+    validateEndTime(form.endTime, form.startTime, form.endDate, dateStr, form.allDay);
+    setShowStartDatePicker(false);
+  };
+
+  const commitIosEndDate = () => {
+    const dateStr = formatLocalDateInput(iosEndDateDraft);
+    set('endDate', dateStr);
+    validateEndDate(dateStr, form.startDate);
+    validateEndTime(form.endTime, form.startTime, dateStr, form.startDate, form.allDay);
+    setShowEndDatePicker(false);
+  };
+
+  const commitIosStartTime = () => {
+    const timeStr = `${pad2(iosStartTimeDraft.getHours())}:${pad2(iosStartTimeDraft.getMinutes())}`;
+    set('startTime', timeStr);
+    validateStartTime(timeStr, form.startDate, form.allDay);
+    validateEndTime(form.endTime, timeStr, form.endDate, form.startDate, form.allDay);
+    setShowStartTimePicker(false);
+  };
+
+  const commitIosEndTime = () => {
+    const timeStr = `${pad2(iosEndTimeDraft.getHours())}:${pad2(iosEndTimeDraft.getMinutes())}`;
+    set('endTime', timeStr);
+    validateEndTime(timeStr, form.startTime, form.endDate, form.startDate, form.allDay);
+    setShowEndTimePicker(false);
+  };
+
+  /** Commit whichever iOS picker is open so switching fields does not discard drafts. */
+  const flushActiveIosPicker = () => {
+    if (showEndTimePicker) commitIosEndTime();
+    else if (showEndDatePicker) commitIosEndDate();
+    else if (showStartTimePicker) commitIosStartTime();
+    else if (showStartDatePicker) commitIosStartDate();
+  };
+
   const toggleAllDay = () => {
     const next = !form.allDay;
     set('allDay', next);
@@ -692,6 +808,7 @@ export default function CreateEventScreen() {
         }
       />
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: 20, paddingBottom: 100, width: '100%', alignSelf: 'stretch' }}
         showsVerticalScrollIndicator={false}
       >
@@ -740,7 +857,13 @@ export default function CreateEventScreen() {
           </View>
         </Field>
 
-        <View style={styles.dateTimeSection}>
+        <View
+          style={styles.dateTimeSection}
+          collapsable={false}
+          onLayout={(e) => {
+            eventTimeSectionYRef.current = e.nativeEvent.layout.y;
+          }}
+        >
           <View style={styles.sectionHeader}>
             <Text style={[formSectionTitleStyle, styles.dateTimeHeading]}>Event time</Text>
             <TouchableOpacity onPress={toggleAllDay} style={styles.allDayChip} activeOpacity={0.7}>
@@ -765,9 +888,20 @@ export default function CreateEventScreen() {
                     />
                   </View>
                 ) : (
-                  <View style={[styles.eventTimeCell, styles.eventTimeFieldDate]}>
+                  <View style={[styles.eventTimeCell, styles.eventTimeFieldDate]} collapsable={false}>
                     <TouchableOpacity
-                      onPress={() => setShowStartDatePicker(true)}
+                      onPress={() => {
+                        if (Platform.OS === 'ios') {
+                          if (showStartDatePicker) {
+                            commitIosStartDate();
+                            return;
+                          }
+                          flushActiveIosPicker();
+                          setIosStartDateDraft(parseYmdLocal(form.startDate));
+                          scrollToEventTimeSection();
+                        }
+                        setShowStartDatePicker(true);
+                      }}
                       activeOpacity={0.85}
                       style={[styles.eventTimeSegment, errors.startDate && styles.inputError]}
                     >
@@ -788,9 +922,20 @@ export default function CreateEventScreen() {
                       />
                     </View>
                   ) : (
-                    <View style={[styles.eventTimeCell, styles.eventTimeFieldTime]}>
+                    <View style={[styles.eventTimeCell, styles.eventTimeFieldTime]} collapsable={false}>
                       <TouchableOpacity
-                        onPress={() => setShowStartTimePicker(true)}
+                        onPress={() => {
+                          if (Platform.OS === 'ios') {
+                            if (showStartTimePicker) {
+                              commitIosStartTime();
+                              return;
+                            }
+                            flushActiveIosPicker();
+                            setIosStartTimeDraft(wallDateAndHmToDate(form.startDate, form.startTime));
+                            scrollToEventTimeSection();
+                          }
+                          setShowStartTimePicker(true);
+                        }}
                         activeOpacity={0.85}
                         style={[styles.eventTimeSegment, errors.startTime && styles.inputError]}
                       >
@@ -816,9 +961,19 @@ export default function CreateEventScreen() {
                     />
                   </View>
                 ) : (
-                  <View style={[styles.eventTimeCell, styles.eventTimeFieldDate]}>
+                  <View style={[styles.eventTimeCell, styles.eventTimeFieldDate]} collapsable={false}>
                     <TouchableOpacity
-                      onPress={() => setShowEndDatePicker(true)}
+                      onPress={() => {
+                        if (Platform.OS === 'ios') {
+                          if (showEndDatePicker) {
+                            commitIosEndDate();
+                            return;
+                          }
+                          flushActiveIosPicker();
+                          setIosEndDateDraft(parseYmdLocal(form.endDate));
+                        }
+                        setShowEndDatePicker(true);
+                      }}
                       activeOpacity={0.85}
                       style={[styles.eventTimeSegment, errors.endDate && styles.inputError]}
                     >
@@ -839,9 +994,19 @@ export default function CreateEventScreen() {
                       />
                     </View>
                   ) : (
-                    <View style={[styles.eventTimeCell, styles.eventTimeFieldTime]}>
+                    <View style={[styles.eventTimeCell, styles.eventTimeFieldTime]} collapsable={false}>
                       <TouchableOpacity
-                        onPress={() => setShowEndTimePicker(true)}
+                        onPress={() => {
+                          if (Platform.OS === 'ios') {
+                            if (showEndTimePicker) {
+                              commitIosEndTime();
+                              return;
+                            }
+                            flushActiveIosPicker();
+                            setIosEndTimeDraft(wallDateAndHmToDate(form.endDate, form.endTime));
+                          }
+                          setShowEndTimePicker(true);
+                        }}
                         activeOpacity={0.85}
                         style={[styles.eventTimeSegment, errors.endTime && styles.inputError]}
                       >
@@ -867,74 +1032,6 @@ export default function CreateEventScreen() {
             </View>
           ) : null}
         </View>
-
-        {Platform.OS !== 'web' && showStartDatePicker && (
-          <DateTimePicker
-            value={form.startDate ? new Date(form.startDate) : new Date()}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={handleStartDateChange}
-            minimumDate={new Date()}
-          />
-        )}
-        {Platform.OS === 'ios' && showStartDatePicker && (
-          <View style={styles.datePickerActions}>
-            <TouchableOpacity onPress={() => setShowStartDatePicker(false)} style={styles.datePickerBtn}>
-              <Text style={styles.datePickerBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {Platform.OS !== 'web' && showEndDatePicker && (
-          <DateTimePicker
-            value={form.endDate ? new Date(form.endDate) : new Date()}
-            mode="date"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={handleEndDateChange}
-            minimumDate={form.startDate ? new Date(form.startDate) : new Date()}
-          />
-        )}
-        {Platform.OS === 'ios' && showEndDatePicker && (
-          <View style={styles.datePickerActions}>
-            <TouchableOpacity onPress={() => setShowEndDatePicker(false)} style={styles.datePickerBtn}>
-              <Text style={styles.datePickerBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {Platform.OS !== 'web' && showStartTimePicker && (
-          <DateTimePicker
-            value={getTimeDate(form.startTime)}
-            mode="time"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={handleStartTimeChange}
-            minimumDate={getMinimumStartTime()}
-          />
-        )}
-        {Platform.OS === 'ios' && showStartTimePicker && (
-          <View style={styles.datePickerActions}>
-            <TouchableOpacity onPress={() => setShowStartTimePicker(false)} style={styles.datePickerBtn}>
-              <Text style={styles.datePickerBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {Platform.OS !== 'web' && showEndTimePicker && (
-          <DateTimePicker
-            value={getTimeDate(form.endTime)}
-            mode="time"
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={handleEndTimeChange}
-            minimumDate={getMinimumEndTime()}
-          />
-        )}
-        {Platform.OS === 'ios' && showEndTimePicker && (
-          <View style={styles.datePickerActions}>
-            <TouchableOpacity onPress={() => setShowEndTimePicker(false)} style={styles.datePickerBtn}>
-              <Text style={styles.datePickerBtnText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        )}
 
         <RecurrenceField
           anchorDate={recurrenceAnchor}
@@ -1118,6 +1215,144 @@ export default function CreateEventScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {Platform.OS === 'android' && showStartDatePicker && (
+        <DateTimePicker
+          value={parseYmdLocal(form.startDate)}
+          mode="date"
+          display="default"
+          onChange={handleStartDateChange}
+          minimumDate={startOfToday}
+        />
+      )}
+      {Platform.OS === 'android' && showEndDatePicker && (
+        <DateTimePicker
+          value={parseYmdLocal(form.endDate)}
+          mode="date"
+          display="default"
+          onChange={handleEndDateChange}
+          minimumDate={parseYmdLocal(form.startDate)}
+        />
+      )}
+      {Platform.OS === 'android' && showStartTimePicker && (
+        <DateTimePicker
+          value={wallDateAndHmToDate(form.startDate, form.startTime)}
+          mode="time"
+          display="default"
+          onChange={handleStartTimeChange}
+          minimumDate={getMinimumStartTime()}
+        />
+      )}
+      {Platform.OS === 'android' && showEndTimePicker && (
+        <DateTimePicker
+          value={wallDateAndHmToDate(form.endDate, form.endTime)}
+          mode="time"
+          display="default"
+          onChange={handleEndTimeChange}
+          minimumDate={getMinimumEndTime()}
+        />
+      )}
+
+      {Platform.OS === 'ios' && showStartDatePicker ? (
+        <Modal transparent animationType="fade" statusBarTranslucent visible>
+          <View style={styles.iosFilterPickerModalRoot}>
+            <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosStartDate} />
+            <View style={styles.iosFilterPickerModalCard}>
+              <View style={styles.iosFilterPickerHostDate}>
+              <DateTimePicker
+                value={iosStartDateDraft}
+                mode="date"
+                display="inline"
+                onChange={(_, d) => {
+                  if (d) setIosStartDateDraft(d);
+                }}
+                minimumDate={startOfToday}
+              />
+              </View>
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity onPress={commitIosStartDate} style={styles.datePickerBtn}>
+                  <Text style={styles.datePickerBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+      {Platform.OS === 'ios' && showEndDatePicker ? (
+        <Modal transparent animationType="fade" statusBarTranslucent visible>
+          <View style={styles.iosFilterPickerModalRoot}>
+            <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosEndDate} />
+            <View style={styles.iosFilterPickerModalCard}>
+              <View style={styles.iosFilterPickerHostDate}>
+              <DateTimePicker
+                value={iosEndDateDraft}
+                mode="date"
+                display="inline"
+                onChange={(_, d) => {
+                  if (d) setIosEndDateDraft(d);
+                }}
+                minimumDate={parseYmdLocal(form.startDate)}
+              />
+              </View>
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity onPress={commitIosEndDate} style={styles.datePickerBtn}>
+                  <Text style={styles.datePickerBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+      {Platform.OS === 'ios' && showStartTimePicker ? (
+        <Modal transparent animationType="fade" statusBarTranslucent visible>
+          <View style={styles.iosFilterPickerModalRoot}>
+            <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosStartTime} />
+            <View style={styles.iosFilterPickerModalCard}>
+              <View style={styles.iosFilterPickerHostTime}>
+              <DateTimePicker
+                value={iosStartTimeDraft}
+                mode="time"
+                display="spinner"
+                onChange={(_, d) => {
+                  if (d) setIosStartTimeDraft(d);
+                }}
+                minimumDate={getMinimumStartTime()}
+              />
+              </View>
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity onPress={commitIosStartTime} style={styles.datePickerBtn}>
+                  <Text style={styles.datePickerBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+      {Platform.OS === 'ios' && showEndTimePicker ? (
+        <Modal transparent animationType="fade" statusBarTranslucent visible>
+          <View style={styles.iosFilterPickerModalRoot}>
+            <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosEndTime} />
+            <View style={styles.iosFilterPickerModalCard}>
+              <View style={styles.iosFilterPickerHostTime}>
+              <DateTimePicker
+                value={iosEndTimeDraft}
+                mode="time"
+                display="spinner"
+                onChange={(_, d) => {
+                  if (d) setIosEndTimeDraft(d);
+                }}
+                minimumDate={getMinimumEndTime()}
+              />
+              </View>
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity onPress={commitIosEndTime} style={styles.datePickerBtn}>
+                  <Text style={styles.datePickerBtnText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
       </View>
     </EventFormPopoverChrome>
   );
@@ -1136,6 +1371,44 @@ const styles = StyleSheet.create({
   datePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 8 },
   datePickerBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.lg, backgroundColor: Colors.accent },
   datePickerBtnText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  iosFilterPickerBackdrop: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  iosFilterPickerModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 40,
+  },
+  iosFilterPickerModalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    zIndex: 2,
+  },
+  iosFilterPickerHostDate: {
+    width: '100%',
+    minHeight: 320,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iosFilterPickerHostTime: {
+    width: '100%',
+    minHeight: 200,
+    padding: 12,
+    alignItems: 'stretch',
+    justifyContent: 'center',
+  },
   settingsCard:  { backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 16 },
   activityComposerInput: {
     padding: 9,

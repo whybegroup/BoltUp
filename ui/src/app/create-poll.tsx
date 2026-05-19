@@ -17,6 +17,8 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -204,6 +206,8 @@ export default function CreatePollScreen() {
   const [deadlineTime, setDeadlineTime] = useState('23:59');
   const [showDeadlineDatePicker, setShowDeadlineDatePicker] = useState(false);
   const [showDeadlineTimePicker, setShowDeadlineTimePicker] = useState(false);
+  const [iosDeadlineDateDraft, setIosDeadlineDateDraft] = useState(() => new Date());
+  const [iosDeadlineTimeDraft, setIosDeadlineTimeDraft] = useState(() => new Date());
   const [createPollBaselineSerialized, setCreatePollBaselineSerialized] = useState<string | null>(null);
   const initialGroupIdRef = useRef<string | null>(null);
   const hydratedEditRef = useRef(false);
@@ -678,14 +682,28 @@ export default function CreatePollScreen() {
             ) : (
               <View style={styles.dtRow}>
                 <TouchableOpacity
-                  onPress={() => setShowDeadlineDatePicker(true)}
+                  onPress={() => {
+                    if (Platform.OS === 'ios') {
+                      const d = deadlineDate ? new Date(`${deadlineDate}T12:00:00`) : new Date();
+                      setIosDeadlineDateDraft(Number.isFinite(d.getTime()) ? d : new Date());
+                    }
+                    setShowDeadlineDatePicker(true);
+                  }}
                   style={styles.dtTouch}
                 >
                   <Text style={styles.dtLabel}>Date</Text>
                   <Text style={styles.dtValue}>{deadlineDate || 'Select'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  onPress={() => setShowDeadlineTimePicker(true)}
+                  onPress={() => {
+                    if (Platform.OS === 'ios') {
+                      const [h, m] = deadlineTime.split(':').map(Number);
+                      const x = new Date();
+                      x.setHours(h || 0, m || 0, 0, 0);
+                      setIosDeadlineTimeDraft(x);
+                    }
+                    setShowDeadlineTimePicker(true);
+                  }}
                   style={styles.dtTouch}
                 >
                   <Text style={styles.dtLabel}>Time</Text>
@@ -693,18 +711,18 @@ export default function CreatePollScreen() {
                 </TouchableOpacity>
               </View>
             )}
-            {Platform.OS !== 'web' && showDeadlineDatePicker ? (
+            {Platform.OS === 'android' && showDeadlineDatePicker ? (
               <DateTimePicker
                 value={deadlineDate ? new Date(`${deadlineDate}T12:00:00`) : new Date()}
                 mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                display="default"
                 onChange={(_, d) => {
-                  if (Platform.OS === 'android') setShowDeadlineDatePicker(false);
+                  setShowDeadlineDatePicker(false);
                   if (d) setDeadlineDate(formatLocalDateInput(d));
                 }}
               />
             ) : null}
-            {Platform.OS !== 'web' && showDeadlineTimePicker ? (
+            {Platform.OS === 'android' && showDeadlineTimePicker ? (
               <DateTimePicker
                 value={(() => {
                   const [h, m] = deadlineTime.split(':').map(Number);
@@ -713,9 +731,9 @@ export default function CreatePollScreen() {
                   return x;
                 })()}
                 mode="time"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                display="default"
                 onChange={(_, d) => {
-                  if (Platform.OS === 'android') setShowDeadlineTimePicker(false);
+                  setShowDeadlineTimePicker(false);
                   if (d) {
                     const hh = String(d.getHours()).padStart(2, '0');
                     const mm = String(d.getMinutes()).padStart(2, '0');
@@ -723,19 +741,6 @@ export default function CreatePollScreen() {
                   }
                 }}
               />
-            ) : null}
-            {Platform.OS === 'ios' && (showDeadlineDatePicker || showDeadlineTimePicker) ? (
-              <View style={styles.pickerDoneRow}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setShowDeadlineDatePicker(false);
-                    setShowDeadlineTimePicker(false);
-                  }}
-                  style={styles.pickerDoneBtn}
-                >
-                  <Text style={styles.pickerDoneText}>Done</Text>
-                </TouchableOpacity>
-              </View>
             ) : null}
           </Field>
           <View style={styles.photosSection}>
@@ -941,6 +946,83 @@ export default function CreatePollScreen() {
             )}
           </TouchableOpacity>
         </ScrollView>
+        {Platform.OS === 'ios' && showDeadlineDatePicker ? (
+          <Modal transparent animationType="fade" statusBarTranslucent visible>
+            <View style={styles.iosPickerModalRoot}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, styles.iosPickerBackdrop]}
+                onPress={() => {
+                  setDeadlineDate(formatLocalDateInput(iosDeadlineDateDraft));
+                  setShowDeadlineDatePicker(false);
+                }}
+              />
+              <View style={styles.iosPickerModalCard}>
+                <View style={styles.iosPickerHostDate}>
+                  <DateTimePicker
+                    value={iosDeadlineDateDraft}
+                    mode="date"
+                    display="inline"
+                    onChange={(_, d) => {
+                      if (d) setIosDeadlineDateDraft(d);
+                    }}
+                  />
+                </View>
+                <View style={styles.datePickerActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setDeadlineDate(formatLocalDateInput(iosDeadlineDateDraft));
+                      setShowDeadlineDatePicker(false);
+                    }}
+                    style={styles.datePickerBtn}
+                  >
+                    <Text style={styles.datePickerBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        ) : null}
+        {Platform.OS === 'ios' && showDeadlineTimePicker ? (
+          <Modal transparent animationType="fade" statusBarTranslucent visible>
+            <View style={styles.iosPickerModalRoot}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, styles.iosPickerBackdrop]}
+                onPress={() => {
+                  const hh = String(iosDeadlineTimeDraft.getHours()).padStart(2, '0');
+                  const mm = String(iosDeadlineTimeDraft.getMinutes()).padStart(2, '0');
+                  setDeadlineTime(`${hh}:${mm}`);
+                  setShowDeadlineTimePicker(false);
+                }}
+              />
+              <View style={styles.iosPickerModalCard}>
+                <View style={styles.iosPickerHostTime}>
+                  <DateTimePicker
+                    value={iosDeadlineTimeDraft}
+                    mode="time"
+                    display="spinner"
+                    onChange={(_, d) => {
+                      if (d) setIosDeadlineTimeDraft(d);
+                    }}
+                    is24Hour={false}
+                  />
+                </View>
+                <View style={styles.datePickerActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const hh = String(iosDeadlineTimeDraft.getHours()).padStart(2, '0');
+                      const mm = String(iosDeadlineTimeDraft.getMinutes()).padStart(2, '0');
+                      setDeadlineTime(`${hh}:${mm}`);
+                      setShowDeadlineTimePicker(false);
+                    }}
+                    style={styles.datePickerBtn}
+                  >
+                    <Text style={styles.datePickerBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        ) : null}
       </View>
     </EventFormPopoverChrome>
   );
@@ -1087,14 +1169,52 @@ const styles = StyleSheet.create({
   },
   dtLabel: { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 4 },
   dtValue: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
-  pickerDoneRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 },
-  pickerDoneBtn: {
+  datePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 8 },
+  datePickerBtn: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: Radius.lg,
     backgroundColor: Colors.accent,
   },
-  pickerDoneText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  datePickerBtnText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  iosPickerBackdrop: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  iosPickerModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 40,
+  },
+  iosPickerModalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    zIndex: 2,
+  },
+  iosPickerHostDate: {
+    width: '100%',
+    minHeight: 320,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iosPickerHostTime: {
+    width: '100%',
+    minHeight: 200,
+    padding: 12,
+    alignItems: 'stretch',
+    justifyContent: 'center',
+  },
   addOptionBtn: {
     flexDirection: 'row',
     alignItems: 'center',

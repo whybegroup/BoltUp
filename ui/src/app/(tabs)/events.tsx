@@ -6,27 +6,20 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
-// Web datetime picker (react-datepicker) – only used on web
-let WebDatePicker: any = null;
-if (Platform.OS === 'web') {
-  // require at runtime so native builds don't try to bundle DOM-only code
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  WebDatePicker = require('react-datepicker').default;
-  // Load default react-datepicker styles on web so the popup calendar/time picker is visible and styled
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  require('react-datepicker/dist/react-datepicker.css');
-  // Lightly override the portal backdrop so it doesn't dim the whole app too strongly
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  require('./react-datepicker-overrides.css');
-}
 import { useRouter, usePathname, type Href } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Colors, Fonts, Layout, Radius } from '../../constants/theme';
-import { getGroupColor, getDefaultGroupThemeFromName } from '../../utils/helpers';
+import {
+  getGroupColor,
+  getDefaultGroupThemeFromName,
+  formatFilterDatetimeTwelveHour,
+} from '../../utils/helpers';
 import { ListView } from '../../components/ListView';
 import { NotificationsPanelModal } from '../../components/NotificationsPanelModal';
 import { CalendarView } from '../../components/CalendarView';
@@ -51,6 +44,51 @@ import {
 } from '../../utils/eventsScreenPrefs';
 import { type EventDetailed } from '@moijia/client';
 import { withReturnTo } from '../../utils/navigationReturn';
+
+function formatLocalDateTime(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${day} ${hh}:${mm}`;
+}
+
+function formatLocalTimeTwelveHour(d: Date): string {
+  const hours24 = d.getHours();
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const suffix = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 || 12;
+  return `${String(hours12).padStart(2, '0')}:${minutes} ${suffix}`;
+}
+
+function webFilterModalInputStyle(): Record<string, string | number> {
+  return {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: 10,
+    border: '1px solid #18181B',
+    backgroundColor: '#F4F4F5',
+    fontSize: 14,
+    color: '#18181B',
+    fontFamily: 'DMSans_500Medium',
+    boxSizing: 'border-box',
+    outline: 'none',
+    marginBottom: 4,
+  };
+}
+
+function mergeFilterDraftDatePart(base: Date, picked: Date): Date {
+  const n = new Date(base);
+  n.setFullYear(picked.getFullYear(), picked.getMonth(), picked.getDate());
+  return n;
+}
+
+function mergeFilterDraftTimePart(base: Date, picked: Date): Date {
+  const n = new Date(base);
+  n.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
+  return n;
+}
 
 export default function EventsScreen() {
   const router = useRouter();
@@ -99,9 +137,15 @@ export default function EventsScreen() {
   const [endDateText,   setEndDateText]   = useState<string>(defaultEndSpecificText);
   const [startMode,     setStartMode]     = useState<'specific' | 'now' | 'allTime'>('now');
   const [endMode,       setEndMode]       = useState<'specific' | 'now' | 'allTime'>('allTime');
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker,   setShowEndPicker]   = useState(false);
-  const [activeDateField, setActiveDateField] = useState<'from' | 'to' | null>(null);
+  const [datetimeFilterModal, setDatetimeFilterModal] = useState<null | 'start' | 'end'>(null);
+  const [filterModalDraft, setFilterModalDraft] = useState(() => new Date());
+  const [iosFilterFieldPicker, setIosFilterFieldPicker] = useState<null | 'date' | 'time'>(null);
+  const [iosFilterSubDraft, setIosFilterSubDraft] = useState(() => new Date());
+
+  const closeDatetimeFilterModal = () => {
+    setIosFilterFieldPicker(null);
+    setDatetimeFilterModal(null);
+  };
 
   const RSVP_OPTIONS = [
     ['going', 'Going'],
@@ -519,63 +563,20 @@ export default function EventsScreen() {
                     >
                       <Text style={styles.dateQuickButtonText}>All time</Text>
                     </TouchableOpacity>
-                    {Platform.OS === 'web' && WebDatePicker ? (
-                      <View
-                        style={[
-                          styles.webPickerWrapper,
-                          startMode === 'specific' && styles.dateSpecificWrapperActive,
-                          activeDateField === 'from' && styles.webPickerActive,
-                          { alignSelf: 'flex-start' },
-                        ]}
-                      >
-                        <WebDatePicker
-                          selected={startDateText ? parseDateTime(startDateText) : null}
-                          onChange={(date: Date | null) => {
-                            if (!date) return;
-                            const y = date.getFullYear();
-                            const m = String(date.getMonth() + 1).padStart(2, '0');
-                            const d = String(date.getDate()).padStart(2, '0');
-                            const hh = String(date.getHours()).padStart(2, '0');
-                            const mm = String(date.getMinutes()).padStart(2, '0');
-                            setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
-                            setStartMode('specific');
-                          }}
-                          popperPlacement="bottom-start"
-                          withPortal
-                          onCalendarOpen={() => {
-                            if (!startDateText) {
-                              const now = new Date();
-                              const y = now.getFullYear();
-                              const m = String(now.getMonth() + 1).padStart(2, '0');
-                              const d = String(now.getDate()).padStart(2, '0');
-                              const hh = '00';
-                              const mm = '00';
-                              setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
-                            }
-                            setActiveDateField('from');
-                            setStartMode('specific');
-                          }}
-                          onCalendarClose={() => setActiveDateField(null)}
-                          showTimeSelect
-                          timeIntervals={15}
-                          dateFormat="yyyy-MM-dd HH:mm"
-                          placeholderText={defaultStartSpecificText}
-                        />
-                      </View>
-                    ) : (
+                    <View style={[styles.nativeDateFieldWrap, styles.filterDatetimeSlot]} collapsable={false}>
                       <TouchableOpacity
                         onPress={() => {
-                          if (!startDateText) {
+                          let text = startDateText;
+                          if (!text) {
                             const now = new Date();
                             const y = now.getFullYear();
                             const m = String(now.getMonth() + 1).padStart(2, '0');
                             const d = String(now.getDate()).padStart(2, '0');
-                            const hh = '00';
-                            const mm = '00';
-                            setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                            text = `${y}-${m}-${d} 00:00`;
+                            setStartDateText(text);
                           }
-                          setStartMode('specific');
-                          setShowStartPicker(true);
+                          setFilterModalDraft(parseDateTime(text) ?? new Date());
+                          setDatetimeFilterModal('start');
                         }}
                         activeOpacity={0.7}
                         style={[
@@ -583,15 +584,19 @@ export default function EventsScreen() {
                           startMode === 'specific' && styles.dateSpecificWrapperActive,
                         ]}
                       >
-                        <Text style={styles.dateValueText}>
-                          {startMode === 'now'
-                            ? 'Now'
-                            : startMode === 'allTime'
-                              ? 'All time'
-                              : (startDateText || defaultStartSpecificText)}
+                        <Text
+                          style={[
+                            styles.dateValueText,
+                            startMode === 'specific' && styles.dateValueTextActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {formatFilterDatetimeTwelveHour(
+                            startDateText || defaultStartSpecificText
+                          )}
                         </Text>
                       </TouchableOpacity>
-                    )}
+                    </View>
                   </View>
                 </View>
                 <View style={styles.dateFilterRow}>
@@ -621,63 +626,20 @@ export default function EventsScreen() {
                     >
                       <Text style={styles.dateQuickButtonText}>All time</Text>
                     </TouchableOpacity>
-                    {Platform.OS === 'web' && WebDatePicker ? (
-                      <View
-                        style={[
-                          styles.webPickerWrapper,
-                          endMode === 'specific' && styles.dateSpecificWrapperActive,
-                          activeDateField === 'to' && styles.webPickerActive,
-                          { alignSelf: 'flex-start' },
-                        ]}
-                      >
-                        <WebDatePicker
-                          selected={endDateText ? parseDateTime(endDateText) : null}
-                          onChange={(date: Date | null) => {
-                            if (!date) return;
-                            const y = date.getFullYear();
-                            const m = String(date.getMonth() + 1).padStart(2, '0');
-                            const d = String(date.getDate()).padStart(2, '0');
-                            const hh = String(date.getHours()).padStart(2, '0');
-                            const mm = String(date.getMinutes()).padStart(2, '0');
-                            setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
-                            setEndMode('specific');
-                          }}
-                          popperPlacement="bottom-start"
-                          withPortal
-                          onCalendarOpen={() => {
-                            if (!endDateText) {
-                              const now = new Date();
-                              const y = now.getFullYear();
-                              const m = String(now.getMonth() + 1).padStart(2, '0');
-                              const d = String(now.getDate()).padStart(2, '0');
-                              const hh = '00';
-                              const mm = '00';
-                              setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
-                            }
-                            setActiveDateField('to');
-                            setEndMode('specific');
-                          }}
-                          onCalendarClose={() => setActiveDateField(null)}
-                          showTimeSelect
-                          timeIntervals={15}
-                          dateFormat="yyyy-MM-dd HH:mm"
-                          placeholderText={defaultEndSpecificText}
-                        />
-                      </View>
-                    ) : (
+                    <View style={[styles.nativeDateFieldWrap, styles.filterDatetimeSlot]} collapsable={false}>
                       <TouchableOpacity
                         onPress={() => {
-                          if (!endDateText) {
+                          let text = endDateText;
+                          if (!text) {
                             const now = new Date();
                             const y = now.getFullYear();
                             const m = String(now.getMonth() + 1).padStart(2, '0');
                             const d = String(now.getDate()).padStart(2, '0');
-                            const hh = '00';
-                            const mm = '00';
-                            setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
+                            text = `${y}-${m}-${d} 00:00`;
+                            setEndDateText(text);
                           }
-                          setEndMode('specific');
-                          setShowEndPicker(true);
+                          setFilterModalDraft(parseDateTime(text) ?? new Date());
+                          setDatetimeFilterModal('end');
                         }}
                         activeOpacity={0.7}
                         style={[
@@ -685,15 +647,19 @@ export default function EventsScreen() {
                           endMode === 'specific' && styles.dateSpecificWrapperActive,
                         ]}
                       >
-                        <Text style={styles.dateValueText}>
-                          {endMode === 'now'
-                            ? 'Now'
-                            : endMode === 'allTime'
-                              ? 'All time'
-                              : (endDateText || defaultEndSpecificText)}
+                        <Text
+                          style={[
+                            styles.dateValueText,
+                            endMode === 'specific' && styles.dateValueTextActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {formatFilterDatetimeTwelveHour(
+                            endDateText || defaultEndSpecificText
+                          )}
                         </Text>
                       </TouchableOpacity>
-                    )}
+                    </View>
                   </View>
                 </View>
               </View>
@@ -747,49 +713,207 @@ export default function EventsScreen() {
         )}
       </View>
 
-      {/* Start / End native pickers (native platforms only) */}
-      {Platform.OS !== 'web' && showStartPicker && (
-        <DateTimePicker
-          mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
-          value={startMode === 'now'
-            ? new Date()
-            : (startDateText ? parseDateTime(startDateText) ?? new Date() : new Date())
+      <Modal
+        transparent
+        animationType="fade"
+        visible={datetimeFilterModal != null}
+        onRequestClose={() => {
+          if (Platform.OS === 'ios' && iosFilterFieldPicker != null) {
+            setIosFilterFieldPicker(null);
+          } else {
+            closeDatetimeFilterModal();
           }
-          onChange={(_, date) => {
-            setShowStartPicker(false);
-            if (date) {
-              const y = date.getFullYear();
-              const m = String(date.getMonth() + 1).padStart(2, '0');
-              const d = String(date.getDate()).padStart(2, '0');
-              const hh = String(date.getHours()).padStart(2, '0');
-              const mm = String(date.getMinutes()).padStart(2, '0');
-              setStartDateText(`${y}-${m}-${d} ${hh}:${mm}`);
-              setStartMode('specific');
-            }
-          }}
-        />
-      )}
-      {Platform.OS !== 'web' && showEndPicker && (
-        <DateTimePicker
-          mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
-          value={endMode === 'now'
-            ? new Date()
-            : (endDateText ? parseDateTime(endDateText) ?? new Date() : new Date())
-          }
-          onChange={(_, date) => {
-            setShowEndPicker(false);
-            if (date) {
-              const y = date.getFullYear();
-              const m = String(date.getMonth() + 1).padStart(2, '0');
-              const d = String(date.getDate()).padStart(2, '0');
-              const hh = String(date.getHours()).padStart(2, '0');
-              const mm = String(date.getMinutes()).padStart(2, '0');
-              setEndDateText(`${y}-${m}-${d} ${hh}:${mm}`);
-              setEndMode('specific');
-            }
-          }}
-        />
-      )}
+        }}
+        statusBarTranslucent
+      >
+        <View style={styles.filterDatetimeModalRoot}>
+          <Pressable
+            style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]}
+            onPress={() => {
+              if (Platform.OS === 'ios' && iosFilterFieldPicker != null) {
+                setIosFilterFieldPicker(null);
+              } else {
+                closeDatetimeFilterModal();
+              }
+            }}
+          />
+          <View style={styles.filterDatetimeModalCard} pointerEvents="box-none">
+            {Platform.OS === 'ios' && iosFilterFieldPicker != null ? (
+              <>
+                <View style={styles.filterIosSubPickerHeader}>
+                  <TouchableOpacity
+                    onPress={() => setIosFilterFieldPicker(null)}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    style={styles.filterIosSubPickerBack}
+                  >
+                    <Ionicons name="chevron-back" size={22} color={Colors.text} />
+                  </TouchableOpacity>
+                  <Text style={styles.filterIosSubPickerTitle}>
+                    {iosFilterFieldPicker === 'date' ? 'Date' : 'Time'}
+                  </Text>
+                </View>
+                <View
+                  style={
+                    iosFilterFieldPicker === 'date'
+                      ? styles.filterIosSubPickerHostCalendar
+                      : styles.filterIosSubPickerHostTime
+                  }
+                >
+                  <DateTimePicker
+                    value={iosFilterSubDraft}
+                    mode={iosFilterFieldPicker}
+                    display={iosFilterFieldPicker === 'date' ? 'inline' : 'spinner'}
+                    locale="en-US"
+                    onChange={(_, date) => {
+                      if (date) setIosFilterSubDraft(date);
+                    }}
+                    style={
+                      iosFilterFieldPicker === 'date'
+                        ? styles.filterIosSubPickerCalendar
+                        : styles.filterIosSubPickerTimeWheels
+                    }
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[styles.filterDatetimeModalSave, styles.filterIosSubPickerDone]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    if (iosFilterFieldPicker === 'date') {
+                      setFilterModalDraft((prev) => mergeFilterDraftDatePart(prev, iosFilterSubDraft));
+                    } else {
+                      setFilterModalDraft((prev) => mergeFilterDraftTimePart(prev, iosFilterSubDraft));
+                    }
+                    setIosFilterFieldPicker(null);
+                  }}
+                >
+                  <Text style={styles.filterDatetimeModalSaveText}>Done</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.filterDatetimeModalTitle}>
+                  {datetimeFilterModal === 'start' ? 'From' : datetimeFilterModal === 'end' ? 'To' : ''}
+                </Text>
+                <ScrollView
+                  style={styles.filterDatetimeModalScroll}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={styles.filterModalSectionLabel}>Date</Text>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="date"
+                      value={
+                        datetimeFilterModal
+                          ? formatLocalDateTime(filterModalDraft).slice(0, 10)
+                          : ''
+                      }
+                      onChange={(e: any) => {
+                        const datePart = String(e?.target?.value || '').trim();
+                        if (!datePart || !datetimeFilterModal) return;
+                        const [y, m, d] = datePart.split('-').map(Number);
+                        if (!y || !m || !d) return;
+                        setFilterModalDraft((prev) =>
+                          mergeFilterDraftDatePart(prev, new Date(y, m - 1, d, 12, 0))
+                        );
+                      }}
+                      style={webFilterModalInputStyle()}
+                    />
+                  ) : Platform.OS === 'ios' ? (
+                    <TouchableOpacity
+                      style={styles.filterModalIosField}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setIosFilterSubDraft(new Date(filterModalDraft));
+                        setIosFilterFieldPicker('date');
+                      }}
+                    >
+                      <Text style={styles.filterModalIosFieldText}>
+                        {formatLocalDateTime(filterModalDraft).slice(0, 10)}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <DateTimePicker
+                      value={filterModalDraft}
+                      mode="date"
+                      display="spinner"
+                      locale="en-US"
+                      onChange={(_, date) => {
+                        if (date) setFilterModalDraft((prev) => mergeFilterDraftDatePart(prev, date));
+                      }}
+                      style={styles.inlinePicker}
+                    />
+                  )}
+                  <Text style={styles.filterModalSectionLabel}>Time</Text>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="time"
+                      value={(() => {
+                        const t = formatLocalDateTime(filterModalDraft).split(' ')[1] ?? '00:00';
+                        return t.length === 5 ? t : '00:00';
+                      })()}
+                      onChange={(e: any) => {
+                        const timePart = String(e?.target?.value || '').trim();
+                        if (!timePart || !datetimeFilterModal) return;
+                        const [hs, mins] = timePart.split(':');
+                        const hh = Number(hs) || 0;
+                        const mm = Number(mins) || 0;
+                        setFilterModalDraft((prev) => {
+                          const n = new Date(prev);
+                          n.setHours(hh, mm, 0, 0);
+                          return n;
+                        });
+                      }}
+                      style={webFilterModalInputStyle()}
+                    />
+                  ) : Platform.OS === 'ios' ? (
+                    <TouchableOpacity
+                      style={styles.filterModalIosField}
+                      activeOpacity={0.75}
+                      onPress={() => {
+                        setIosFilterSubDraft(new Date(filterModalDraft));
+                        setIosFilterFieldPicker('time');
+                      }}
+                    >
+                      <Text style={styles.filterModalIosFieldText}>
+                        {formatLocalTimeTwelveHour(filterModalDraft)}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <DateTimePicker
+                      value={filterModalDraft}
+                      mode="time"
+                      display="spinner"
+                      is24Hour={false}
+                      locale="en-US"
+                      onChange={(_, date) => {
+                        if (date) setFilterModalDraft((prev) => mergeFilterDraftTimePart(prev, date));
+                      }}
+                      style={styles.inlinePicker}
+                    />
+                  )}
+                </ScrollView>
+                <TouchableOpacity
+                  style={styles.filterDatetimeModalSave}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    if (datetimeFilterModal === 'start') {
+                      setStartDateText(formatLocalDateTime(filterModalDraft));
+                      setStartMode('specific');
+                    } else if (datetimeFilterModal === 'end') {
+                      setEndDateText(formatLocalDateTime(filterModalDraft));
+                      setEndMode('specific');
+                    }
+                    closeDatetimeFilterModal();
+                  }}
+                >
+                  <Text style={styles.filterDatetimeModalSaveText}>Save</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <NotificationsPanelModal
         visible={showNotifs}
@@ -859,6 +983,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    width: '100%',
   },
   dateFilterLabel: {
     fontSize: 11,
@@ -930,32 +1055,157 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     minWidth: 40, // align "From" / "To" columns
   },
+  filterDatetimeSlot: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    flexShrink: 0,
+  },
   dateValueChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+    alignSelf: 'flex-start',
+    minHeight: 32,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.bg,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
   },
   dateValueText: {
     fontSize: 11,
     fontFamily: Fonts.medium,
-    color: Colors.accent,
+    color: Colors.textSub,
+    textAlign: 'left',
   },
-  webPickerWrapper: {
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bg,
-  },
-  webPickerActive: {
-    borderColor: Colors.accent,
+  dateValueTextActive: {
+    color: Colors.text,
   },
   dateFieldWithNow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 6,
+    flexWrap: 'wrap',
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  nativeDateFieldWrap: { alignSelf: 'flex-start', alignItems: 'flex-start', gap: 6 },
+  inlinePicker: { alignSelf: 'flex-start' },
+  iosFilterPickerBackdrop: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  filterDatetimeModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 40,
+  },
+  filterDatetimeModalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    zIndex: 2,
+  },
+  filterDatetimeModalTitle: {
+    fontSize: 17,
+    fontFamily: Fonts.extraBold,
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  filterModalSectionLabel: {
+    fontSize: 12,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  filterDatetimeModalScroll: {
+    maxHeight: 420,
+  },
+  filterDatetimeModalSave: {
+    marginTop: 16,
+    paddingVertical: 12,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.accent,
+    alignItems: 'center',
+  },
+  filterDatetimeModalSaveText: {
+    fontSize: 15,
+    fontFamily: Fonts.semiBold,
+    color: Colors.surface,
+  },
+  filterModalIosField: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#18181B',
+    backgroundColor: Colors.bg,
+    marginBottom: 4,
+  },
+  filterModalIosFieldText: {
+    fontSize: 14,
+    fontFamily: Fonts.medium,
+    color: Colors.text,
+  },
+  filterIosSubPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 0,
+  },
+  filterIosSubPickerTitle: {
+    fontSize: 17,
+    fontFamily: Fonts.extraBold,
+    color: Colors.text,
+    marginBottom: 0,
+    flex: 1,
+  },
+  filterIosSubPickerBack: {
+    paddingVertical: 4,
+    paddingRight: 4,
+    marginLeft: -4,
+  },
+  /** Equal padding on all sides; calendar centered (intrinsic width) within the inset. */
+  filterIosSubPickerHostCalendar: {
+    width: '100%',
+    minHeight: 320,
+    padding: 16,
+    marginTop: 12,
+    marginBottom: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
+  filterIosSubPickerHostTime: {
+    width: '100%',
+    minHeight: 200,
+    padding: 16,
+    marginTop: 12,
+    marginBottom: 12,
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
+  filterIosSubPickerCalendar: {
+    alignSelf: 'center',
+  },
+  filterIosSubPickerTimeWheels: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  filterIosSubPickerDone: {
+    marginTop: 4,
   },
   dateQuickButton: {
     paddingHorizontal: 10,
@@ -968,7 +1218,7 @@ const styles = StyleSheet.create({
   dateQuickButtonText: {
     fontSize: 11,
     fontFamily: Fonts.medium,
-    color: Colors.accent,
+    color: Colors.textSub,
   },
   dateQuickButtonActive: {
     backgroundColor: Colors.bg,
@@ -976,6 +1226,7 @@ const styles = StyleSheet.create({
   },
   dateSpecificWrapperActive: {
     borderColor: Colors.accent,
+    backgroundColor: Colors.bg,
   },
   pastToggleRow: {
     flexDirection: 'row',
