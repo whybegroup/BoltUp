@@ -33,7 +33,8 @@ import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 import { PollOptionInputKind, type Poll } from '@moijia/client';
 import { ResolvableImage } from './ResolvableImage';
-import { avatarColor, getDefaultGroupThemeFromName, getGroupColor } from '../utils/helpers';
+import { UserAvatar } from './UserAvatar';
+import { getDefaultGroupThemeFromName, getGroupColor } from '../utils/helpers';
 
 const MAX_OPTIONS_PER_QUESTION = 50;
 
@@ -198,6 +199,8 @@ export function PollDetailScreen({
       answer?: string;
       userId?: string;
       anonymous?: boolean;
+      avatarSeed?: string | null;
+      thumbnail?: string | null;
     }>;
   } | null>(null);
   /** Question keys that failed required validation (yellow outline until fixed). */
@@ -236,8 +239,8 @@ export function PollDetailScreen({
   const canDeletePoll = useMemo(() => {
     if (!poll || !userId) return false;
     if (poll.createdBy === userId) return true;
-    return group?.membershipStatus === 'admin' || group?.superAdminId === userId;
-  }, [poll, userId, group?.membershipStatus, group?.superAdminId]);
+    return group?.membershipStatus === 'admin' || group?.ownerId === userId;
+  }, [poll, userId, group?.membershipStatus, group?.ownerId]);
   const pollDeadlineDate = useMemo(() => {
     if (!poll?.deadline) return null;
     const d = new Date(poll.deadline);
@@ -281,8 +284,8 @@ export function PollDetailScreen({
   const canClosePoll = useMemo(() => {
     if (!poll || !userId || isPollClosed) return false;
     if (poll.createdBy === userId) return true;
-    return group?.membershipStatus === 'admin' || group?.superAdminId === userId;
-  }, [poll, userId, group?.membershipStatus, group?.superAdminId, isPollClosed]);
+    return group?.membershipStatus === 'admin' || group?.ownerId === userId;
+  }, [poll, userId, group?.membershipStatus, group?.ownerId, isPollClosed]);
   const acceptedSuggestionByQuestionLabel = useMemo(() => {
     const map = new Map<string, string>();
     for (const s of optionSuggestions) {
@@ -803,6 +806,8 @@ export function PollDetailScreen({
                                     answer: r.answer,
                                     userId: r.userId,
                                     anonymous: false,
+                                    avatarSeed: r.avatarSeed,
+                                    thumbnail: r.thumbnail,
                                   })) ?? [];
                                 setDetailModal({
                                   title: `${q.title} responses`,
@@ -852,6 +857,8 @@ export function PollDetailScreen({
                                 answer: `#${v.rank ?? '—'}`,
                                 userId: v.userId,
                                 anonymous: false,
+                                avatarSeed: v.avatarSeed,
+                                thumbnail: v.thumbnail,
                               })),
                           });
                         };
@@ -939,25 +946,26 @@ export function PollDetailScreen({
                                           disabled={rankingVoterCount === 0 || questionAnonymous}
                                           onPress={openRankingDetails}
                                         >
-                                          {rankingVotersVisible.map((v, idx) => {
-                                            const initial = (v.userName || '?').trim().charAt(0).toUpperCase() || '?';
-                                            return (
-                                              <View
-                                                key={`${v.userId}-${v.rank ?? idx}`}
-                                                style={[
-                                                  styles.rankingThumb,
-                                                  idx > 0 && styles.rankingThumbOverlap,
-                                                  { zIndex: rankingVotersVisible.length - idx },
-                                                  { backgroundColor: avatarColor(v.userName || v.userId) },
-                                                ]}
-                                              >
-                                                <Text style={styles.rankingThumbInitial}>{initial}</Text>
-                                                <View style={styles.rankingThumbRankBadge}>
-                                                  <Text style={styles.rankingThumbRankText}>{v.rank ?? idx + 1}</Text>
-                                                </View>
+                                          {rankingVotersVisible.map((v, idx) => (
+                                            <View
+                                              key={`${v.userId}-${v.rank ?? idx}`}
+                                              style={[
+                                                styles.rankingThumb,
+                                                idx > 0 && styles.rankingThumbOverlap,
+                                                { zIndex: rankingVotersVisible.length - idx },
+                                              ]}
+                                            >
+                                              <UserAvatar
+                                                seed={v.userName || v.userId}
+                                                backgroundColor={v.avatarSeed ? [v.avatarSeed] : undefined}
+                                                thumbnail={v.thumbnail}
+                                                size={24}
+                                              />
+                                              <View style={styles.rankingThumbRankBadge}>
+                                                <Text style={styles.rankingThumbRankText}>{v.rank ?? idx + 1}</Text>
                                               </View>
-                                            );
-                                          })}
+                                            </View>
+                                          ))}
                                           {rankingVotersOverflow > 0 ? (
                                             <View
                                               style={[
@@ -1012,6 +1020,8 @@ export function PollDetailScreen({
                                                 responder: v.userName,
                                                 userId: v.userId,
                                                 anonymous: false,
+                                                avatarSeed: v.avatarSeed,
+                                                thumbnail: v.thumbnail,
                                               })),
                                             })
                                           }
@@ -1241,12 +1251,16 @@ export function PollDetailScreen({
                 {(detailModal?.rows ?? []).map((r, i) => {
                   const responder = r.responder?.trim() || '';
                   const answer = r.answer?.trim() || '';
-                  const initial = responder ? responder.charAt(0).toUpperCase() : '?';
-                  const avatarBg = r.anonymous ? '#E5E7EB' : avatarColor(responder || r.userId || String(i));
+                  const seed = responder || r.userId || '?';
                   return (
                     <View key={`${i}-${r.userId ?? responder}`} style={styles.modalRowCard}>
-                      <View style={[styles.modalAvatar, { backgroundColor: avatarBg }]}>
-                        <Text style={styles.modalAvatarText}>{initial}</Text>
+                      <View style={styles.modalAvatarWrap}>
+                        <UserAvatar
+                          seed={seed}
+                          backgroundColor={r.avatarSeed ? [r.avatarSeed] : undefined}
+                          thumbnail={r.thumbnail}
+                          size={30}
+                        />
                       </View>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.modalResponderName}>{responder || 'Responder'}</Text>
@@ -1629,11 +1643,6 @@ const styles = StyleSheet.create({
   rankingThumbOverlap: {
     marginLeft: -5,
   },
-  rankingThumbInitial: {
-    fontSize: 10,
-    fontFamily: Fonts.bold,
-    color: '#FFFFFF',
-  },
   rankingThumbRankBadge: {
     position: 'absolute',
     right: -4,
@@ -1770,18 +1779,11 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     backgroundColor: '#F9FAFB',
   },
-  modalAvatar: {
+  modalAvatarWrap: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#E5E7EB',
-  },
-  modalAvatarText: {
-    fontSize: 13,
-    fontFamily: Fonts.bold,
-    color: '#4B5563',
+    overflow: 'hidden',
   },
   modalResponderName: {
     fontSize: 13,

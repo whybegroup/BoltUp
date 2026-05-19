@@ -52,7 +52,7 @@ ui/
 
 - **Feed** — List & calendar view, group filter pills, RSVP/tag/needs-more filter panel
 - **Event Detail** — RSVP (Going/Maybe/Can't go), hold for memo, attendance sheet, comments with multi-photo, lightbox, past event gallery
-- **Group Detail** — Events & members tabs, Super Admin 👑 system, make/remove admin, context menu, leave group
+- **Group Detail** — Events & members tabs, Owner 👑 system, make/remove admin, context menu, leave group
 - **Group Settings** — Pending requests approve/decline, member management, add by username, delete group
 - **Invite** — 6-char code, link, iMessage/email share, admin direct-add
 - **Create Event** — Bilingual title, all-day toggle, description with photos, tags, allow-maybe

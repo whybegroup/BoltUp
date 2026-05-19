@@ -146,7 +146,7 @@ export class GroupService {
   /**
    * Get all groups scoped by user's membership status.
    * By default excludes soft-deleted groups.
-   * When includeDeleted=true, also returns soft-deleted groups where user is superadmin.
+   * When includeDeleted=true, also returns soft-deleted groups where user is owner.
    */
   public async getAllForUser(userId: string, includeDeleted = false): Promise<GroupScoped[]> {
     const groups = await prisma.group.findMany({
@@ -159,7 +159,7 @@ export class GroupService {
                 members: {
                   some: {
                     userId,
-                    role: 'superadmin',
+                    role: 'owner',
                     status: 'active',
                   },
                 },
@@ -201,7 +201,7 @@ export class GroupService {
 
   /**
    * Get group by ID scoped by user's membership status.
-   * Soft-deleted groups only visible to superadmin.
+   * Soft-deleted groups only visible to owner.
    */
   public async getByIdForUser(id: string, userId: string): Promise<GroupScoped | null> {
     const group = await prisma.group.findUnique({
@@ -218,10 +218,10 @@ export class GroupService {
 
     if (!group) return null;
     if (group.deletedAt && group.deletedBy) {
-      const isSuperadmin = group.members.some(
-        (m: any) => m.userId === userId && m.role === 'superadmin' && m.status === 'active'
+      const isOwner = group.members.some(
+        (m: any) => m.userId === userId && m.role === 'owner' && m.status === 'active'
       );
-      if (!isSuperadmin) return null;
+      if (!isOwner) return null;
     }
     return this.mapGroupScoped(group, userId);
   }
@@ -235,9 +235,9 @@ export class GroupService {
    * Map Prisma group to GroupScoped based on user's membership
    */
   private mapGroupScoped(group: any, userId: string): GroupScoped {
-    const superAdmin = group.members.find((m: any) => m.role === 'superadmin' && m.status === 'active');
+    const owner = group.members.find((m: any) => m.role === 'owner' && m.status === 'active');
     const admins = group.members.filter(
-      (m: any) => (m.role === 'admin' || m.role === 'superadmin') && m.status === 'active'
+      (m: any) => (m.role === 'admin' || m.role === 'owner') && m.status === 'active'
     );
     const activeMembers = group.members.filter((m: any) => m.status === 'active');
     const pendingMembers = group.members.filter((m: any) => m.status === 'pending');
@@ -247,7 +247,7 @@ export class GroupService {
     let membershipStatus: 'none' | 'pending' | 'member' | 'admin' = 'none';
     if (myMembership) {
       if (myMembership.status === 'pending') membershipStatus = 'pending';
-      else if (myMembership.role === 'superadmin' || myMembership.role === 'admin') membershipStatus = 'admin';
+      else if (myMembership.role === 'owner' || myMembership.role === 'admin') membershipStatus = 'admin';
       else membershipStatus = 'member';
     }
 
@@ -268,7 +268,7 @@ export class GroupService {
 
     if (membershipStatus === 'member' || membershipStatus === 'admin') {
       base.inviteCode = group.inviteCode;
-      base.superAdminId = superAdmin?.userId;
+      base.ownerId = owner?.userId;
       base.adminIds = admins.map((m: any) => m.userId);
       base.memberIds = activeMembers.map((m: any) => m.userId);
       base.createdBy = group.createdBy;
@@ -290,7 +290,7 @@ export class GroupService {
    */
   public async create(input: GroupInput): Promise<Group> {
     const {
-      superAdminId,
+      ownerId,
       adminIds = [],
       memberIds = [],
       createdBy,
@@ -299,14 +299,14 @@ export class GroupService {
       ...groupData
     } = input;
 
-    if (!superAdminId?.trim() || !createdBy?.trim()) {
-      throw Object.assign(new Error('superAdminId and createdBy are required'), { status: 400 });
+    if (!ownerId?.trim() || !createdBy?.trim()) {
+      throw Object.assign(new Error('ownerId and createdBy are required'), { status: 400 });
     }
     const actorIds = Array.from(
-      new Set([superAdminId, createdBy, ...adminIds, ...memberIds].map((x) => x?.trim()).filter(Boolean) as string[]),
+      new Set([ownerId, createdBy, ...adminIds, ...memberIds].map((x) => x?.trim()).filter(Boolean) as string[]),
     );
     const createdByT = createdBy.trim();
-    const superT = superAdminId.trim();
+    const ownerT = ownerId.trim();
     let existingUsers = await prisma.user.findMany({
       where: { id: { in: actorIds } },
       select: { id: true },
@@ -316,7 +316,7 @@ export class GroupService {
     if (missing.length > 0) {
       const userService = new UserService();
       for (const id of missing) {
-        if (id !== createdByT && id !== superT) {
+        if (id !== createdByT && id !== ownerT) {
           throw Object.assign(new Error(`Unknown user id(s): ${missing.join(', ')}`), { status: 400 });
         }
         await userService.upsertFromAuth({
@@ -352,16 +352,16 @@ export class GroupService {
         members: {
           create: [
             // Super admin
-            { userId: superAdminId.trim(), role: 'superadmin' },
+            { userId: ownerId.trim(), role: 'owner' },
             // Other admins
             ...adminIds
               .map((uid) => uid?.trim())
-              .filter((uid): uid is string => !!uid && uid !== superAdminId)
+              .filter((uid): uid is string => !!uid && uid !== ownerId)
               .map((userId) => ({ userId, role: 'admin' as GroupRole })),
             // Regular members
             ...memberIds
               .map((uid) => uid?.trim())
-              .filter((uid): uid is string => !!uid && uid !== superAdminId && !adminIds.includes(uid))
+              .filter((uid): uid is string => !!uid && uid !== ownerId && !adminIds.includes(uid))
               .map((userId) => ({ userId, role: 'member' as GroupRole })),
           ],
         },
@@ -383,10 +383,10 @@ export class GroupService {
    * Update a group
    */
   public async update(id: string, input: GroupUpdate): Promise<Group> {
-    const { superAdminId, adminIds, memberIds, updatedBy, coverPhotos, ...groupData } = input;
+    const { ownerId, adminIds, memberIds, updatedBy, coverPhotos, ...groupData } = input;
 
     // If member lists are provided, update them
-    if (superAdminId || adminIds || memberIds) {
+    if (ownerId || adminIds || memberIds) {
       await prisma.$transaction(async (tx) => {
         // Delete existing members
         await tx.groupMember.deleteMany({
@@ -396,13 +396,13 @@ export class GroupService {
         // Create new members
         const membersToCreate = [];
         
-        if (superAdminId) {
-          membersToCreate.push({ groupId: id, userId: superAdminId, role: 'superadmin' });
+        if (ownerId) {
+          membersToCreate.push({ groupId: id, userId: ownerId, role: 'owner' });
         }
 
         if (adminIds) {
           adminIds
-            .filter((uid) => uid !== superAdminId)
+            .filter((uid) => uid !== ownerId)
             .forEach((userId) => {
               membersToCreate.push({ groupId: id, userId, role: 'admin' });
             });
@@ -410,7 +410,7 @@ export class GroupService {
 
         if (memberIds) {
           memberIds
-            .filter((uid) => uid !== superAdminId && !adminIds?.includes(uid))
+            .filter((uid) => uid !== ownerId && !adminIds?.includes(uid))
             .forEach((userId) => {
               membersToCreate.push({ groupId: id, userId, role: 'member' });
             });
@@ -492,11 +492,11 @@ export class GroupService {
   }
 
   /**
-   * Hard-delete a group (removes group and all related data). Superadmin only.
+   * Hard-delete a group (removes group and all related data). Owner only.
    * Best-effort removal of group thumbnail and all event / comment photos from S3.
    */
   public async hardDelete(id: string, userId: string): Promise<void> {
-    await this.requireSuperadmin(id, userId);
+    await this.requireOwner(id, userId);
     const snapshot = await prisma.group.findUnique({
       where: { id },
       select: {
@@ -540,10 +540,10 @@ export class GroupService {
   }
 
   /**
-   * Soft-delete a group. Superadmin only.
+   * Soft-delete a group. Owner only.
    */
   public async softDelete(id: string, userId: string): Promise<void> {
-    await this.requireSuperadmin(id, userId);
+    await this.requireOwner(id, userId);
     await prisma.group.update({
       where: { id },
       data: {
@@ -554,10 +554,10 @@ export class GroupService {
   }
 
   /**
-   * Recover a soft-deleted group. Superadmin only.
+   * Recover a soft-deleted group. Owner only.
    */
   public async recoverGroup(id: string, userId: string): Promise<void> {
-    await this.requireSuperadmin(id, userId);
+    await this.requireOwner(id, userId);
     await prisma.group.update({
       where: { id },
       data: {
@@ -567,13 +567,13 @@ export class GroupService {
     });
   }
 
-  private async requireSuperadmin(groupId: string, userId: string): Promise<void> {
+  private async requireOwner(groupId: string, userId: string): Promise<void> {
     const member = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },
       select: { role: true, status: true },
     });
-    if (!member || member.role !== 'superadmin' || member.status !== 'active') {
-      throw new Error('Must be superadmin to perform this action');
+    if (!member || member.role !== 'owner' || member.status !== 'active') {
+      throw new Error('Must be owner to perform this action');
     }
   }
 
@@ -1013,7 +1013,7 @@ export class GroupService {
   }
 
   /**
-   * Remove a member from the group. Admin only. Cannot remove superadmin.
+   * Remove a member from the group. Admin only. Cannot remove owner.
    */
   public async removeMember(
     groupId: string,
@@ -1027,12 +1027,12 @@ export class GroupService {
     if (!group) throw new Error('Group not found');
     const performer = group.members.find((m: any) => m.userId === performedBy);
     const target = group.members.find((m: any) => m.userId === memberId);
-    if (!performer || (performer.role !== 'admin' && performer.role !== 'superadmin')) {
+    if (!performer || (performer.role !== 'admin' && performer.role !== 'owner')) {
       throw new Error('Must be admin to remove members');
     }
     if (!target) throw new Error('Member not found');
-    if (target.role === 'superadmin') {
-      throw new Error('Cannot remove superadmin from group');
+    if (target.role === 'owner') {
+      throw new Error('Cannot remove owner from group');
     }
     
     // Get member's RSVPs to check which were "going"
@@ -1076,7 +1076,7 @@ export class GroupService {
   }
 
   /**
-   * Set a member's role (admin or member). Admin only. Cannot change superadmin.
+   * Set a member's role (admin or member). Admin only. Cannot change owner.
    */
   public async setMemberRole(
     groupId: string,
@@ -1091,12 +1091,12 @@ export class GroupService {
     if (!group) throw new Error('Group not found');
     const performer = group.members.find((m: any) => m.userId === performedBy && m.status === 'active');
     const target = group.members.find((m: any) => m.userId === memberId && m.status === 'active');
-    if (!performer || (performer.role !== 'admin' && performer.role !== 'superadmin')) {
+    if (!performer || (performer.role !== 'admin' && performer.role !== 'owner')) {
       throw new Error('Must be admin to change member roles');
     }
     if (!target) throw new Error('Member not found');
-    if (target.role === 'superadmin') {
-      throw new Error('Cannot change superadmin role');
+    if (target.role === 'owner') {
+      throw new Error('Cannot change owner role');
     }
     await prisma.groupMember.update({
       where: { groupId_userId: { groupId, userId: memberId } },
@@ -1105,11 +1105,11 @@ export class GroupService {
   }
 
   /**
-   * Transfer superadmin role to another member. Superadmin only.
+   * Transfer owner role to another member. Owner only.
    */
-  public async setSuperAdmin(
+  public async setOwner(
     groupId: string,
-    newSuperAdminId: string,
+    newOwnerId: string,
     performedBy: string
   ): Promise<void> {
     const group = await prisma.group.findUnique({
@@ -1118,35 +1118,35 @@ export class GroupService {
     });
     if (!group) throw new Error('Group not found');
     const performer = group.members.find((m: any) => m.userId === performedBy && m.status === 'active');
-    const target = group.members.find((m: any) => m.userId === newSuperAdminId && m.status === 'active');
-    if (!performer || performer.role !== 'superadmin') {
-      throw new Error('Must be superadmin to transfer ownership');
+    const target = group.members.find((m: any) => m.userId === newOwnerId && m.status === 'active');
+    if (!performer || performer.role !== 'owner') {
+      throw new Error('Must be owner to transfer ownership');
     }
     if (!target) throw new Error('Member not found');
-    if (target.role === 'superadmin') throw new Error('Already superadmin');
+    if (target.role === 'owner') throw new Error('Already owner');
     await prisma.$transaction([
       prisma.groupMember.update({
         where: { groupId_userId: { groupId, userId: performedBy } },
         data: { role: 'admin' },
       }),
       prisma.groupMember.update({
-        where: { groupId_userId: { groupId, userId: newSuperAdminId } },
-        data: { role: 'superadmin' },
+        where: { groupId_userId: { groupId, userId: newOwnerId } },
+        data: { role: 'owner' },
       }),
     ]);
   }
 
   /**
    * Leave a group (remove current user from members).
-   * Superadmin cannot leave; they must soft-delete or hard-delete instead.
+   * Owner cannot leave; they must soft-delete or hard-delete instead.
    */
   public async leaveGroup(groupId: string, userId: string): Promise<void> {
     const member = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },
       select: { role: true },
     });
-    if (member?.role === 'superadmin') {
-      throw new Error('Superadmin cannot leave the group.');
+    if (member?.role === 'owner') {
+      throw new Error('Owner cannot leave the group.');
     }
     
     // Get user's RSVPs to check which were "going"
@@ -1391,9 +1391,9 @@ export class GroupService {
    * Map Prisma group with members to Group model
    */
   private mapGroupWithMembers(group: any): Group {
-    const superAdmin = group.members.find((m: any) => m.role === 'superadmin' && m.status === 'active');
+    const owner = group.members.find((m: any) => m.role === 'owner' && m.status === 'active');
     const admins = group.members.filter(
-      (m: any) => (m.role === 'admin' || m.role === 'superadmin') && m.status === 'active'
+      (m: any) => (m.role === 'admin' || m.role === 'owner') && m.status === 'active'
     );
     const activeMembers = group.members.filter((m: any) => m.status === 'active');
     const pendingMembers = group.members.filter((m: any) => m.status === 'pending');
@@ -1408,7 +1408,7 @@ export class GroupService {
       avatarSeed: group.avatarSeed,
       inviteCode: group.inviteCode,
       requireApprovalToJoin: group.requireApprovalToJoin ?? true,
-      superAdminId: superAdmin ? superAdmin.userId : '',
+      ownerId: owner ? owner.userId : '',
       adminIds: admins.map((m: any) => m.userId),
       memberIds: activeMembers.map((m: any) => m.userId),
       pendingMemberIds: pendingMembers.map((m: any) => m.userId),

@@ -562,7 +562,7 @@ const result = await prisma.$transaction(async (tx) => {
     data: {
       groupId: group.id,
       userId: 'user123',
-      role: 'superadmin'
+      role: 'owner'
     }
   });
   
@@ -578,7 +578,7 @@ The database schema is defined in `prisma/schema.prisma` using Prisma's schema l
 
 - **User**: User accounts with handles and display names
 - **Group**: Social groups with members and events
-- **GroupMember**: Junction table for group membership with roles (member, admin, superadmin)
+- **GroupMember**: Junction table for group membership with roles (member, admin, owner)
 - **Event**: Events with date/time, location, attendance settings
 - **EventPhoto**: Cover photos for events
 - **RSVP**: User responses to events (going, maybe, notGoing)

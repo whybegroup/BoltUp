@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -19,6 +19,22 @@ type Props = {
   urlMap?: Map<string, string>;
   onError?: () => void;
 };
+
+/** Avoid `source={{ uri }}` identity churn on parent re-renders (e.g. typing in a nearby TextInput), which can reload images. */
+const StableUriImage = memo(function StableUriImage({
+  uri,
+  style,
+  resizeMode,
+  onError,
+}: {
+  uri: string;
+  style: StyleProp<ImageStyle>;
+  resizeMode: ImageResizeMode;
+  onError?: () => void;
+}) {
+  const source = useMemo(() => ({ uri }), [uri]);
+  return <Image source={source} style={style} resizeMode={resizeMode} onError={onError} />;
+});
 
 export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap, onError }: Props) {
   const [singleUri, setSingleUri] = useState<string | null>(() =>
@@ -49,7 +65,9 @@ export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap
   }
 
   if (isDirectRenderableImageUrl(storedUrl)) {
-    return <Image source={{ uri: storedUrl }} style={style} resizeMode={resizeMode} onError={onError} />;
+    return (
+      <StableUriImage uri={storedUrl} style={style} resizeMode={resizeMode} onError={onError} />
+    );
   }
 
   if (urlMap) {
@@ -64,7 +82,7 @@ export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap
     if (!uri.trim()) {
       return null;
     }
-    return <Image source={{ uri }} style={style} resizeMode={resizeMode} onError={onError} />;
+    return <StableUriImage uri={uri} style={style} resizeMode={resizeMode} onError={onError} />;
   }
 
   if (!singleUri?.trim()) {
@@ -74,7 +92,9 @@ export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap
       </View>
     );
   }
-  return <Image source={{ uri: singleUri }} style={style} resizeMode={resizeMode} onError={onError} />;
+  return (
+    <StableUriImage uri={singleUri} style={style} resizeMode={resizeMode} onError={onError} />
+  );
 }
 
 const styles = StyleSheet.create({

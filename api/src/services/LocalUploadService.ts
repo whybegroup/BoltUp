@@ -12,6 +12,7 @@ import type {
 
 const PRESIGN_TTL_SECONDS = 300;
 const PRESIGN_GET_MAX_URLS = 50;
+const STORAGE_KEY_PREFIX = 'storage';
 
 function dataRoot(): string {
   return path.resolve(__dirname, '../../data');
@@ -31,13 +32,22 @@ function extensionFromFilenameOrType(filename: string | undefined, contentType: 
     const ext = filename.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
     if (ext && ext.length <= 8) return ext;
   }
+  if (contentType.includes('pdf')) return 'pdf';
+  if (contentType.includes('json')) return 'json';
+  if (contentType.includes('zip')) return 'zip';
+  if (contentType.includes('text/plain')) return 'txt';
+  if (contentType.includes('msword')) return 'doc';
+  if (contentType.includes('officedocument.wordprocessingml.document')) return 'docx';
+  if (contentType.includes('spreadsheetml')) return 'xlsx';
+  if (contentType.includes('presentationml')) return 'pptx';
   if (contentType.includes('png')) return 'png';
+  if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'jpg';
   if (contentType.includes('webp')) return 'webp';
   if (contentType.includes('gif')) return 'gif';
-  return 'jpg';
+  return 'bin';
 }
 
-/** Stored URLs look like `{publicBase}/uploads/files/uploads/{userId}/{file}`. */
+/** Stored URLs look like `{publicBase}/storage/files/storage/{userId}/{file}`. */
 function tryExtractUploadObjectKey(sourceUrl: string): string | null {
   if (!sourceUrl?.trim()) return null;
   let u: URL;
@@ -46,14 +56,14 @@ function tryExtractUploadObjectKey(sourceUrl: string): string | null {
   } catch {
     return null;
   }
-  const prefix = '/uploads/files/';
+  const prefix = '/storage/files/';
   if (!u.pathname.startsWith(prefix)) return null;
   const rest = u.pathname.slice(prefix.length);
   const key = rest
     .split('/')
     .map((s) => decodeURIComponent(s))
     .join('/');
-  if (!key.startsWith('uploads/')) return null;
+  if (!key.startsWith(`${STORAGE_KEY_PREFIX}/`)) return null;
   if (key.includes('..') || key.includes('\\')) return null;
   return key;
 }
@@ -61,17 +71,17 @@ function tryExtractUploadObjectKey(sourceUrl: string): string | null {
 function publicFileUrl(key: string): string {
   const base = publicBaseUrl();
   const encodedPath = key.split('/').map((s) => encodeURIComponent(s)).join('/');
-  return `${base}/uploads/files/${encodedPath}`;
+  return `${base}/storage/files/${encodedPath}`;
 }
 
 /**
- * Register before `express.json()`: PUT /uploads/put?t=… (raw body) and GET static /uploads/files/*
+ * Register before `express.json()`: PUT /storage/put?t=… (raw body) and GET static /storage/files/*
  */
 export function registerLocalUploadRoutes(app: Application): void {
   const filesDir = dataRoot();
 
   app.put(
-    '/uploads/put',
+    '/storage/put',
     express.raw({ type: '*/*', limit: '50mb' }),
     async (req: Request, res: Response) => {
       const token = typeof req.query.t === 'string' ? req.query.t : '';
@@ -85,7 +95,7 @@ export function registerLocalUploadRoutes(app: Application): void {
           key?: string;
           ct?: string;
         };
-        if (payload.typ !== 'upload-put' || !payload.key?.startsWith('uploads/')) {
+        if (payload.typ !== 'upload-put' || !payload.key?.startsWith(`${STORAGE_KEY_PREFIX}/`)) {
           res.status(403).send('Invalid token');
           return;
         }
@@ -109,7 +119,38 @@ export function registerLocalUploadRoutes(app: Application): void {
     },
   );
 
-  app.use('/uploads/files', express.static(filesDir));
+  app.get('/storage/download/*', async (req: Request, res: Response) => {
+    try {
+      const wildcard = String(req.params[0] || '');
+      const decodedKey = wildcard
+        .split('/')
+        .map((s) => decodeURIComponent(s))
+        .join('/');
+      if (!decodedKey.startsWith(`${STORAGE_KEY_PREFIX}/`) || decodedKey.includes('..') || decodedKey.includes('\\')) {
+        res.status(400).send('Invalid file path');
+        return;
+      }
+      const fullPath = path.resolve(path.join(filesDir, decodedKey));
+      const root = path.resolve(filesDir);
+      if (!fullPath.startsWith(root)) {
+        res.status(403).send('Invalid file path');
+        return;
+      }
+      const fileName = path.basename(fullPath);
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace(/"/g, '')}"`);
+      res.download(fullPath, fileName, (err) => {
+        if (!err) return;
+        const enoent = (err as NodeJS.ErrnoException).code === 'ENOENT';
+        if (!res.headersSent) {
+          res.status(enoent ? 404 : 500).send(enoent ? 'File not found' : 'Download failed');
+        }
+      });
+    } catch {
+      if (!res.headersSent) res.status(500).send('Download failed');
+    }
+  });
+
+  app.use('/storage/files', express.static(filesDir));
 }
 
 export class LocalUploadService {
@@ -122,12 +163,12 @@ export class LocalUploadService {
     contentType: string;
     filename?: string;
   }): Promise<PresignUploadResponse> {
-    if (!input.contentType.startsWith('image/')) {
-      throw Object.assign(new Error('Only image/* content types are allowed'), { status: 400 });
+    if (!input.contentType?.trim()) {
+      throw Object.assign(new Error('contentType is required'), { status: 400 });
     }
 
     const ext = extensionFromFilenameOrType(input.filename, input.contentType);
-    const key = `uploads/${input.userId}/${randomUUID()}.${ext}`;
+    const key = `${STORAGE_KEY_PREFIX}/${input.userId}/${randomUUID()}.${ext}`;
 
     const token = jwt.sign(
       { typ: 'upload-put', key, ct: input.contentType },
@@ -136,7 +177,7 @@ export class LocalUploadService {
     );
 
     const base = publicBaseUrl();
-    const uploadUrl = `${base}/uploads/put?t=${encodeURIComponent(token)}`;
+    const uploadUrl = `${base}/storage/put?t=${encodeURIComponent(token)}`;
     const publicUrl = publicFileUrl(key);
 
     return {
@@ -152,7 +193,7 @@ export class LocalUploadService {
     if (!key) {
       throw Object.assign(new Error('URL is not an app-managed upload'), { status: 400 });
     }
-    const prefix = `uploads/${userId}/`;
+    const prefix = `${STORAGE_KEY_PREFIX}/${userId}/`;
     if (!key.startsWith(prefix)) {
       throw Object.assign(new Error('You can only delete your own uploads'), { status: 403 });
     }

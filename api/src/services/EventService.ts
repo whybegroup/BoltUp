@@ -244,17 +244,17 @@ export class EventService {
   private async getActiveMemberRole(
     groupId: string,
     userId: string,
-  ): Promise<'member' | 'admin' | 'superadmin' | null> {
+  ): Promise<'member' | 'admin' | 'owner' | null> {
     const m = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },
       select: { status: true, role: true },
     });
     if (!m || m.status !== 'active') return null;
-    return m.role as 'member' | 'admin' | 'superadmin';
+    return m.role as 'member' | 'admin' | 'owner';
   }
 
-  private isAdminOrSuperadminRole(role: string): boolean {
-    return role === 'admin' || role === 'superadmin';
+  private isAdminOrOwnerRole(role: string): boolean {
+    return role === 'admin' || role === 'owner';
   }
 
   /** Read access: active group member, or the user created this event (e.g. after leaving the group). */
@@ -289,7 +289,7 @@ export class EventService {
   ): Promise<void> {
     if (event.createdBy === actorId) return;
     const role = await this.getActiveMemberRole(event.groupId, actorId);
-    if (role && this.isAdminOrSuperadminRole(role)) return;
+    if (role && this.isAdminOrOwnerRole(role)) return;
     throw Object.assign(
       new Error('Only the event host or group admins can accept or reject time suggestions'),
       { status: 403 },
@@ -306,7 +306,7 @@ export class EventService {
   }
 
   /**
-   * Host may always delete their event. Active group admins/superadmins may delete any member's event
+   * Host may always delete their event. Active group admins/owners may delete any member's event
    * in the group (but cannot update it).
    */
   private async assertCanDeleteEvent(
@@ -315,7 +315,7 @@ export class EventService {
   ): Promise<void> {
     if (event.createdBy === actorId) return;
     const role = await this.getActiveMemberRole(event.groupId, actorId);
-    if (role && this.isAdminOrSuperadminRole(role)) return;
+    if (role && this.isAdminOrOwnerRole(role)) return;
     throw Object.assign(
       new Error('Only the event host or group admins can delete this event'),
       { status: 403 },
@@ -1662,7 +1662,7 @@ export class EventService {
   /**
    * Delete a comment.
    * - Author deletes own comment → removed from thread entirely
-   * - Admin/superadmin deletes another user's comment → soft-delete placeholder only
+   * - Admin/owner deletes another user's comment → soft-delete placeholder only
    * - Author or admin may fully remove an admin-placeholder row
    */
   public async deleteComment(id: string, input: CommentDeleteInput): Promise<void> {
@@ -1695,7 +1695,7 @@ export class EventService {
     const isAdmin =
       !!gmActor &&
       gmActor.status === 'active' &&
-      (gmActor.role === 'admin' || gmActor.role === 'superadmin');
+      (gmActor.role === 'admin' || gmActor.role === 'owner');
 
     const isPlaceholder = comment.text === COMMENT_DELETED_BY_ADMIN_TEXT;
 

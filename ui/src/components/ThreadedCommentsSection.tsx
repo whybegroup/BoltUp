@@ -28,6 +28,8 @@ import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import { CommentsSection } from './CommentsSection';
 import { CommentReplyQuote } from './CommentReplyQuote';
+import { AddImageButton } from './AddImageButton';
+import { ResolvableImage } from './ResolvableImage';
 
 export const COMMENT_THREAD_OPTIONS_MENU_WIDTH = 240;
 
@@ -103,6 +105,14 @@ export type ThreadedCommentsSectionProps = {
 
   draftText: string;
   onDraftTextChange: (text: string) => void;
+  draftPhotoUrls?: string[];
+  onDraftPhotoUrlsChange?: (urls: string[]) => void;
+  onUploadDraftPhoto?: () => Promise<void> | void;
+  onTakeDraftPhoto?: () => Promise<void> | void;
+  onAddDraftPhotoByUrl?: (url: string) => Promise<void> | void;
+  onAttachDraftFile?: () => Promise<void> | void;
+  draftPhotoBusy?: boolean;
+  onOpenDraftPhoto?: (payload: { urls: string[]; index: number }) => void;
   replyTargetId: string | null;
   onReplyTargetChange: (id: string | null) => void;
   onSubmitDraft: () => void;
@@ -156,6 +166,14 @@ export function ThreadedCommentsSection({
   formatCommentTime,
   draftText,
   onDraftTextChange,
+  draftPhotoUrls = [],
+  onDraftPhotoUrlsChange,
+  onUploadDraftPhoto,
+  onTakeDraftPhoto,
+  onAddDraftPhotoByUrl,
+  onAttachDraftFile,
+  draftPhotoBusy = false,
+  onOpenDraftPhoto,
   replyTargetId,
   onReplyTargetChange,
   onSubmitDraft,
@@ -603,6 +621,7 @@ export function ThreadedCommentsSection({
   const showCopy = copyText.length > 0;
   const showEdit = canEditDelete;
   const showDelete = canEditDelete;
+  const canSubmitDraft = draftText.trim().length > 0 || draftPhotoUrls.length > 0;
 
   return (
     <>
@@ -651,7 +670,72 @@ export function ThreadedCommentsSection({
                 style={styles.commentInput}
                 multiline
               />
-              <TouchableOpacity style={styles.replyBtn} onPress={() => void onSubmitDraft()}>
+              {onDraftPhotoUrlsChange && (onUploadDraftPhoto || onTakeDraftPhoto || onAddDraftPhotoByUrl) ? (
+                <View style={styles.commentComposerAttachRow}>
+                  <AddImageButton
+                    iconOnly
+                    label="Add photo"
+                    triggerIconName="camera-outline"
+                    optionsModalTitle="Add photo"
+                    linkModalTitle="Photo URL"
+                    disabled={draftPhotoBusy}
+                    busy={draftPhotoBusy}
+                    onTakePhoto={onTakeDraftPhoto ? () => void onTakeDraftPhoto() : undefined}
+                    onChooseFromLibrary={
+                      onUploadDraftPhoto ? () => void onUploadDraftPhoto() : undefined
+                    }
+                    onInsertLink={
+                      onAddDraftPhotoByUrl
+                        ? async (url) => {
+                            await onAddDraftPhotoByUrl(url.trim());
+                          }
+                        : undefined
+                    }
+                  />
+                  {onAttachDraftFile ? (
+                    <TouchableOpacity
+                      style={[styles.commentAttachFileBtn, draftPhotoBusy && styles.replyBtnDisabled]}
+                      onPress={() => void onAttachDraftFile()}
+                      disabled={draftPhotoBusy}
+                      accessibilityLabel="Attach file"
+                    >
+                      <Ionicons name="attach-outline" size={16} color={Colors.textSub} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ) : null}
+              {draftPhotoUrls.length > 0 && onDraftPhotoUrlsChange ? (
+                <View style={styles.commentComposerPhotoRow}>
+                  {draftPhotoUrls.map((uri, i) => (
+                    <View key={`${uri}-${i}`} style={styles.commentComposerPhotoThumbWrap}>
+                      <TouchableOpacity
+                        onPress={() => onOpenDraftPhoto?.({ urls: draftPhotoUrls, index: i })}
+                        activeOpacity={0.9}
+                      >
+                        <ResolvableImage
+                          storedUrl={uri}
+                          style={styles.commentComposerPhotoThumb}
+                          resizeMode="cover"
+                        />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() =>
+                          onDraftPhotoUrlsChange(draftPhotoUrls.filter((_, idx) => idx !== i))
+                        }
+                        style={styles.commentComposerPhotoRemoveBtn}
+                        accessibilityLabel="Remove photo"
+                      >
+                        <Ionicons name="close" size={11} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.replyBtn, !canSubmitDraft && styles.replyBtnDisabled]}
+                onPress={() => void onSubmitDraft()}
+                disabled={!canSubmitDraft}
+              >
                 <Text style={styles.replyBtnText}>{replyTargetId ? 'Reply' : 'Comment'}</Text>
               </TouchableOpacity>
             </View>
@@ -869,7 +953,50 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     backgroundColor: Colors.surface,
   },
+  replyBtnDisabled: { opacity: 0.45 },
   replyBtnText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
+  commentComposerAttachRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  commentAttachFileBtn: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    borderRadius: 9,
+  },
+  commentComposerPhotoRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  commentComposerPhotoThumbWrap: { position: 'relative' },
+  commentComposerPhotoThumb: {
+    width: 72,
+    height: 72,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  commentComposerPhotoRemoveBtn: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.text,
+    borderWidth: 2,
+    borderColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   commentRow: {
     flexDirection: 'row',
     gap: 12,

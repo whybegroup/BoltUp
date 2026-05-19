@@ -8,14 +8,14 @@ import {
 } from '../models/Upload';
 import { LocalUploadService } from '../services/LocalUploadService';
 
-@Route('uploads')
-@Tags('Uploads')
+@Route('storage')
+@Tags('Storage')
 export class UploadController extends Controller {
   private uploads = new LocalUploadService();
 
   /**
    * Get a short-lived signed PUT URL for direct client upload into `api/data`.
-   * @summary Presign image upload (local disk)
+   * @summary Presign file upload (local disk)
    */
   @Post('presign')
   public async presignUpload(@Body() body: PresignUploadRequest): Promise<PresignUploadResponse> {
@@ -35,7 +35,7 @@ export class UploadController extends Controller {
   }
 
   /**
-   * Resolve stored image URLs for display. Local uploads are already public paths; externals pass through.
+   * Resolve stored file URLs for display. Local uploads are already public paths; externals pass through.
    */
   @Post('presign-get')
   public async presignGetBatch(@Body() body: PresignGetBatchRequest): Promise<PresignGetBatchResponse> {
@@ -51,7 +51,7 @@ export class UploadController extends Controller {
   }
 
   /**
-   * Delete a file under uploads/{userId}/ for the given userId.
+   * Delete a file under storage/{userId}/ for the given userId.
    */
   @Post('delete')
   public async deleteUploadedObject(

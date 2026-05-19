@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef, memo } from 'react';
+import type { ComponentProps, Dispatch, SetStateAction } from 'react';
 import {
   View,
   Text,
@@ -54,13 +55,35 @@ import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { AddImageButton } from './AddImageButton';
 import { type GroupPost, type GroupPostComment } from '@moijia/client';
-import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
+import {
+  pickAndUploadCoverPhoto,
+  takeAndUploadCoverPhoto,
+  pickAndUploadFileFromDevice,
+  uploadUrlToDownloadUrl,
+} from '../services/pickAndUploadImage';
+import {
+  loadForumGroupDraft,
+  saveForumGroupDraft,
+  type ForumGroupDraftV1,
+  type ForumPostFileAttachment,
+} from '../utils/forumPostDrafts';
 
 export type GroupForumViewProps = {
   groupId: string;
   switchableGroups?: { id: string; name: string }[];
   onSwitchGroup?: (groupId: string) => void;
 };
+
+type ForumPostImageLightboxState = {
+  urls: string[];
+  index: number;
+  alts?: string[];
+  ownerName?: string;
+  ownerAvatarSeed?: string | null;
+  ownerThumbnail?: string | null;
+} | null;
+
+type ForumComposerChannel = 'new' | 'edit';
 
 function forumId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -102,18 +125,6 @@ function parseImageLine(trimmedLine: string): { alt: string; url: string } | nul
   return null;
 }
 
-function extractMarkdownImagesFromText(line: string): {
-  textWithoutImages: string;
-  images: Array<{ alt: string; url: string }>;
-} {
-  const images: Array<{ alt: string; url: string }> = [];
-  const textWithoutImages = line.replace(/!\[(.*?)\]\(([^)\s]+)\)/g, (_match, alt, url) => {
-    images.push({ alt: alt || 'Image', url });
-    return '';
-  });
-  return { textWithoutImages, images };
-}
-
 function wrapBareUrlsWithMarkdown(text: string): string {
   return text.replace(/(^|[\s\n])(https?:\/\/[^\s)]+)(?=$|[\s\n])/gi, (_match, prefix, rawUrl) => {
     const url = rawUrl.trim();
@@ -125,6 +136,120 @@ function wrapBareUrlsWithMarkdown(text: string): string {
   });
 }
 
+/** Separates composer “Add photo” URLs from markdown source (inline images stay in markdown). */
+const POST_ATTACHMENT_MARKER = '[[MOIJIA_POST_ATTACHMENTS]]';
+
+/** Collapsed preview clips to this height; “Read more” when full laid-out body is taller (px). */
+const POST_BODY_PREVIEW_MAX_HEIGHT = 250;
+
+function parseFileLine(trimmedLine: string): { name: string; url: string } | null {
+  const m = trimmedLine.match(/^\[(.*?)\]\(([^)\s]+)\)$/);
+  if (!m) return null;
+  const url = m[2];
+  if (!url) return null;
+  return { name: m[1] || 'Attachment', url };
+}
+
+function parseAttachmentLines(block: string): {
+  images: Array<{ alt: string; url: string }>;
+  files: Array<{ name: string; url: string }>;
+} {
+  const images: Array<{ alt: string; url: string }> = [];
+  const files: Array<{ name: string; url: string }> = [];
+  for (const line of block.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const img = parseImageLine(trimmed);
+    if (img) {
+      images.push(img);
+      continue;
+    }
+    const file = parseFileLine(trimmed);
+    if (file) files.push(file);
+  }
+  return { images, files };
+}
+
+/**
+ * Markdown body + carousel attachments only after [[MOIJIA_POST_ATTACHMENTS]].
+ * Bodies without that marker are rendered entirely as markdown (standalone `![](url)` lines stay in the body so image sizing matches inline images).
+ */
+function splitStoredPostBody(body: string): {
+  markdownSource: string;
+  attachmentImages: Array<{ alt: string; url: string }>;
+  attachmentFiles: Array<{ name: string; url: string }>;
+} {
+  const markerLine = POST_ATTACHMENT_MARKER;
+  const markerSep = `\n${markerLine}\n`;
+
+  if (body.startsWith(`${markerLine}\n`)) {
+    const after = body.slice(markerLine.length + 1);
+    const parsed = parseAttachmentLines(after);
+    return { markdownSource: '', attachmentImages: parsed.images, attachmentFiles: parsed.files };
+  }
+
+  const idx = body.indexOf(markerSep);
+  if (idx !== -1) {
+    const markdownSource = body.slice(0, idx).trimEnd();
+    const after = body.slice(idx + markerSep.length);
+    const parsed = parseAttachmentLines(after);
+    return { markdownSource, attachmentImages: parsed.images, attachmentFiles: parsed.files };
+  }
+
+  return { markdownSource: body, attachmentImages: [], attachmentFiles: [] };
+}
+
+/** Stored body text + marker + attachment lines for API (composer keeps Add-photo URLs out of the editor field). */
+function normalizeForumStoredBody(s: string): string {
+  return s.replace(/\r\n/g, '\n').trim();
+}
+
+function mergeComposerBodyForApi(
+  text: string,
+  photoUrls: string[],
+  fileAttachments: Array<{ name: string; url: string }> = []
+): string {
+  const t = text.trim();
+  const photoLines = photoUrls.map((u) => `![](${u})`);
+  const fileLines = fileAttachments.map((f) => {
+    const safeName = (f.name || 'Attachment').replace(/\]/g, '');
+    return `[${safeName}](${f.url})`;
+  });
+  const attachmentLines = [...photoLines, ...fileLines];
+  const marker = POST_ATTACHMENT_MARKER;
+  if (!t && attachmentLines.length === 0) return '';
+  if (!t) return `${marker}\n${attachmentLines.join('\n')}`;
+  if (attachmentLines.length === 0) return t;
+  return `${t}\n\n${marker}\n${attachmentLines.join('\n')}`;
+}
+
+function mergeCommentBodyForApi(text: string, photoUrls: string[]): string {
+  const t = text.trim();
+  const photoLines = photoUrls.map((u) => `![](${u})`);
+  if (!t && photoLines.length === 0) return '';
+  if (!t) return photoLines.join('\n');
+  if (photoLines.length === 0) return t;
+  return `${t}\n\n${photoLines.join('\n')}`;
+}
+
+function appendMarkdownLink(text: string, fileName: string, url: string): string {
+  const safeName = (fileName || 'Attachment').replace(/\]/g, '');
+  const suffix = `[${safeName}](${url})`;
+  const base = text.trimEnd();
+  return base ? `${base}\n\n${suffix}` : suffix;
+}
+
+function postEditDiffersFromPublished(
+  publishedBody: string,
+  markdown: string,
+  photos: string[],
+  files: Array<{ name: string; url: string }>
+): boolean {
+  const merged = normalizeForumStoredBody(mergeComposerBodyForApi(markdown, photos, files));
+  const original = normalizeForumStoredBody(publishedBody);
+  return merged !== original;
+}
+
 export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }: GroupForumViewProps) {
   const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
@@ -132,18 +257,38 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   const scrollViewportYRef = useRef(0);
   const scrollOffsetYRef = useRef(0);
   const postTopByIdRef = useRef<Record<string, number>>({});
+  /** After hiding the top composer, scroll once the edited post has laid out at its new offset. */
+  const pendingScrollToEditPostIdRef = useRef<string | null>(null);
+  /** Persisted edit drafts per post id (survives reloads). */
+  const postEditsRef = useRef<ForumGroupDraftV1['postEdits']>({});
+  const editingPostIdRef = useRef<string | null>(null);
+  const [forumDraftsReady, setForumDraftsReady] = useState(false);
+  /** Bumped whenever `postEditsRef` changes so draft badges can recompute (refs don’t rerender). */
+  const [draftBadgeTick, setDraftBadgeTick] = useState(0);
+  const bumpDraftBadgeTick = useCallback(() => setDraftBadgeTick((n) => n + 1), []);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSwitchGroups, setShowSwitchGroups] = useState(false);
+  const [switchGroupsAnchor, setSwitchGroupsAnchor] = useState<{ x: number; y: number } | null>(null);
+  /** Inline edit draft when `editingPostId` is set. */
   const [postBody, setPostBody] = useState('');
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
-  const stashedComposerBodyRef = useRef('');
+  /** Top “new post” composer — independent of inline edit state. */
+  const [newPostBody, setNewPostBody] = useState('');
   const [postMenuTarget, setPostMenuTarget] = useState<{
     postId: string;
     anchor: { x: number; y: number; width: number; height: number };
   } | null>(null);
   const postMenuButtonRefs = useRef<Record<string, View | null>>({});
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [composerPhotoUrls, setComposerPhotoUrls] = useState<string[]>([]);
+  const [newPostPhotoUrls, setNewPostPhotoUrls] = useState<string[]>([]);
+  const [composerFileAttachments, setComposerFileAttachments] = useState<ForumPostFileAttachment[]>([]);
+  const [newPostFileAttachments, setNewPostFileAttachments] = useState<ForumPostFileAttachment[]>([]);
   const [composerSelection, setComposerSelection] = useState<{ start: number; end: number }>({
+    start: 0,
+    end: 0,
+  });
+  const [newPostSelection, setNewPostSelection] = useState<{ start: number; end: number }>({
     start: 0,
     end: 0,
   });
@@ -153,11 +298,16 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     url: string;
     replaceStart?: number;
     replaceEnd?: number;
+    channel: ForumComposerChannel;
   } | null>(null);
   const [expandedPostBodyById, setExpandedPostBodyById] = useState<Record<string, boolean>>({});
-  const [postCarouselWidthById, setPostCarouselWidthById] = useState<Record<string, number>>({});
-  const [postCarouselIndexById, setPostCarouselIndexById] = useState<Record<string, number>>({});
+  /** Natural size of rendered markdown (uncollapsed pass); used to collapse tall posts into a square preview. */
+  const [postMarkdownMeasureById, setPostMarkdownMeasureById] = useState<
+    Record<string, { w: number; h: number; bodyKey: string }>
+  >({});
   const [draftComments, setDraftComments] = useState<Record<string, string>>({});
+  const [draftCommentPhotoUrlsByPost, setDraftCommentPhotoUrlsByPost] = useState<Record<string, string[]>>({});
+  const [uploadingCommentPhotoPostId, setUploadingCommentPhotoPostId] = useState<string | null>(null);
   const [replyTargetByPost, setReplyTargetByPost] = useState<Record<string, string | null>>({});
   const [expandedCommentsByPost, setExpandedCommentsByPost] = useState<Record<string, boolean>>({});
   const [reactionQuickPickerTarget, setReactionQuickPickerTarget] = useState<
@@ -176,14 +326,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     emoji: string;
     userIds: string[];
   } | null>(null);
-  const [imageLightbox, setImageLightbox] = useState<{
-    urls: string[];
-    index: number;
-    alts?: string[];
-    ownerName?: string;
-    ownerAvatarSeed?: string | null;
-    ownerThumbnail?: string | null;
-  } | null>(null);
+  const [imageLightbox, setImageLightbox] = useState<ForumPostImageLightboxState>(null);
   const reactionButtonRefs = useRef<Record<string, View | null>>({});
   const [commentEdit, setCommentEdit] = useState<{ postId: string; commentId: string } | null>(null);
   const [commentEditText, setCommentEditText] = useState('');
@@ -219,10 +362,14 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
       { label: 'All Groups', onPress: goToOverview },
       {
         label: group.name,
-        onPress: titleIsSwitchable
-          ? () => setShowSwitchGroups(true)
-          : () => router.push(`/(tabs)/groups/${groupId}` as Href),
+        onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
         showSwitchChevron: titleIsSwitchable,
+        onSwitchChevronPress: titleIsSwitchable
+          ? (anchor) => {
+              setSwitchGroupsAnchor(anchor);
+              setShowSwitchGroups(true);
+            }
+          : undefined,
       },
       { label: 'Posts' },
     ];
@@ -249,73 +396,261 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     }
   }, [group?.membershipStatus, groupId, router]);
 
+  useEffect(() => {
+    editingPostIdRef.current = editingPostId;
+  }, [editingPostId]);
+
+  useEffect(() => {
+    if (!currentUserId) {
+      setForumDraftsReady(false);
+      return;
+    }
+    let cancelled = false;
+    setForumDraftsReady(false);
+    pendingScrollToEditPostIdRef.current = null;
+    setEditingPostId(null);
+    setPostBody('');
+    setComposerPhotoUrls([]);
+    setComposerFileAttachments([]);
+    setComposerSelection({ start: 0, end: 0 });
+    (async () => {
+      const loaded = await loadForumGroupDraft(currentUserId, groupId);
+      if (cancelled) return;
+      postEditsRef.current = loaded?.postEdits ? { ...loaded.postEdits } : {};
+      setNewPostBody(loaded?.newPost?.markdown ?? '');
+      setNewPostPhotoUrls(Array.isArray(loaded?.newPost?.photos) ? [...loaded.newPost.photos] : []);
+      setNewPostFileAttachments(
+        Array.isArray(loaded?.newPost?.files) ? [...(loaded.newPost.files ?? [])] : []
+      );
+      setNewPostSelection({ start: 0, end: 0 });
+      setForumDraftsReady(true);
+      bumpDraftBadgeTick();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bumpDraftBadgeTick, currentUserId, groupId]);
+
+  useEffect(() => {
+    if (!forumDraftsReady || !currentUserId || postsLoading) return;
+    const next: ForumGroupDraftV1['postEdits'] = { ...postEditsRef.current };
+    let changed = false;
+    for (const k of Object.keys(next)) {
+      const e = next[k];
+      const files = e.files ?? [];
+      if (!e.markdown.trim() && e.photos.length === 0 && files.length === 0) {
+        delete next[k];
+        changed = true;
+        continue;
+      }
+      const p = posts.find((x) => x.id === k);
+      if (p && !postEditDiffersFromPublished(p.body, e.markdown, e.photos, files)) {
+        delete next[k];
+        changed = true;
+      }
+    }
+    if (changed) {
+      postEditsRef.current = next;
+      bumpDraftBadgeTick();
+      void (async () => {
+        const newPost =
+          newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
+            ? {
+                markdown: newPostBody,
+                photos: [...newPostPhotoUrls],
+                files: [...newPostFileAttachments],
+              }
+            : null;
+        await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits: next });
+      })();
+    }
+  }, [
+    bumpDraftBadgeTick,
+    currentUserId,
+    forumDraftsReady,
+    groupId,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+    posts,
+    postsLoading,
+  ]);
+
+  useEffect(() => {
+    if (!forumDraftsReady || !currentUserId) return;
+    const t = setTimeout(() => {
+      void (async () => {
+        const eid = editingPostIdRef.current;
+        const postEdits: ForumGroupDraftV1['postEdits'] = { ...postEditsRef.current };
+        if (
+          eid &&
+          (postBody.trim() ||
+            composerPhotoUrls.length > 0 ||
+            composerFileAttachments.length > 0)
+        ) {
+          const p = posts.find((x) => x.id === eid);
+          if (
+            p &&
+            postEditDiffersFromPublished(p.body, postBody, composerPhotoUrls, composerFileAttachments)
+          ) {
+            postEdits[eid] = {
+              markdown: postBody,
+              photos: [...composerPhotoUrls],
+              files: [...composerFileAttachments],
+            };
+          } else if (p) {
+            delete postEdits[eid];
+          } else {
+            postEdits[eid] = {
+              markdown: postBody,
+              photos: [...composerPhotoUrls],
+              files: [...composerFileAttachments],
+            };
+          }
+        }
+        for (const k of Object.keys(postEdits)) {
+          const e = postEdits[k];
+          const files = e.files ?? [];
+          if (!e.markdown.trim() && e.photos.length === 0 && files.length === 0) delete postEdits[k];
+          else {
+            const p = posts.find((x) => x.id === k);
+            if (p && !postEditDiffersFromPublished(p.body, e.markdown, e.photos, files))
+              delete postEdits[k];
+          }
+        }
+        postEditsRef.current = postEdits;
+        const newPost: ForumGroupDraftV1['newPost'] =
+          newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
+            ? {
+                markdown: newPostBody,
+                photos: [...newPostPhotoUrls],
+                files: [...newPostFileAttachments],
+              }
+            : null;
+        await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits });
+        bumpDraftBadgeTick();
+      })();
+    }, 450);
+    return () => clearTimeout(t);
+  }, [
+    forumDraftsReady,
+    currentUserId,
+    groupId,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+    editingPostId,
+    postBody,
+    composerPhotoUrls,
+    composerFileAttachments,
+    bumpDraftBadgeTick,
+    posts,
+  ]);
+
   const replaceComposerSelection = useCallback(
     (
+      channel: ForumComposerChannel,
       transform: (selectedText: string) => {
         insert: string;
         selectionStart: number;
         selectionEnd: number;
       }
     ) => {
-      setPostBody((prev) => {
-        const start = Math.max(0, Math.min(composerSelection.start, prev.length));
-        const end = Math.max(start, Math.min(composerSelection.end, prev.length));
+      const selection = channel === 'new' ? newPostSelection : composerSelection;
+      const setBody = channel === 'new' ? setNewPostBody : setPostBody;
+      const setSelection = channel === 'new' ? setNewPostSelection : setComposerSelection;
+      setBody((prev) => {
+        const start = Math.max(0, Math.min(selection.start, prev.length));
+        const end = Math.max(start, Math.min(selection.end, prev.length));
         const before = prev.slice(0, start);
         const selected = prev.slice(start, end);
         const after = prev.slice(end);
         const next = transform(selected);
         const nextBody = `${before}${next.insert}${after}`;
-        setComposerSelection({
+        setSelection({
           start: start + next.selectionStart,
           end: start + next.selectionEnd,
         });
         return nextBody;
       });
     },
-    [composerSelection.end, composerSelection.start]
+    [composerSelection.end, composerSelection.start, newPostSelection.end, newPostSelection.start]
   );
 
-  const insertImageAtSelection = useCallback(
-    (url: string) => {
-      replaceComposerSelection((selected) => {
-        const inner = selected?.trim() || 'Image';
-        const insert = `![${inner}](${url})`;
-        return { insert, selectionStart: 2, selectionEnd: 2 + inner.length };
-      });
+  const addComposerPhotoFor = useCallback((channel: ForumComposerChannel, url: string) => {
+    if (channel === 'new') setNewPostPhotoUrls((prev) => [...prev, url]);
+    else setComposerPhotoUrls((prev) => [...prev, url]);
+  }, []);
+
+  const removeComposerPhotoAtFor = useCallback((channel: ForumComposerChannel, index: number) => {
+    if (channel === 'new') setNewPostPhotoUrls((prev) => prev.filter((_, i) => i !== index));
+    else setComposerPhotoUrls((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const uploadComposerPhoto = useCallback(
+    async (channel: ForumComposerChannel) => {
+      if (!currentUserId || isUploadingAttachment) return;
+      try {
+        setIsUploadingAttachment(true);
+        const publicUrl = await pickAndUploadCoverPhoto(currentUserId);
+        if (!publicUrl) return;
+        addComposerPhotoFor(channel, publicUrl);
+      } finally {
+        setIsUploadingAttachment(false);
+      }
     },
-    [replaceComposerSelection]
+    [addComposerPhotoFor, currentUserId, isUploadingAttachment]
   );
 
-  const uploadAndInsertImage = useCallback(async () => {
-    if (!currentUserId || isUploadingAttachment) return;
-    try {
-      setIsUploadingAttachment(true);
-      const publicUrl = await pickAndUploadCoverPhoto(currentUserId);
-      if (!publicUrl) return;
-      insertImageAtSelection(publicUrl);
-    } finally {
-      setIsUploadingAttachment(false);
-    }
-  }, [currentUserId, insertImageAtSelection, isUploadingAttachment]);
+  const attachFileToComposer = useCallback(
+    async (channel: ForumComposerChannel) => {
+      if (!currentUserId || isUploadingAttachment) return;
+      try {
+        setIsUploadingAttachment(true);
+        const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+        if (!uploaded?.publicUrl) return;
+        const fileEntry: ForumPostFileAttachment = {
+          name: uploaded.fileName || 'Attachment',
+          url: uploadUrlToDownloadUrl(uploaded.publicUrl),
+        };
+        const setFiles = channel === 'new' ? setNewPostFileAttachments : setComposerFileAttachments;
+        setFiles((prev) => [...prev, fileEntry]);
+      } catch (e) {
+        if (e instanceof Error && e.message === 'cancelled') return;
+        Alert.alert('Upload', e instanceof Error ? e.message : 'Could not attach file');
+      } finally {
+        setIsUploadingAttachment(false);
+      }
+    },
+    [currentUserId, isUploadingAttachment]
+  );
 
-  const takePhotoAndInsertImage = useCallback(async () => {
-    if (!currentUserId || isUploadingAttachment) return;
-    try {
-      setIsUploadingAttachment(true);
-      const publicUrl = await takeAndUploadCoverPhoto(currentUserId);
-      if (!publicUrl) return;
-      insertImageAtSelection(publicUrl);
-    } catch (e) {
-      Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
-    } finally {
-      setIsUploadingAttachment(false);
-    }
-  }, [currentUserId, insertImageAtSelection, isUploadingAttachment]);
+  const removeComposerFileAtFor = useCallback((channel: ForumComposerChannel, index: number) => {
+    if (channel === 'new') setNewPostFileAttachments((prev) => prev.filter((_, i) => i !== index));
+    else setComposerFileAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const takePhotoAndAddComposerPhoto = useCallback(
+    async (channel: ForumComposerChannel) => {
+      if (!currentUserId || isUploadingAttachment) return;
+      try {
+        setIsUploadingAttachment(true);
+        const publicUrl = await takeAndUploadCoverPhoto(currentUserId);
+        if (!publicUrl) return;
+        addComposerPhotoFor(channel, publicUrl);
+      } catch (e) {
+        Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
+      } finally {
+        setIsUploadingAttachment(false);
+      }
+    },
+    [addComposerPhotoFor, currentUserId, isUploadingAttachment]
+  );
 
   const applyTool = useCallback(
     (tool: 'bold' | 'italic' | 'bullet' | 'link' | 'image') => {
       if (tool === 'bold') {
-        replaceComposerSelection((selected) => {
+        replaceComposerSelection('new', (selected) => {
           const inner = selected || 'bold text';
           const insert = `**${inner}**`;
           return { insert, selectionStart: 2, selectionEnd: 2 + inner.length };
@@ -323,7 +658,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         return;
       }
       if (tool === 'italic') {
-        replaceComposerSelection((selected) => {
+        replaceComposerSelection('new', (selected) => {
           const inner = selected || 'italic text';
           const insert = `*${inner}*`;
           return { insert, selectionStart: 1, selectionEnd: 1 + inner.length };
@@ -331,7 +666,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         return;
       }
       if (tool === 'link') {
-        replaceComposerSelection((selected) => {
+        replaceComposerSelection('new', (selected) => {
           const inner = selected || 'link text';
           const insert = `[${inner}](https://example.com)`;
           return { insert, selectionStart: 1, selectionEnd: 1 + inner.length };
@@ -339,14 +674,14 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         return;
       }
       if (tool === 'image') {
-        replaceComposerSelection((selected) => {
+        replaceComposerSelection('new', (selected) => {
           const inner = selected || ' ';
           const insert = `![${inner}](https://example.com/image.jpg)`;
           return { insert, selectionStart: 2, selectionEnd: 2 + inner.length };
         });
         return;
       }
-      replaceComposerSelection((selected) => {
+      replaceComposerSelection('new', (selected) => {
         if (!selected) {
           const insert = '- bullet item';
           return { insert, selectionStart: 2, selectionEnd: insert.length };
@@ -426,10 +761,12 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   }, [applyHeadingLevel, detectHeadingLevelAtSelection]);
 
   const openComposerLinkPopover = useCallback(
-    (mode: 'link' | 'image') => {
-      const start = Math.max(0, Math.min(composerSelection.start, postBody.length));
-      const end = Math.max(start, Math.min(composerSelection.end, postBody.length));
-      const selected = postBody.slice(start, end).trim();
+    (mode: 'link' | 'image', channel: ForumComposerChannel) => {
+      const body = channel === 'new' ? newPostBody : postBody;
+      const sel = channel === 'new' ? newPostSelection : composerSelection;
+      const start = Math.max(0, Math.min(sel.start, body.length));
+      const end = Math.max(start, Math.min(sel.end, body.length));
+      const selected = body.slice(start, end).trim();
       let matchedText = selected;
       let matchedUrl = '';
       let replaceStart: number | undefined;
@@ -437,7 +774,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
 
       const tokenRegex = /(!?)\[(.*?)\]\(([^)\s]+)\)/g;
       let match: RegExpExecArray | null;
-      while ((match = tokenRegex.exec(postBody)) !== null) {
+      while ((match = tokenRegex.exec(body)) !== null) {
         const isImageToken = match[1] === '!';
         const tokenMode = isImageToken ? 'image' : 'link';
         if (tokenMode !== mode) continue;
@@ -459,13 +796,19 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         url: matchedUrl,
         replaceStart,
         replaceEnd,
+        channel,
       });
     },
-    [composerSelection.end, composerSelection.start, postBody]
+    [composerSelection.end, composerSelection.start, newPostBody, newPostSelection.end, newPostSelection.start, postBody]
   );
 
   const applyComposerLinkPopover = useCallback(() => {
     if (!composerLinkPopover) return;
+    const channel = composerLinkPopover.channel;
+    const bodyNow = channel === 'new' ? newPostBody : postBody;
+    const setBody = channel === 'new' ? setNewPostBody : setPostBody;
+    const setSelection = channel === 'new' ? setNewPostSelection : setComposerSelection;
+
     const cleanUrl = composerLinkPopover.url.trim();
     if (!cleanUrl) return;
     const cleanText = composerLinkPopover.text.trim();
@@ -474,42 +817,42 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
       typeof composerLinkPopover.replaceEnd === 'number' &&
       composerLinkPopover.replaceEnd >= composerLinkPopover.replaceStart;
     if (hasReplaceRange) {
-      const replaceStart = Math.max(0, Math.min(composerLinkPopover.replaceStart ?? 0, postBody.length));
+      const replaceStart = Math.max(0, Math.min(composerLinkPopover.replaceStart ?? 0, bodyNow.length));
       const replaceEnd = Math.max(
         replaceStart,
-        Math.min(composerLinkPopover.replaceEnd ?? replaceStart, postBody.length)
+        Math.min(composerLinkPopover.replaceEnd ?? replaceStart, bodyNow.length)
       );
-      const before = postBody.slice(0, replaceStart);
-      const after = postBody.slice(replaceEnd);
+      const before = bodyNow.slice(0, replaceStart);
+      const after = bodyNow.slice(replaceEnd);
       if (composerLinkPopover.mode === 'link') {
         const inner = cleanText || 'link text';
         const insert = `[${inner}](${cleanUrl})`;
-        setPostBody(`${before}${insert}${after}`);
-        setComposerSelection({ start: replaceStart + 1, end: replaceStart + 1 + inner.length });
+        setBody(`${before}${insert}${after}`);
+        setSelection({ start: replaceStart + 1, end: replaceStart + 1 + inner.length });
       } else {
         const inner = cleanText || ' ';
         const insert = `![${inner}](${cleanUrl})`;
-        setPostBody(`${before}${insert}${after}`);
-        setComposerSelection({ start: replaceStart + 2, end: replaceStart + 2 + inner.length });
+        setBody(`${before}${insert}${after}`);
+        setSelection({ start: replaceStart + 2, end: replaceStart + 2 + inner.length });
       }
       setComposerLinkPopover(null);
       return;
     }
     if (composerLinkPopover.mode === 'link') {
-      replaceComposerSelection((selected) => {
+      replaceComposerSelection(channel, (selected) => {
         const inner = cleanText || selected || 'link text';
         const insert = `[${inner}](${cleanUrl})`;
         return { insert, selectionStart: 1, selectionEnd: 1 + inner.length };
       });
     } else {
-      replaceComposerSelection((selected) => {
+      replaceComposerSelection(channel, (selected) => {
         const inner = cleanText || selected || ' ';
         const insert = `![${inner}](${cleanUrl})`;
         return { insert, selectionStart: 2, selectionEnd: 2 + inner.length };
       });
     }
     setComposerLinkPopover(null);
-  }, [composerLinkPopover, postBody, replaceComposerSelection]);
+  }, [composerLinkPopover, newPostBody, postBody, replaceComposerSelection]);
 
   const markdownStyles = useMemo(
     () => ({
@@ -527,126 +870,6 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     }),
     []
   );
-
-  const renderRichBody = useCallback(
-    (body: string, keyPrefix: string) => {
-      const lines = body.split(/\r?\n/);
-      const allImageUrls: string[] = [];
-      const allImageAlts: string[] = [];
-      for (const line of lines) {
-        const parsedImage = parseImageLine(line.trim());
-        if (parsedImage) {
-          allImageUrls.push(parsedImage.url);
-          allImageAlts.push(parsedImage.alt || '');
-          continue;
-        }
-        const extracted = extractMarkdownImagesFromText(line);
-        extracted.images.forEach((img) => {
-          allImageUrls.push(img.url);
-          allImageAlts.push(img.alt || '');
-        });
-      }
-      let renderedImageIdx = 0;
-      return (
-        <View style={styles.richBodyWrap}>
-          {lines.map((line, i) => {
-            const trimmed = line.trim();
-            const parsedImage = parseImageLine(trimmed);
-            if (parsedImage) {
-              const currentIdx = renderedImageIdx++;
-              return (
-                <View key={`${keyPrefix}-img-${i}`} style={styles.imageBlock}>
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPress={() =>
-                      setImageLightbox({
-                        urls: allImageUrls,
-                        index: currentIdx,
-                        alts: allImageAlts,
-                        ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
-                      })
-                    }
-                  >
-                    <ResolvableImage storedUrl={parsedImage.url} style={styles.inlineImage} resizeMode="cover" />
-                  </TouchableOpacity>
-                  <Text style={styles.imageCaption}>{parsedImage.alt}</Text>
-                </View>
-              );
-            }
-            const { textWithoutImages, images } = extractMarkdownImagesFromText(line);
-            const lineWithoutImagesTrimmed = textWithoutImages.trim();
-
-            if (!lineWithoutImagesTrimmed && images.length === 0) {
-              return <View key={`${keyPrefix}-spacer-${i}`} style={styles.lineSpacer} />;
-            }
-
-            return (
-              <View key={`${keyPrefix}-mixed-${i}`} style={styles.richBodyWrap}>
-                {lineWithoutImagesTrimmed ? (
-                  <Markdown
-                    style={markdownStyles}
-                    onLinkPress={(url) => {
-                      Linking.openURL(url);
-                      return false;
-                    }}
-                  >
-                    {lineWithoutImagesTrimmed}
-                  </Markdown>
-                ) : null}
-                {images.map((image, imageIdx) => (
-                  (() => {
-                    const currentIdx = renderedImageIdx++;
-                    return (
-                  <View key={`${keyPrefix}-img-inline-${i}-${imageIdx}`} style={styles.imageBlock}>
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() =>
-                        setImageLightbox({
-                          urls: allImageUrls,
-                          index: currentIdx,
-                          alts: allImageAlts,
-                          ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
-                        })
-                      }
-                    >
-                      <ResolvableImage storedUrl={image.url} style={styles.inlineImage} resizeMode="cover" />
-                    </TouchableOpacity>
-                    <Text style={styles.imageCaption}>{image.alt}</Text>
-                  </View>
-                    );
-                  })()
-                ))}
-              </View>
-            );
-          })}
-        </View>
-      );
-    },
-    [currentUserId, group?.name, markdownStyles]
-  );
-
-  const parsePostBody = useCallback((body: string) => {
-    const lines = body.split(/\r?\n/);
-    const textLines: string[] = [];
-    const images: Array<{ alt: string; url: string }> = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      const parsedImage = parseImageLine(trimmed);
-      if (parsedImage) {
-        images.push(parsedImage);
-        continue;
-      }
-      const extracted = extractMarkdownImagesFromText(line);
-      if (extracted.images.length > 0) {
-        images.push(...extracted.images);
-      }
-      const remainingLine = extracted.textWithoutImages;
-      if (remainingLine.trim().length > 0) {
-        textLines.push(remainingLine);
-      }
-    }
-    return { textLines, images };
-  }, []);
 
   const usersById = useMemo(() => new Map(allUsers.map((u) => [u.id, u])), [allUsers]);
   const getUserDisplayName = useCallback(
@@ -673,25 +896,113 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   }, [postMenuTarget]);
 
   const cancelEditPost = useCallback(() => {
+    const id = editingPostId;
+    pendingScrollToEditPostIdRef.current = null;
+    if (id) delete postEditsRef.current[id];
+    bumpDraftBadgeTick();
     setEditingPostId(null);
-    setPostBody(stashedComposerBodyRef.current);
-    stashedComposerBodyRef.current = '';
+    setPostBody('');
+    setComposerPhotoUrls([]);
+    setComposerFileAttachments([]);
     setComposerSelection({ start: 0, end: 0 });
-  }, []);
+    void (async () => {
+      if (!currentUserId || !forumDraftsReady) return;
+      const postEdits = { ...postEditsRef.current };
+      const newPost =
+        newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
+          ? {
+              markdown: newPostBody,
+              photos: [...newPostPhotoUrls],
+              files: [...newPostFileAttachments],
+            }
+          : null;
+      await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits });
+    })();
+  }, [
+    bumpDraftBadgeTick,
+    currentUserId,
+    editingPostId,
+    forumDraftsReady,
+    groupId,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+  ]);
+
+  const discardNewPostDraft = useCallback(() => {
+    setNewPostBody('');
+    setNewPostPhotoUrls([]);
+    setNewPostFileAttachments([]);
+    setNewPostSelection({ start: 0, end: 0 });
+    void (async () => {
+      if (!currentUserId || !forumDraftsReady) return;
+      const postEdits = { ...postEditsRef.current };
+      await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost: null, postEdits });
+    })();
+  }, [currentUserId, forumDraftsReady, groupId]);
+
+  const discardEditPostDraft = useCallback(() => {
+    if (!editingPostId) return;
+    const pid = editingPostId;
+    const post = posts.find((p) => p.id === pid);
+    delete postEditsRef.current[pid];
+    bumpDraftBadgeTick();
+    if (post) {
+      const split = splitStoredPostBody(post.body);
+      setPostBody(split.markdownSource);
+      setComposerPhotoUrls(split.attachmentImages.map((img) => img.url));
+      setComposerFileAttachments(split.attachmentFiles.map((f) => ({ name: f.name, url: f.url })));
+      setComposerSelection({ start: 0, end: 0 });
+    }
+    void (async () => {
+      if (!currentUserId || !forumDraftsReady) return;
+      const postEdits = { ...postEditsRef.current };
+      const newPost =
+        newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
+          ? {
+              markdown: newPostBody,
+              photos: [...newPostPhotoUrls],
+              files: [...newPostFileAttachments],
+            }
+          : null;
+      await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits });
+    })();
+  }, [
+    bumpDraftBadgeTick,
+    currentUserId,
+    editingPostId,
+    forumDraftsReady,
+    groupId,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+    posts,
+  ]);
 
   const beginEditPost = useCallback(
     (post: GroupPost) => {
       if (!currentUserId) return;
-      if (!editingPostId) {
-        stashedComposerBodyRef.current = postBody;
-      }
+      const persisted = postEditsRef.current[post.id];
       setEditingPostId(post.id);
-      setPostBody(post.body);
+      const persistedFiles = persisted?.files ?? [];
+      if (
+        persisted &&
+        (persisted.markdown.trim() || persisted.photos.length > 0 || persistedFiles.length > 0)
+      ) {
+        setPostBody(persisted.markdown);
+        setComposerPhotoUrls([...persisted.photos]);
+        setComposerFileAttachments(persistedFiles.map((f) => ({ name: f.name, url: f.url })));
+      } else {
+        const split = splitStoredPostBody(post.body);
+        setPostBody(split.markdownSource);
+        setComposerPhotoUrls(split.attachmentImages.map((img) => img.url));
+        setComposerFileAttachments(split.attachmentFiles.map((f) => ({ name: f.name, url: f.url })));
+      }
       setComposerSelection({ start: 0, end: 0 });
       setPostMenuTarget(null);
-      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      pendingScrollToEditPostIdRef.current = post.id;
     },
-    [currentUserId, editingPostId, postBody]
+    [currentUserId]
   );
 
   const openPostMenu = useCallback((post: GroupPost) => {
@@ -705,40 +1016,117 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     });
   }, []);
 
-  const submitComposer = useCallback(async () => {
-    const body = postBody.trim();
+  const submitNewPost = useCallback(async () => {
+    const body = mergeComposerBodyForApi(newPostBody, newPostPhotoUrls, newPostFileAttachments).trim();
     if (!body || !currentUserId) return;
-    const title = body.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 80) || 'Post';
-    if (editingPostId) {
-      try {
-        await updatePostMutation.mutateAsync({ postId: editingPostId, title, body });
-        setEditingPostId(null);
-        setPostBody(stashedComposerBodyRef.current);
-        stashedComposerBodyRef.current = '';
-        setComposerSelection({ start: 0, end: 0 });
-      } catch {
-        if (Platform.OS === 'web') window.alert('Failed to update post');
-        else Alert.alert('Error', 'Failed to update post');
-      }
-      return;
-    }
+    const title =
+      newPostBody
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean)
+        ?.slice(0, 80) || 'Post';
     await createPostMutation.mutateAsync({
       id: forumId('post'),
       userId: currentUserId,
       title,
       body,
     });
-    setPostBody('');
-  }, [createPostMutation, currentUserId, editingPostId, postBody, updatePostMutation]);
+    setNewPostBody('');
+    setNewPostPhotoUrls([]);
+    setNewPostFileAttachments([]);
+    setNewPostSelection({ start: 0, end: 0 });
+    void (async () => {
+      if (!currentUserId) return;
+      const postEdits = { ...postEditsRef.current };
+      await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost: null, postEdits });
+    })();
+  }, [
+    createPostMutation,
+    currentUserId,
+    groupId,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+  ]);
+
+  const submitEditPost = useCallback(async () => {
+    if (!editingPostId) return;
+    const body = mergeComposerBodyForApi(postBody, composerPhotoUrls, composerFileAttachments).trim();
+    if (!body || !currentUserId) return;
+    const title =
+      postBody
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean)
+        ?.slice(0, 80) || 'Post';
+    try {
+      const pid = editingPostId;
+      await updatePostMutation.mutateAsync({ postId: pid, title, body });
+      delete postEditsRef.current[pid];
+      bumpDraftBadgeTick();
+      setEditingPostId(null);
+      setPostBody('');
+      setComposerPhotoUrls([]);
+      setComposerFileAttachments([]);
+      setComposerSelection({ start: 0, end: 0 });
+      void (async () => {
+        if (!currentUserId) return;
+        const postEdits = { ...postEditsRef.current };
+        const newPost =
+          newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
+            ? {
+                markdown: newPostBody,
+                photos: [...newPostPhotoUrls],
+                files: [...newPostFileAttachments],
+              }
+            : null;
+        await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits });
+      })();
+    } catch {
+      if (Platform.OS === 'web') window.alert('Failed to update post');
+      else Alert.alert('Error', 'Failed to update post');
+    }
+  }, [
+    bumpDraftBadgeTick,
+    composerPhotoUrls,
+    composerFileAttachments,
+    currentUserId,
+    editingPostId,
+    groupId,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+    postBody,
+    updatePostMutation,
+  ]);
 
   const confirmDeletePost = useCallback(
     (postId: string) => {
       const run = () => {
+        delete postEditsRef.current[postId];
+        bumpDraftBadgeTick();
         if (editingPostId === postId) {
           setEditingPostId(null);
-          setPostBody(stashedComposerBodyRef.current);
-          stashedComposerBodyRef.current = '';
+          setPostBody('');
+          setComposerPhotoUrls([]);
+          setComposerFileAttachments([]);
+          setComposerSelection({ start: 0, end: 0 });
         }
+        void (async () => {
+          if (!currentUserId || !forumDraftsReady) return;
+          const postEdits = { ...postEditsRef.current };
+          const newPost =
+            newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
+              ? {
+                  markdown: newPostBody,
+                  photos: [...newPostPhotoUrls],
+                  files: [...newPostFileAttachments],
+                }
+              : null;
+          await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits });
+        })();
         void deletePostMutation.mutateAsync(postId).catch(() => {
           if (Platform.OS === 'web') window.alert('Failed to delete post');
           else Alert.alert('Error', 'Failed to delete post');
@@ -754,10 +1142,20 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         ]);
       }
     },
-    [deletePostMutation, editingPostId]
+    [
+      bumpDraftBadgeTick,
+      currentUserId,
+      deletePostMutation,
+      editingPostId,
+      forumDraftsReady,
+      groupId,
+      newPostBody,
+      newPostPhotoUrls,
+      newPostFileAttachments,
+    ]
   );
 
-  const handleComposerChangeText = useCallback(
+  const handleEditPostChangeText = useCallback(
     (nextBody: string) => {
       const prevBody = postBody;
       if (!nextBody.includes('http') || nextBody === prevBody) {
@@ -799,24 +1197,130 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
     [composerSelection.end, postBody]
   );
 
+  const handleNewPostChangeText = useCallback(
+    (nextBody: string) => {
+      const prevBody = newPostBody;
+      if (!nextBody.includes('http') || nextBody === prevBody) {
+        setNewPostBody(nextBody);
+        return;
+      }
+
+      let prefix = 0;
+      while (prefix < prevBody.length && prefix < nextBody.length && prevBody[prefix] === nextBody[prefix]) {
+        prefix += 1;
+      }
+      let suffix = 0;
+      while (
+        suffix < prevBody.length - prefix &&
+        suffix < nextBody.length - prefix &&
+        prevBody[prevBody.length - 1 - suffix] === nextBody[nextBody.length - 1 - suffix]
+      ) {
+        suffix += 1;
+      }
+
+      const inserted = nextBody.slice(prefix, nextBody.length - suffix);
+      if (inserted.length <= 1) {
+        setNewPostBody(nextBody);
+        return;
+      }
+
+      const convertedInserted = wrapBareUrlsWithMarkdown(inserted);
+      if (convertedInserted === inserted) {
+        setNewPostBody(nextBody);
+        return;
+      }
+
+      const convertedBody = `${nextBody.slice(0, prefix)}${convertedInserted}${nextBody.slice(nextBody.length - suffix)}`;
+      setNewPostBody(convertedBody);
+      const delta = convertedInserted.length - inserted.length;
+      const nextCaret = Math.max(0, Math.min(convertedBody.length, newPostSelection.end + delta));
+      setNewPostSelection({ start: nextCaret, end: nextCaret });
+    },
+    [newPostBody, newPostSelection.end]
+  );
+
   const addComment = useCallback(
     async (postId: string) => {
       if (!currentUserId) return;
-      const raw = (draftComments[postId] ?? '').trim();
-      if (!raw) return;
+      const raw = draftComments[postId] ?? '';
+      const photoUrls = draftCommentPhotoUrlsByPost[postId] ?? [];
+      const merged = mergeCommentBodyForApi(raw, photoUrls).trim();
+      if (!merged) return;
       await createCommentMutation.mutateAsync({
         postId,
         input: {
           id: forumId('comment'),
           userId: currentUserId,
-          body: raw,
+          body: merged,
           parentCommentId: replyTargetByPost[postId] ?? undefined,
         },
       });
       setDraftComments((prev) => ({ ...prev, [postId]: '' }));
+      setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [postId]: [] }));
       setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
     },
-    [createCommentMutation, currentUserId, draftComments, replyTargetByPost]
+    [createCommentMutation, currentUserId, draftCommentPhotoUrlsByPost, draftComments, replyTargetByPost]
+  );
+
+  const addCommentPhotoForPost = useCallback((postId: string, url: string) => {
+    setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [postId]: [...(prev[postId] ?? []), url] }));
+  }, []);
+
+  const uploadCommentPhotoForPost = useCallback(
+    async (postId: string) => {
+      if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
+      try {
+        setUploadingCommentPhotoPostId(postId);
+        const publicUrl = await pickAndUploadCoverPhoto(currentUserId);
+        if (!publicUrl) return;
+        addCommentPhotoForPost(postId, publicUrl);
+      } finally {
+        setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
+      }
+    },
+    [addCommentPhotoForPost, currentUserId, uploadingCommentPhotoPostId]
+  );
+
+  const takeCommentPhotoForPost = useCallback(
+    async (postId: string) => {
+      if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
+      try {
+        setUploadingCommentPhotoPostId(postId);
+        const publicUrl = await takeAndUploadCoverPhoto(currentUserId);
+        if (!publicUrl) return;
+        addCommentPhotoForPost(postId, publicUrl);
+      } catch (e) {
+        Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
+      } finally {
+        setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
+      }
+    },
+    [addCommentPhotoForPost, currentUserId, uploadingCommentPhotoPostId]
+  );
+
+  const attachCommentFileForPost = useCallback(
+    async (postId: string) => {
+      if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
+      try {
+        setUploadingCommentPhotoPostId(postId);
+        const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+        if (!uploaded?.publicUrl) return;
+        setDraftComments((prev) => ({
+          ...prev,
+          [postId]: appendMarkdownLink(
+            prev[postId] ?? '',
+            uploaded.fileName,
+            uploadUrlToDownloadUrl(uploaded.publicUrl)
+          ),
+        }));
+      } catch (e) {
+        if (e instanceof Error && e.message === 'cancelled') return;
+        Alert.alert('Upload', e instanceof Error ? e.message : 'Could not attach file');
+      } finally {
+        setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
+      }
+    },
+    [currentUserId, uploadingCommentPhotoPostId]
   );
 
   const beginEditComment = useCallback((postId: string, c: GroupPostComment) => {
@@ -931,18 +1435,191 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   const openReactionDetailModal = useCallback((payload: { emoji: string; userIds: string[] }) => {
     setReactionDetailModal(payload);
   }, []);
-  const updatePostCarouselIndex = useCallback(
-    (postId: string, imageCount: number, offsetX: number, measuredWidth: number) => {
-      if (imageCount <= 1) return;
-      const width = Math.max(measuredWidth || postCarouselWidthById[postId] || 1, 1);
-      const nextIndex = Math.max(0, Math.min(imageCount - 1, Math.round(offsetX / width)));
-      setPostCarouselIndexById((prev) => {
-        if (prev[postId] === nextIndex) return prev;
-        return { ...prev, [postId]: nextIndex };
-      });
-    },
-    [postCarouselWidthById]
+
+  const newPostDraftDirty = useMemo(
+    () =>
+      newPostBody.trim().length > 0 ||
+      newPostPhotoUrls.length > 0 ||
+      newPostFileAttachments.length > 0,
+    [newPostBody, newPostPhotoUrls, newPostFileAttachments]
   );
+
+  const editingPostDraftDirty = useMemo(() => {
+    if (!editingPostId) return false;
+    const post = posts.find((p) => p.id === editingPostId);
+    if (!post) return false;
+    const merged = normalizeForumStoredBody(
+      mergeComposerBodyForApi(postBody, composerPhotoUrls, composerFileAttachments)
+    );
+    const original = normalizeForumStoredBody(post.body);
+    return merged !== original;
+  }, [composerPhotoUrls, composerFileAttachments, editingPostId, postBody, posts]);
+
+  const postIdsWithUnsavedDraft = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [id, e] of Object.entries(postEditsRef.current)) {
+      const p = posts.find((x) => x.id === id);
+      if (p && postEditDiffersFromPublished(p.body, e.markdown, e.photos, e.files ?? []))
+        ids.add(id);
+    }
+    return ids;
+  }, [draftBadgeTick, posts]);
+
+  const forumComposerFields = (channel: ForumComposerChannel) => {
+    const isNew = channel === 'new';
+    const body = isNew ? newPostBody : postBody;
+    const photos = isNew ? newPostPhotoUrls : composerPhotoUrls;
+    const fileAttachments = isNew ? newPostFileAttachments : composerFileAttachments;
+    const selection = isNew ? newPostSelection : composerSelection;
+    const setSelection = isNew ? setNewPostSelection : setComposerSelection;
+    const onChangeText = isNew ? handleNewPostChangeText : handleEditPostChangeText;
+    const submitBusy = isNew ? createPostMutation.isPending : updatePostMutation.isPending;
+    const canSubmit = body.trim().length > 0 || photos.length > 0 || fileAttachments.length > 0;
+
+    return (
+      <>
+        {isNew && newPostDraftDirty ? (
+          <View style={styles.forumDraftBar}>
+            <Text style={styles.forumDraftBarHint}>Draft saved on this device</Text>
+            <TouchableOpacity
+              onPress={discardNewPostDraft}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Discard new post draft"
+            >
+              <Text style={styles.forumDraftBarDiscard}>Discard draft</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        {!isNew ? (
+          <View style={styles.editingPostBanner}>
+            <Text style={[styles.editingPostBannerText, styles.editingPostBannerTitleGrow]} numberOfLines={2}>
+              Editing your post
+              {editingPostDraftDirty ? ' · not saved yet' : ''}
+            </Text>
+            <View style={styles.editingPostBannerActions}>
+              {editingPostDraftDirty ? (
+                <TouchableOpacity
+                  onPress={discardEditPostDraft}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Discard edit draft"
+                >
+                  <Text style={styles.editingPostBannerSecondary}>Discard draft</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity onPress={cancelEditPost} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.editingPostBannerCancel}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+        <TextInput
+          value={body}
+          onChangeText={onChangeText}
+          selection={selection}
+          onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
+          placeholder="Write your post - use markdown for advanced formatting"
+          placeholderTextColor={Colors.textMuted}
+          style={styles.bodyInput}
+          multiline
+          textAlignVertical="top"
+        />
+        {photos.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.composerPhotosScroll}
+            contentContainerStyle={styles.composerPhotosScrollContent}
+          >
+            {photos.map((uri, i) => (
+              <View key={`${uri}-${i}`} style={styles.composerPhotoThumbWrap}>
+                <TouchableOpacity
+                  onPress={() =>
+                    setImageLightbox({
+                      urls: photos,
+                      index: i,
+                      alts: photos.map(() => ''),
+                      ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                    })
+                  }
+                  activeOpacity={0.9}
+                >
+                  <ResolvableImage storedUrl={uri} style={styles.composerPhotoThumb} resizeMode="cover" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => removeComposerPhotoAtFor(channel, i)}
+                  style={styles.composerPhotoRemoveBtn}
+                  accessibilityLabel="Remove photo"
+                >
+                  <Ionicons name="close" size={11} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+        {fileAttachments.length > 0 ? (
+          <View style={styles.composerFileChipsList}>
+            {fileAttachments.map((file, i) => (
+              <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
+                <Ionicons
+                  name="document-outline"
+                  size={14}
+                  color={Colors.textSub}
+                  style={styles.composerFileChipIcon}
+                />
+                <Text style={styles.composerFileChipText} numberOfLines={1}>
+                  {file.name || 'Attachment'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => removeComposerFileAtFor(channel, i)}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  accessibilityLabel="Remove attached file"
+                  style={styles.composerFileChipRemove}
+                >
+                  <Ionicons name="close" size={12} color={Colors.textSub} />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        <View style={styles.attachToolbarRow}>
+          <AddImageButton
+            iconOnly
+            label="Add photo"
+            triggerIconName="camera-outline"
+            optionsModalTitle="Add photo"
+            linkModalTitle="Photo URL"
+            disabled={isUploadingAttachment}
+            busy={isUploadingAttachment}
+            onTakePhoto={() => void takePhotoAndAddComposerPhoto(channel)}
+            onChooseFromLibrary={() => void uploadComposerPhoto(channel)}
+            onInsertLink={async (url) => {
+              addComposerPhotoFor(channel, url.trim());
+            }}
+          />
+          <TouchableOpacity
+            style={[styles.attachFileBtn, isUploadingAttachment && styles.postBtnDisabled]}
+            onPress={() => void attachFileToComposer(channel)}
+            disabled={isUploadingAttachment}
+            accessibilityLabel="Attach file"
+          >
+            <Ionicons name="attach-outline" size={16} color={Colors.textSub} />
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity
+          style={[styles.postBtn, (!canSubmit || submitBusy) && styles.postBtnDisabled]}
+          onPress={() => void (isNew ? submitNewPost() : submitEditPost())}
+          disabled={!canSubmit || submitBusy}
+        >
+          {submitBusy ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.postBtnText}>{isNew ? 'Post' : 'Save changes'}</Text>
+          )}
+        </TouchableOpacity>
+      </>
+    );
+  };
+
   if (!group) return null;
 
   return (
@@ -975,77 +1652,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         scrollEventThrottle={16}
       >
         <View style={styles.card}>
-          <View style={styles.cardPad}>
-            {editingPostId ? (
-              <View style={styles.editingPostBanner}>
-                <Text style={styles.editingPostBannerText}>Editing your post</Text>
-                <TouchableOpacity onPress={cancelEditPost} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Text style={styles.editingPostBannerCancel}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
-            <View style={styles.attachToolbarRow}>
-              <AddImageButton
-                iconOnly
-                label="Add image"
-                triggerIconName="camera-outline"
-                disabled={isUploadingAttachment}
-                busy={isUploadingAttachment}
-                onTakePhoto={takePhotoAndInsertImage}
-                onChooseFromLibrary={uploadAndInsertImage}
-                onInsertLink={async (url) => {
-                  insertImageAtSelection(url);
-                }}
-              />
-              <TouchableOpacity
-                style={[styles.attachToolbarBtn, isUploadingAttachment && styles.postBtnDisabled]}
-                onPress={() => openComposerLinkPopover('link')}
-                disabled={isUploadingAttachment}
-                accessibilityLabel="Insert link"
-              >
-                <Ionicons name="link-outline" size={16} color={Colors.textSub} />
-              </TouchableOpacity>
-            </View>
-            <TextInput
-              value={postBody}
-              onChangeText={handleComposerChangeText}
-              selection={composerSelection}
-              onSelectionChange={(e) => setComposerSelection(e.nativeEvent.selection)}
-              placeholder="Write your post - use markdown for advanced formatting"
-              placeholderTextColor={Colors.textMuted}
-              style={styles.bodyInput}
-              multiline
-              textAlignVertical="top"
-            />
-            <View style={styles.previewCard}>
-              {postBody.trim() ? (
-                renderRichBody(postBody, 'composer-preview')
-              ) : (
-                <Text style={styles.emptyText}>Post preview appears here as you type.</Text>
-              )}
-            </View>
-            <TouchableOpacity
-              style={[
-                styles.postBtn,
-                (!postBody.trim() ||
-                  createPostMutation.isPending ||
-                  updatePostMutation.isPending) &&
-                  styles.postBtnDisabled,
-              ]}
-              onPress={() => void submitComposer()}
-              disabled={
-                !postBody.trim() || createPostMutation.isPending || updatePostMutation.isPending
-              }
-            >
-              {createPostMutation.isPending || updatePostMutation.isPending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={styles.postBtnText}>
-                  {editingPostId ? 'Save changes' : 'Publish Post'}
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
+          <View style={styles.cardPad}>{forumComposerFields('new')}</View>
         </View>
 
         <Text style={[styles.sectionLabel, { marginTop: 18 }]}>POSTS</Text>
@@ -1059,7 +1666,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
           <View style={styles.card}>
             <View style={styles.cardPad}>
               <Text style={styles.emptyText}>
-                No posts yet. Start a discussion and group members can react, comment, and reply.
+                No posts yet.
               </Text>
             </View>
           </View>
@@ -1069,22 +1676,45 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
               key={post.id}
               style={[styles.card, { marginBottom: 14 }]}
               onLayout={(e) => {
-                postTopByIdRef.current[post.id] = e.nativeEvent.layout.y;
+                const top = e.nativeEvent.layout.y;
+                postTopByIdRef.current[post.id] = top;
+                if (pendingScrollToEditPostIdRef.current === post.id) {
+                  pendingScrollToEditPostIdRef.current = null;
+                  requestAnimationFrame(() => {
+                    scrollRef.current?.scrollTo({ y: Math.max(0, top - 12), animated: true });
+                  });
+                }
               }}
             >
               <View style={styles.cardPad}>
                 <View style={styles.postMetaHeaderRow}>
-                  <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={2}>
-                    {post.userId === currentUserId ? (
-                      <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
-                    ) : (
-                      getUserDisplayName(post.userId)
-                    )}
-                    {post.userId === currentUserId ? (
-                      <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
-                    ) : null}{' '}
-                    · {formatCreatedAt(post.createdAt)}
-                  </Text>
+                  <View style={styles.postMetaTitleColumn}>
+                    <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={2}>
+                      {post.userId === currentUserId ? (
+                        <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
+                      ) : (
+                        getUserDisplayName(post.userId)
+                      )}
+                      {post.userId === currentUserId ? (
+                        <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
+                      ) : null}{' '}
+                      · {formatCreatedAt(post.createdAt)}
+                    </Text>
+                    {post.userId === currentUserId &&
+                    editingPostId !== post.id &&
+                    postIdsWithUnsavedDraft.has(post.id) ? (
+                      <TouchableOpacity
+                        style={styles.postDraftBadge}
+                        onPress={() => beginEditPost(post)}
+                        activeOpacity={0.75}
+                        accessibilityRole="button"
+                        accessibilityLabel="Open draft editor"
+                      >
+                        <Ionicons name="document-text-outline" size={12} color={Colors.maybe} />
+                        <Text style={styles.postDraftBadgeText}>Unsaved draft</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                   {post.userId === currentUserId ? (
                     <TouchableOpacity
                       ref={(node) => {
@@ -1099,98 +1729,92 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                     </TouchableOpacity>
                   ) : null}
                 </View>
-                {(() => {
-                  const parsed = parsePostBody(post.body);
-                  const textLines = parsed.textLines;
-                  const joined = textLines.join('\n').trim();
-                  const hasText = joined.length > 0;
-                  const overChars = joined.length > 200;
-                  const overLines = textLines.filter((line) => line.trim().length > 0).length > 3;
-                  const needsCollapse = hasText && (overChars || overLines);
-                  const expanded = !!expandedPostBodyById[post.id];
-                  const collapsedText = overChars ? `${joined.slice(0, 200).trimEnd()}…` : joined;
-                  const textToShow = expanded ? joined : collapsedText;
-                  const carouselWidth = postCarouselWidthById[post.id] ?? 260;
-                  const carouselIndex = postCarouselIndexById[post.id] ?? 0;
-                  const postOwner = usersById.get(post.userId);
-                  return (
-                    <>
-                      {hasText ? (
-                        <>
-                          <Text
-                            style={styles.postBodyText}
-                            numberOfLines={expanded ? undefined : 3}
-                            ellipsizeMode="tail"
-                          >
-                            {textToShow}
-                          </Text>
-                          {needsCollapse ? (
-                            <TouchableOpacity
-                              onPress={() =>
-                                setExpandedPostBodyById((prev) => ({
+                {editingPostId === post.id ? (
+                  forumComposerFields('edit')
+                ) : (
+                  (() => {
+                    const { markdownSource, attachmentImages, attachmentFiles } = splitStoredPostBody(
+                      post.body
+                    );
+                    const joined = markdownSource.trim();
+                    const hasText = joined.length > 0;
+                    const expanded = !!expandedPostBodyById[post.id];
+                    const storedMeasure = postMarkdownMeasureById[post.id];
+                    const measureOk = storedMeasure?.bodyKey === post.body;
+                    const natural = measureOk ? storedMeasure : null;
+                    const shouldCollapse = !!(natural && natural.h > POST_BODY_PREVIEW_MAX_HEIGHT);
+                    const showClamp = shouldCollapse && !expanded;
+                    const postOwner = usersById.get(post.userId);
+                    return (
+                      <>
+                        {hasText ? (
+                          <>
+                            <View
+                              onLayout={(e) => {
+                                const { width, height } = e.nativeEvent.layout;
+                                if (width < 1 || height < 1) return;
+                                const clampedLayout = !!(
+                                  natural &&
+                                  natural.h > POST_BODY_PREVIEW_MAX_HEIGHT &&
+                                  !expanded
+                                );
+                                if (clampedLayout) return;
+                                setPostMarkdownMeasureById((prev) => ({
                                   ...prev,
-                                  [post.id]: !prev[post.id],
-                                }))
+                                  [post.id]: { w: width, h: height, bodyKey: post.body },
+                                }));
+                              }}
+                              style={
+                                showClamp
+                                  ? {
+                                      maxHeight: POST_BODY_PREVIEW_MAX_HEIGHT,
+                                      overflow: 'hidden' as const,
+                                    }
+                                  : undefined
                               }
-                              style={styles.readMoreBtn}
                             >
-                              <Text style={styles.readMoreText}>
-                                {expanded ? 'Read less' : 'Read more'}
-                              </Text>
-                            </TouchableOpacity>
-                          ) : null}
-                        </>
-                      ) : null}
-                      {parsed.images.length > 0 ? (
-                        <View
-                          style={styles.postImageCarouselWrap}
-                          onLayout={(e) =>
-                            setPostCarouselWidthById((prev) => ({
-                              ...prev,
-                              [post.id]: Math.max(200, e.nativeEvent.layout.width),
-                            }))
-                          }
-                        >
+                              <ForumPostMarkdownBody
+                                markdownBody={joined}
+                                markdownStyles={markdownStyles}
+                                posterDisplayName={getUserDisplayName(post.userId)}
+                                ownerAvatarSeed={postOwner?.avatarSeed ?? null}
+                                ownerThumbnail={postOwner?.thumbnail ?? null}
+                                setImageLightbox={setImageLightbox}
+                              />
+                            </View>
+                            {shouldCollapse ? (
+                              <TouchableOpacity
+                                onPress={() =>
+                                  setExpandedPostBodyById((prev) => ({
+                                    ...prev,
+                                    [post.id]: !prev[post.id],
+                                  }))
+                                }
+                                style={styles.readMoreBtn}
+                              >
+                                <Text style={styles.readMoreText}>
+                                  {expanded ? 'Read less' : 'Read more'}
+                                </Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </>
+                        ) : null}
+                        {attachmentImages.length > 0 ? (
                           <ScrollView
                             horizontal
-                            pagingEnabled
                             showsHorizontalScrollIndicator={false}
-                            style={styles.postImageCarousel}
-                            onScroll={(e) =>
-                              updatePostCarouselIndex(
-                                post.id,
-                                parsed.images.length,
-                                e.nativeEvent.contentOffset.x,
-                                e.nativeEvent.layoutMeasurement.width
-                              )
-                            }
-                            onMomentumScrollEnd={(e) =>
-                              updatePostCarouselIndex(
-                                post.id,
-                                parsed.images.length,
-                                e.nativeEvent.contentOffset.x,
-                                e.nativeEvent.layoutMeasurement.width
-                              )
-                            }
-                            onScrollEndDrag={(e) =>
-                              updatePostCarouselIndex(
-                                post.id,
-                                parsed.images.length,
-                                e.nativeEvent.contentOffset.x,
-                                e.nativeEvent.layoutMeasurement.width
-                              )
-                            }
-                            scrollEventThrottle={16}
+                            style={styles.postAttachmentPhotosScroll}
+                            contentContainerStyle={styles.composerPhotosScrollContent}
                           >
-                            {parsed.images.map((image, idx) => (
-                              <View key={`${post.id}-img-${idx}`} style={{ width: carouselWidth }}>
+                            {attachmentImages.map((image, idx) => (
+                              <View key={`${post.id}-att-${idx}`} style={styles.composerPhotoThumbWrap}>
                                 <TouchableOpacity
                                   activeOpacity={0.9}
                                   onPress={() =>
                                     setImageLightbox({
-                                      urls: parsed.images.map((img) => img.url),
+                                      urls: attachmentImages.map((img) => img.url),
                                       index: idx,
-                                      alts: parsed.images.map((img) => img.alt || ''),
+                                      alts: attachmentImages.map((img) => img.alt || ''),
                                       ownerName: getUserDisplayName(post.userId),
                                       ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                       ownerThumbnail: postOwner?.thumbnail ?? null,
@@ -1199,32 +1823,46 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                                 >
                                   <ResolvableImage
                                     storedUrl={image.url}
-                                    style={styles.inlineImage}
+                                    style={styles.composerPhotoThumb}
                                     resizeMode="cover"
                                   />
                                 </TouchableOpacity>
-                                <Text style={styles.imageCaption}>{image.alt}</Text>
                               </View>
                             ))}
                           </ScrollView>
-                          {parsed.images.length > 1 ? (
-                            <View style={styles.carouselDotsRow}>
-                              {parsed.images.map((_img, idx) => (
-                                <View
-                                  key={`${post.id}-dot-${idx}`}
-                                  style={[
-                                    styles.carouselDot,
-                                    idx === carouselIndex && styles.carouselDotActive,
-                                  ]}
+                        ) : null}
+                        {attachmentFiles.length > 0 ? (
+                          <View style={styles.postAttachmentFilesList}>
+                            {attachmentFiles.map((file, idx) => (
+                              <TouchableOpacity
+                                key={`${post.id}-file-${idx}`}
+                                style={styles.postAttachmentFileLink}
+                                activeOpacity={0.7}
+                                onPress={() => Linking.openURL(uploadUrlToDownloadUrl(file.url))}
+                                accessibilityRole="link"
+                                accessibilityLabel={`Open attached file ${file.name || 'Attachment'}`}
+                              >
+                                <Ionicons
+                                  name="document-outline"
+                                  size={14}
+                                  color={Colors.accent}
+                                  style={styles.postAttachmentFileIcon}
                                 />
-                              ))}
-                            </View>
-                          ) : null}
-                        </View>
-                      ) : null}
-                    </>
-                  );
-                })()}
+                                <Text
+                                  style={styles.postAttachmentFileText}
+                                  numberOfLines={1}
+                                  ellipsizeMode="middle"
+                                >
+                                  {file.name || 'Attachment'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        ) : null}
+                      </>
+                    );
+                  })()
+                )}
 
                 {post.reactions.length > 0 ? (
                   <View style={styles.reactionRow}>
@@ -1283,6 +1921,23 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                     onDraftTextChange={(v) =>
                       setDraftComments((prev) => ({ ...prev, [post.id]: v }))
                     }
+                    draftPhotoUrls={draftCommentPhotoUrlsByPost[post.id] ?? []}
+                    onDraftPhotoUrlsChange={(urls) =>
+                      setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [post.id]: urls }))
+                    }
+                    onUploadDraftPhoto={() => uploadCommentPhotoForPost(post.id)}
+                    onTakeDraftPhoto={() => takeCommentPhotoForPost(post.id)}
+                    onAddDraftPhotoByUrl={(url) => addCommentPhotoForPost(post.id, url)}
+                    draftPhotoBusy={uploadingCommentPhotoPostId === post.id}
+                    onAttachDraftFile={() => attachCommentFileForPost(post.id)}
+                    onOpenDraftPhoto={({ urls, index }) =>
+                      setImageLightbox({
+                        urls,
+                        index,
+                        alts: urls.map(() => ''),
+                        ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                      })
+                    }
                     replyTargetId={replyTargetByPost[post.id] ?? null}
                     onReplyTargetChange={(id) =>
                       setReplyTargetByPost((prev) => ({ ...prev, [post.id]: id }))
@@ -1322,6 +1977,19 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                           backgroundColor={[u?.avatarSeed ?? '']}
                           thumbnail={u?.thumbnail}
                           size={34}
+                        />
+                      );
+                    }}
+                    renderCommentBody={(comment) => {
+                      const owner = usersById.get(comment.userId);
+                      return (
+                        <ForumPostMarkdownBody
+                          markdownBody={comment.body || ''}
+                          markdownStyles={markdownStyles}
+                          posterDisplayName={getUserDisplayName(comment.userId)}
+                          ownerAvatarSeed={owner?.avatarSeed ?? null}
+                          ownerThumbnail={owner?.thumbnail ?? null}
+                          setImageLightbox={setImageLightbox}
                         />
                       );
                     }}
@@ -1388,18 +2056,34 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
 
       {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
-          <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowSwitchGroups(false)} activeOpacity={1}>
-            <View style={styles.switchGroupsCard}>
-              <Text style={styles.switchGroupsTitle}>Switch group</Text>
+          <View style={styles.switchGroupsOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSwitchGroups(false)} activeOpacity={1} />
+            <View
+              style={[
+                styles.switchGroupsCard,
+                {
+                  top: Math.max(12, (switchGroupsAnchor?.y ?? 0) + 10),
+                  left: Math.max(
+                    12,
+                    Math.min((switchGroupsAnchor?.x ?? Dimensions.get('window').width - 12) - 220, Dimensions.get('window').width - 252)
+                  ),
+                  width: 240,
+                },
+              ]}
+            >
               <ScrollView style={styles.switchGroupsList} keyboardShouldPersistTaps="handled">
-                {switchableGroups.map((g) => (
+                {switchableGroups.map((g, idx) => (
                   <TouchableOpacity
                     key={g.id}
                     onPress={() => {
                       setShowSwitchGroups(false);
                       onSwitchGroup(g.id);
                     }}
-                    style={styles.switchGroupsRow}
+                    style={[
+                      styles.switchGroupsRow,
+                      idx === 0 && styles.switchGroupsRowFirst,
+                      (idx === 0 || idx === switchableGroups.length - 1) && styles.switchGroupsRowEdge,
+                    ]}
                   >
                     <Text style={styles.switchGroupsRowText} numberOfLines={2}>
                       {g.name}
@@ -1409,7 +2093,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
                 ))}
               </ScrollView>
             </View>
-          </TouchableOpacity>
+          </View>
         </Modal>
       ) : null}
 
@@ -1667,11 +2351,21 @@ const styles = StyleSheet.create({
   },
   cardPad: { padding: 14 },
   attachToolbarRow: {
-    marginTop: 8,
+    marginTop: 2,
     marginBottom: 6,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  attachFileBtn: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    borderRadius: 9,
   },
   attachToolbarBtn: {
     width: 34,
@@ -1705,15 +2399,103 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: Fonts.regular,
     color: Colors.text,
-    marginBottom: 10,
+    marginBottom: 6,
   },
-  previewCard: {
+  composerPhotosScroll: {
+    marginBottom: 10,
+    marginTop: -2,
+  },
+  /** Published post attachment strip — same 80×80 thumbs as composer preview */
+  postAttachmentPhotosScroll: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  composerPhotosScrollContent: {
+    gap: 4,
+    paddingVertical: 4,
+  },
+  postAttachmentFilesList: {
+    marginTop: 6,
+    marginBottom: 6,
+    gap: 6,
+  },
+  postAttachmentFileLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  postAttachmentFileIcon: {
+    flexShrink: 0,
+  },
+  postAttachmentFileText: {
+    flexShrink: 1,
+    color: Colors.accent,
+    fontFamily: Fonts.regular,
+    fontSize: 14,
+    lineHeight: 21,
+    textDecorationLine: 'underline',
+  },
+  composerFileChipsList: {
+    marginTop: 2,
+    marginBottom: 8,
+    gap: 6,
+  },
+  composerFileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: Radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  composerFileChipIcon: {
+    flexShrink: 0,
+  },
+  composerFileChipText: {
+    flexShrink: 1,
+    color: Colors.text,
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+  },
+  composerFileChipRemove: {
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 9,
+    backgroundColor: Colors.surface,
+    flexShrink: 0,
+  },
+  composerPhotoThumbWrap: {
+    position: 'relative',
+  },
+  composerPhotoThumb: {
+    width: 80,
+    height: 80,
     borderRadius: Radius.lg,
     backgroundColor: Colors.bg,
-    padding: 10,
-    marginBottom: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  composerPhotoRemoveBtn: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.text,
+    borderWidth: 2,
+    borderColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   postBtn: {
     alignSelf: 'flex-start',
@@ -1733,12 +2515,48 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 12,
   },
+  postMetaTitleColumn: { flex: 1, minWidth: 0 },
+  postDraftBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.maybeBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.maybeBorder,
+  },
+  postDraftBadgeText: {
+    fontSize: 11,
+    fontFamily: Fonts.semiBold,
+    color: Colors.maybe,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
   postMetaTextGrow: { flex: 1, marginBottom: 0 },
   postMenuBtn: { padding: 2, marginTop: -2 },
-  editingPostBanner: {
+  forumDraftBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.bg,
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  forumDraftBarHint: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, flex: 1, marginRight: 8 },
+  forumDraftBarDiscard: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.notGoing },
+  editingPostBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 12,
     paddingVertical: 8,
     paddingHorizontal: 10,
@@ -1747,8 +2565,74 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.goingBorder,
   },
+  editingPostBannerTitleGrow: { flex: 1, minWidth: 0 },
+  editingPostBannerActions: { flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 },
   editingPostBannerText: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.text },
+  editingPostBannerSecondary: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.textSub },
   editingPostBannerCancel: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accent },
+  commentComposerWrap: {
+    marginTop: 8,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    paddingTop: 8,
+  },
+  commentComposerAttachRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  commentComposerInput: {
+    minHeight: 42,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    fontFamily: Fonts.regular,
+    color: Colors.text,
+    backgroundColor: Colors.bg,
+  },
+  commentComposerSubmitBtn: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.accent,
+    minWidth: 76,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentComposerSubmitBtnText: { fontSize: 12, fontFamily: Fonts.semiBold, color: '#fff' },
+  commentComposerReplyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  commentComposerReplyCard: {
+    flex: 1,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  commentComposerReplyAuthor: {
+    fontSize: 12,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+  },
+  commentComposerReplyPreview: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    fontFamily: Fonts.regular,
+    lineHeight: 20,
+  },
   postOptionsModalRoot: { flex: 1 },
   postOptionsDismiss: {
     ...StyleSheet.absoluteFillObject,
@@ -1778,45 +2662,16 @@ const styles = StyleSheet.create({
   postOptionsRowLast: { borderBottomWidth: 0 },
   postOptionsLabel: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.text, flex: 1 },
   postOptionsLabelDanger: { color: Colors.notGoing },
-  postImageCarouselWrap: { marginBottom: 8 },
-  postImageCarousel: { width: '100%' },
-  carouselDotsRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  carouselDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: Colors.border,
-  },
-  carouselDotActive: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.textSub,
-  },
-  postBodyText: { fontSize: 14, lineHeight: 21, color: Colors.text, fontFamily: Fonts.regular },
   readMoreBtn: { alignSelf: 'flex-start', marginTop: 4 },
   readMoreText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
-  richBodyWrap: { gap: 4 },
-  lineSpacer: { height: 8 },
-  imageBlock: { marginVertical: 6 },
   inlineImage: {
     width: '100%',
     height: 180,
     borderRadius: Radius.lg,
     backgroundColor: Colors.border,
   },
-  imageCaption: {
-    marginTop: 6,
-    fontSize: 12,
-    fontFamily: Fonts.regular,
-    color: Colors.textMuted,
-  },
+  markdownParagraphColumn: { flexDirection: 'column', alignItems: 'stretch' },
+  markdownImageWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
   groupPhotoLightbox: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.93)',
@@ -2288,33 +3143,17 @@ const styles = StyleSheet.create({
   },
   commentMeta: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 4 },
   commentBody: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.text, lineHeight: 20 },
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
+  switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
   switchGroupsCard: {
+    position: 'absolute',
     backgroundColor: Colors.surface,
-    borderRadius: 20,
-    paddingVertical: 16,
+    borderRadius: 16,
+    paddingVertical: 8,
     paddingHorizontal: 0,
-    width: '100%',
-    maxWidth: 340,
-    maxHeight: '70%',
+    maxHeight: 320,
     ...Shadows.lg,
   },
-  switchGroupsTitle: {
-    fontSize: 13,
-    fontFamily: Fonts.semiBold,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingHorizontal: 20,
-    marginBottom: 8,
-  },
-  switchGroupsList: { maxHeight: 400 },
+  switchGroupsList: { maxHeight: 300 },
   switchGroupsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2325,5 +3164,72 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
   },
+  switchGroupsRowFirst: { borderTopWidth: 0 },
+  switchGroupsRowEdge: { paddingVertical: 12 },
   switchGroupsRowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
+});
+
+type ForumPostMarkdownBodyProps = {
+  markdownBody: string;
+  markdownStyles: NonNullable<ComponentProps<typeof Markdown>['style']>;
+  posterDisplayName: string;
+  ownerAvatarSeed: string | null;
+  ownerThumbnail: string | null;
+  setImageLightbox: Dispatch<SetStateAction<ForumPostImageLightboxState>>;
+};
+
+const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
+  markdownBody,
+  markdownStyles,
+  posterDisplayName,
+  ownerAvatarSeed,
+  ownerThumbnail,
+  setImageLightbox,
+}: ForumPostMarkdownBodyProps) {
+  const rules = useMemo(
+    () => ({
+      paragraph: (node: any, children: any, _parent: any, mdStyles: any) => (
+        <View key={node.key} style={[mdStyles._VIEW_SAFE_paragraph, styles.markdownParagraphColumn]}>
+          {children}
+        </View>
+      ),
+      image: (node: any, _children: any, _parent: any, _mdStyles: any) => {
+        const rawSrc = node.attributes?.src;
+        const src = typeof rawSrc === 'string' ? rawSrc.trim() : '';
+        if (!src) return null;
+        const alt = typeof node.attributes?.alt === 'string' ? node.attributes.alt : '';
+        return (
+          <View key={node.key} style={styles.markdownImageWrap}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() =>
+                setImageLightbox({
+                  urls: [src],
+                  index: 0,
+                  alts: [alt],
+                  ownerName: posterDisplayName,
+                  ownerAvatarSeed,
+                  ownerThumbnail,
+                })
+              }
+            >
+              <ResolvableImage storedUrl={src} style={styles.inlineImage} resizeMode="cover" />
+            </TouchableOpacity>
+          </View>
+        );
+      },
+    }),
+    [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox]
+  );
+
+  const onLinkPress = useCallback((url: string) => {
+    Linking.openURL(uploadUrlToDownloadUrl(url));
+    return false;
+  }, []);
+
+  return (
+    <Markdown style={markdownStyles} mergeStyle rules={rules} onLinkPress={onLinkPress}>
+      {markdownBody}
+    </Markdown>
+  );
 });

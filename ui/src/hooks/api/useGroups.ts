@@ -242,12 +242,12 @@ export function useSetMemberRole(groupId: string, performedBy: string) {
   });
 }
 
-export function useSetSuperAdmin(groupId: string, performedBy: string) {
+export function useSetOwner(groupId: string, performedBy: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (userId: string) =>
-      GroupsService.setSuperAdmin(groupId, { performedBy, userId }),
+      GroupsService.setOwner(groupId, { performedBy, userId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, performedBy) });
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.members(groupId) });

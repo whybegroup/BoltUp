@@ -107,6 +107,8 @@ export interface PollQuestionResult {
     userId: string;
     userName: string;
     answer: string;
+    avatarSeed?: string | null;
+    thumbnail?: string | null;
   }>;
   options: Array<{
     optionId: string;
@@ -118,6 +120,8 @@ export interface PollQuestionResult {
     voters?: Array<{
       userId: string;
       userName: string;
+      avatarSeed?: string | null;
+      thumbnail?: string | null;
       /** Ranking position when questionType is rating (1 = best). */
       rank?: number;
     }>;

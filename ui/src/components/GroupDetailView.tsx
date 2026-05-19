@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
+  Dimensions,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, usePathname, type Href } from 'expo-router';
@@ -34,7 +35,7 @@ import {
   useRecoverGroup,
   useRemoveMember,
   useSetMemberRole,
-  useSetSuperAdmin,
+  useSetOwner,
   useNotifications,
   useAllGroupMemberColors,
   useEvents,
@@ -119,7 +120,7 @@ export function GroupDetailView({
   const handleMembershipRequest = useHandleMembershipRequest(groupId, currentUserId ?? '');
   const removeMemberMutation = useRemoveMember(groupId, currentUserId ?? '');
   const setMemberRole = useSetMemberRole(groupId, currentUserId ?? '');
-  const setSuperAdmin = useSetSuperAdmin(groupId, currentUserId ?? '');
+  const setOwner = useSetOwner(groupId, currentUserId ?? '');
   const updateGroup = useUpdateGroup(groupId, currentUserId ?? '');
   const regenerateInviteCodeMutation = useRegenerateInviteCode(groupId, currentUserId ?? '');
   const leaveGroupMutation = useLeaveGroup();
@@ -247,6 +248,7 @@ export function GroupDetailView({
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSwitchGroups, setShowSwitchGroups] = useState(false);
+  const [switchGroupsAnchor, setSwitchGroupsAnchor] = useState<{ x: number; y: number } | null>(null);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showGroupSettingsModal, setShowGroupSettingsModal] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
@@ -335,11 +337,17 @@ export function GroupDetailView({
       { label: 'All Groups', onPress: requestOverview },
       {
         label: group.name,
-        onPress: titleIsSwitchable ? () => setShowSwitchGroups(true) : undefined,
+        onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
         showSwitchChevron: titleIsSwitchable,
+        onSwitchChevronPress: titleIsSwitchable
+          ? (anchor) => {
+              setSwitchGroupsAnchor(anchor);
+              setShowSwitchGroups(true);
+            }
+          : undefined,
       },
     ];
-  }, [group, titleIsSwitchable, requestOverview]);
+  }, [group, groupId, titleIsSwitchable, requestOverview, router]);
 
   if (!group) {
     return null;
@@ -351,11 +359,11 @@ export function GroupDetailView({
     setAvatarThumbnailDraft(group.thumbnail ?? null);
   };
 
-  const superAdminId = group.superAdminId ?? '';
+  const ownerId = group.ownerId ?? '';
   const admins = group.adminIds ?? [];
-  const isSuperAdmin = superAdminId === currentUserId;
+  const isOwner = ownerId === currentUserId;
   const isAdmin = group.membershipStatus === 'admin';
-  const canManageMembers = isAdmin || isSuperAdmin;
+  const canManageMembers = isAdmin || isOwner;
   const isPending = group.membershipStatus === 'pending';
   const isSoftDeleted = !!group.deletedAt;
   const canEditMain = isAdmin && !isPending;
@@ -363,7 +371,22 @@ export function GroupDetailView({
     !isPending &&
     !!currentUserId &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
-  const canEditAnnouncement = !isPending && (isAdmin || isSuperAdmin);
+  const canEditAnnouncement = !isPending && (isAdmin || isOwner);
+  const visiblePendingMembers = canManageMembers ? pendingRequestUsers : [];
+  const membersCount = (group.memberIds ?? []).length;
+  const membersPreviewLabel = `${membersCount} member${membersCount === 1 ? '' : 's'}`;
+  const pendingPreviewLabel =
+    visiblePendingMembers.length > 0 ? ` · ${visiblePendingMembers.length} pending` : '';
+  const membersPreviewSubLabel = `${membersPreviewLabel}${pendingPreviewLabel}`;
+  const ownerMemberIds = ownerId && (group.memberIds ?? []).includes(ownerId)
+    ? [ownerId]
+    : [];
+  const adminMemberIds = (group.memberIds ?? []).filter(
+    (memberId) => memberId !== ownerId && admins.includes(memberId)
+  );
+  const regularMemberIds = (group.memberIds ?? []).filter(
+    (memberId) => memberId !== ownerId && !admins.includes(memberId)
+  );
 
   const leaveGroup = async () => {
     if (!currentUserId) return;
@@ -436,7 +459,7 @@ export function GroupDetailView({
   };
 
   const removeMember = async (userId: string) => {
-    if (userId === currentUserId || userId === superAdminId) return;
+    if (userId === currentUserId || userId === ownerId) return;
     setMemberMenu(null);
     try {
       await removeMemberMutation.mutateAsync(userId);
@@ -448,7 +471,7 @@ export function GroupDetailView({
   };
 
   const toggleAdmin = async (userId: string) => {
-    if (userId === superAdminId || !group) return;
+    if (userId === ownerId || !group) return;
     setMemberMenu(null);
     const isCurrentlyAdmin = (group.adminIds ?? []).includes(userId);
     const newRole = isCurrentlyAdmin ? 'member' : 'admin';
@@ -461,11 +484,11 @@ export function GroupDetailView({
     }
   };
 
-  const transferSuperAdmin = async (userId: string) => {
-    if (userId === superAdminId || !group) return;
+  const transferOwner = async (userId: string) => {
+    if (userId === ownerId || !group) return;
     setMemberMenu(null);
     try {
-      await setSuperAdmin.mutateAsync(userId);
+      await setOwner.mutateAsync(userId);
     } catch (e: any) {
       const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to transfer ownership';
       if (Platform.OS === 'web') window.alert(msg);
@@ -898,14 +921,14 @@ export function GroupDetailView({
                 style={styles.membersPreviewBtn}
                 activeOpacity={0.65}
                 accessibilityRole="button"
-                accessibilityLabel={`${(group.memberIds ?? []).length} members`}
+                accessibilityLabel={membersPreviewSubLabel}
               >
                 <View style={styles.membersPreviewAvatars}>
                   {(group.memberIds ?? []).slice(0, 3).map((memberId, i) => {
                     const u = getUser(memberId);
                     return (
                       <View
-                        key={memberId}
+                        key={u.id}
                         style={[styles.membersPreviewAvatarRing, i > 0 && styles.membersPreviewAvatarOverlap]}
                       >
                         <UserAvatar
@@ -919,7 +942,7 @@ export function GroupDetailView({
                   })}
                 </View>
                 <Text style={styles.membersPreviewCount}>
-                  {(group.memberIds ?? []).length} member{(group.memberIds ?? []).length === 1 ? '' : 's'}
+                  {membersPreviewSubLabel}
                 </Text>
               </TouchableOpacity>
             ) : null}
@@ -971,7 +994,7 @@ export function GroupDetailView({
               <View style={[styles.inviteRow, { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: 4 }]}>
                 <Text style={styles.inviteLabel}>Invite code</Text>
                 <View style={styles.inviteValueRow}>
-                  {(isAdmin || isSuperAdmin) && (
+                  {(isAdmin || isOwner) && (
                     <TouchableOpacity
                       onPress={confirmRegenerateInviteCode}
                       disabled={regenerateInviteCodeMutation.isPending || !currentUserId}
@@ -1103,36 +1126,11 @@ export function GroupDetailView({
               </View>
             </>
           ) : null}
-          {canManageMembers && pendingRequestUsers.length > 0 && (
-            <>
-              <Text style={styles.sectionLabel}>PENDING REQUESTS · {pendingRequestUsers.length}</Text>
-              <View style={[styles.card, styles.pendingCard]}>
-                {pendingRequestUsers.map((user, i) => (
-                  <View key={user.id} style={[styles.memberRow, i < pendingRequestUsers.length - 1 && styles.rowBorder]}>
-                    <UserAvatar seed={user.displayName || user.name} backgroundColor={[user.avatarSeed]} thumbnail={user.thumbnail} size={38} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.memberName}>{user.displayName}</Text>
-                      <Text style={styles.memberHandle}>{user.name} · wants to join</Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', gap: 6 }}>
-                      <TouchableOpacity onPress={() => approveReq(user.id)} style={styles.approveBtn}>
-                        <Text style={styles.approveBtnText}>Approve</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => declineReq(user.id)} style={styles.declineBtn}>
-                        <Text style={styles.declineBtnText}>Decline</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-
           {group.membershipStatus !== 'none' && (
           <>
             <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>DANGER ZONE</Text>
               <View style={[styles.card, styles.cardDanger]}>
-                {isSuperAdmin ? (
+                {isOwner ? (
                   <>
                     {isSoftDeleted ? (
                       <TouchableOpacity onPress={doRecover} style={styles.memberRow} activeOpacity={0.8} disabled={recoverMutation.isPending}>
@@ -1257,7 +1255,7 @@ export function GroupDetailView({
         </Modal>
       )}
 
-      {/* Deactivate confirm (superadmin) */}
+      {/* Deactivate confirm (owner) */}
       {showDeactivateConfirm && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeactivateConfirm(false)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowDeactivateConfirm(false)} activeOpacity={1}>
@@ -1279,7 +1277,7 @@ export function GroupDetailView({
         </Modal>
       )}
 
-      {/* Delete confirm (superadmin) */}
+      {/* Delete confirm (owner) */}
       {showDeleteConfirm && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowDeleteConfirm(false)} activeOpacity={1}>
@@ -1317,58 +1315,97 @@ export function GroupDetailView({
             </View>
             <ScrollView style={styles.membersModalScroll} keyboardShouldPersistTaps="handled">
               <View style={styles.membersModalCardWrap}>
-                <View style={[styles.card, { overflow: 'hidden' }]}>
-                  {(group.memberIds ?? []).map((memberId, i) => {
-                    const rowAdmin = admins.includes(memberId);
-                    const rowSuper = memberId === superAdminId;
-                    const isMe = memberId === currentUserId;
-                    const u = getUser(memberId);
-                    const displayName = u.displayName;
-                    if (canManageMembers) {
-                      const canAction = !isMe && !rowSuper;
-                      return (
-                        <TouchableOpacity
-                          key={memberId}
-                          onPress={() => canAction && setMemberMenu({ userId: memberId })}
-                          style={[styles.memberRow, i < (group.memberIds ?? []).length - 1 && styles.rowBorder]}
-                          activeOpacity={canAction ? 0.7 : 1}
-                        >
-                          <UserAvatar seed={u.displayName || u.name} backgroundColor={[u.avatarSeed]} thumbnail={u.thumbnail} size={38} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.memberName}>
-                              {displayName}
-                              {isMe ? <Text style={styles.youLabel}> · you</Text> : ''}
-                            </Text>
-                            <Text style={styles.memberRole}>
-                              {rowSuper ? 'Super Admin' : rowAdmin ? 'Admin' : 'Member'}
-                            </Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            {rowSuper && <Ionicons name="star" size={16} color="#CA8A04" />}
-                            {!rowSuper && rowAdmin && (
-                              <View style={styles.adminBadge}>
-                                <Text style={styles.adminBadgeText}>Admin</Text>
+                {[
+                  { title: 'OWNER', memberIds: ownerMemberIds },
+                  { title: 'ADMINS', memberIds: adminMemberIds },
+                  { title: 'MEMBERS', memberIds: regularMemberIds },
+                ].map((section) => {
+                  if (section.memberIds.length === 0) return null;
+                  return (
+                    <View key={section.title} style={{ marginBottom: 16 }}>
+                      <Text style={styles.sectionLabel}>{section.title}</Text>
+                      <View style={[styles.card, { overflow: 'hidden' }]}>
+                        {section.memberIds.map((memberId, i) => {
+                          const rowAdmin = admins.includes(memberId);
+                          const rowOwner = memberId === ownerId;
+                          const isMe = memberId === currentUserId;
+                          const u = getUser(memberId);
+                          const displayName = u.displayName;
+                          if (canManageMembers) {
+                            const canAction = !isMe && !rowOwner;
+                            return (
+                              <TouchableOpacity
+                                key={memberId}
+                                onPress={() => canAction && setMemberMenu({ userId: memberId })}
+                                style={[styles.memberRow, i < section.memberIds.length - 1 && styles.rowBorder]}
+                                activeOpacity={canAction ? 0.7 : 1}
+                              >
+                                <UserAvatar seed={u.displayName || u.name} backgroundColor={[u.avatarSeed]} thumbnail={u.thumbnail} size={38} />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={[styles.memberName, isMe && styles.memberNameMe]}>
+                                    {displayName}
+                                    {isMe ? <Text style={styles.youLabel}> · me</Text> : ''}
+                                  </Text>
+                                  <Text style={styles.memberRole}>
+                                    {rowOwner ? 'Owner' : rowAdmin ? 'Admin' : 'Member'}
+                                  </Text>
+                                </View>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                  {rowOwner && <Ionicons name="star" size={16} color="#CA8A04" />}
+                                  {!rowOwner && rowAdmin && (
+                                    <View style={styles.adminBadge}>
+                                      <Text style={styles.adminBadgeText}>Admin</Text>
+                                    </View>
+                                  )}
+                                  {canAction && <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>}
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          }
+                          return (
+                            <View key={memberId} style={[styles.memberRow, i < section.memberIds.length - 1 && styles.rowBorder]}>
+                              <UserAvatar seed={u.displayName || u.name} backgroundColor={[u.avatarSeed]} thumbnail={u.thumbnail} size={38} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={[styles.memberName, isMe && styles.memberNameMe]}>
+                                  {displayName}
+                                  {isMe ? <Text style={styles.youLabel}> · me</Text> : ''}
+                                </Text>
+                                <Text style={styles.memberRole}>
+                                  {rowOwner ? 'Owner' : rowAdmin ? 'Admin' : 'Member'}
+                                </Text>
                               </View>
-                            )}
-                            {canAction && <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>}
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    }
-                    return (
-                      <View key={memberId} style={[styles.memberRow, i < (group.memberIds ?? []).length - 1 && styles.rowBorder]}>
-                        <UserAvatar seed={u.displayName || u.name} backgroundColor={[u.avatarSeed]} thumbnail={u.thumbnail} size={38} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.memberName}>{displayName}</Text>
-                          <Text style={styles.memberRole}>
-                            {rowSuper ? 'Super Admin' : rowAdmin ? 'Admin' : 'Member'}
-                          </Text>
-                        </View>
-                        {rowSuper && <Ionicons name="star" size={16} color="#CA8A04" />}
+                              {rowOwner && <Ionicons name="star" size={16} color="#CA8A04" />}
+                            </View>
+                          );
+                        })}
                       </View>
-                    );
-                  })}
-                </View>
+                    </View>
+                  );
+                })}
+                {canManageMembers && visiblePendingMembers.length > 0 ? (
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={styles.sectionLabel}>PENDING REQUESTS · {visiblePendingMembers.length}</Text>
+                    <View style={[styles.card, { overflow: 'hidden' }]}>
+                      {visiblePendingMembers.map((pendingUser, i) => (
+                        <View key={`pending-${pendingUser.id}`} style={[styles.memberRow, i < visiblePendingMembers.length - 1 && styles.rowBorder]}>
+                          <UserAvatar seed={pendingUser.displayName || pendingUser.name} backgroundColor={[pendingUser.avatarSeed]} thumbnail={pendingUser.thumbnail} size={38} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.memberName}>{pendingUser.displayName}</Text>
+                            <Text style={styles.memberHandle}>{pendingUser.name} · pending</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 6 }}>
+                            <TouchableOpacity onPress={() => approveReq(pendingUser.id)} style={styles.approveBtn}>
+                              <Text style={styles.approveBtnText}>Approve</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => declineReq(pendingUser.id)} style={styles.declineBtn}>
+                              <Text style={styles.declineBtnText}>Decline</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
               </View>
             </ScrollView>
           </SafeAreaView>
@@ -1391,7 +1428,7 @@ export function GroupDetailView({
             </View>
             <ScrollView style={styles.membersModalScroll} keyboardShouldPersistTaps="handled">
               <View style={styles.membersModalCardWrap}>
-                {(isAdmin || isSuperAdmin) ? (
+                {(isAdmin || isOwner) ? (
                   <>
                     <Text style={styles.sectionLabel}>Group Privacy</Text>
                     <View style={[styles.card, { marginBottom: 16 }]}>
@@ -1433,13 +1470,13 @@ export function GroupDetailView({
                   {getUser(memberMenu.userId).displayName}
                 </Text>
               </View>
-              {isSuperAdmin && (
+              {isOwner && (
                 <TouchableOpacity
-                  onPress={() => transferSuperAdmin(memberMenu.userId)}
+                  onPress={() => transferOwner(memberMenu.userId)}
                   style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}
                 >
                   <Ionicons name="star" size={20} color="#CA8A04" />
-                  <Text style={styles.menuItemText}>Transfer super admin</Text>
+                  <Text style={styles.menuItemText}>Transfer owner</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -1466,18 +1503,34 @@ export function GroupDetailView({
 
       {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
-          <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowSwitchGroups(false)} activeOpacity={1}>
-            <View style={styles.switchGroupsCard}>
-              <Text style={styles.switchGroupsTitle}>Switch group</Text>
+          <View style={styles.switchGroupsOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSwitchGroups(false)} activeOpacity={1} />
+            <View
+              style={[
+                styles.switchGroupsCard,
+                {
+                  top: Math.max(12, (switchGroupsAnchor?.y ?? 0) + 10),
+                  left: Math.max(
+                    12,
+                    Math.min((switchGroupsAnchor?.x ?? Dimensions.get('window').width - 12) - 220, Dimensions.get('window').width - 252)
+                  ),
+                  width: 240,
+                },
+              ]}
+            >
               <ScrollView style={styles.switchGroupsList} keyboardShouldPersistTaps="handled">
-                {switchableGroups.map((g) => (
+                {switchableGroups.map((g, idx) => (
                   <TouchableOpacity
                     key={g.id}
                     onPress={() => {
                       setShowSwitchGroups(false);
                       onSwitchGroup(g.id);
                     }}
-                    style={styles.switchGroupsRow}
+                    style={[
+                      styles.switchGroupsRow,
+                      idx === 0 && styles.switchGroupsRowFirst,
+                      (idx === 0 || idx === switchableGroups.length - 1) && styles.switchGroupsRowEdge,
+                    ]}
                   >
                     <Text style={styles.switchGroupsRowText} numberOfLines={2}>
                       {g.name}
@@ -1487,7 +1540,7 @@ export function GroupDetailView({
                 ))}
               </ScrollView>
             </View>
-          </TouchableOpacity>
+          </View>
         </Modal>
       ) : null}
 
@@ -1761,6 +1814,7 @@ const styles = StyleSheet.create({
   memberRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 16 },
   rowBorder:        { borderBottomWidth: 1, borderBottomColor: Colors.border },
   memberName:       { fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
+  memberNameMe:     { color: Colors.going },
   memberHandle:     { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular },
   youLabel:         { fontSize: 12, color: Colors.textMuted, fontFamily: Fonts.regular },
   memberRole:       { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 1 },
@@ -1863,26 +1917,17 @@ const styles = StyleSheet.create({
   membersModalClose: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   membersModalScroll: { flex: 1 },
   membersModalCardWrap: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 40 },
+  switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
   switchGroupsCard: {
+    position: 'absolute',
     backgroundColor: Colors.surface,
-    borderRadius: 20,
-    paddingVertical: 16,
+    borderRadius: 16,
+    paddingVertical: 8,
     paddingHorizontal: 0,
-    width: '100%',
-    maxWidth: 340,
-    maxHeight: '70%',
+    maxHeight: 320,
     ...Shadows.lg,
   },
-  switchGroupsTitle: {
-    fontSize: 13,
-    fontFamily: Fonts.semiBold,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingHorizontal: 20,
-    marginBottom: 8,
-  },
-  switchGroupsList: { maxHeight: 400 },
+  switchGroupsList: { maxHeight: 300 },
   switchGroupsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1893,6 +1938,8 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
   },
+  switchGroupsRowFirst: { borderTopWidth: 0 },
+  switchGroupsRowEdge: { paddingVertical: 12 },
   switchGroupsRowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
   announcementSection: {
     paddingHorizontal: 20,
