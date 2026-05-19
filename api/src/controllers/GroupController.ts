@@ -40,7 +40,7 @@ export class GroupController extends Controller {
   /**
    * Get all groups
    * @summary Retrieves a list of groups with info scoped by user's membership status. Requires userId.
-   * @param includeDeleted When true, includes soft-deleted groups where user is superadmin.
+   * @param includeDeleted When true, includes soft-deleted groups where user is owner.
    */
   @Get()
   public async getGroups(
@@ -165,7 +165,7 @@ export class GroupController extends Controller {
 
   /**
    * Hard-delete a group
-   * @summary Permanently removes a group and all its data. Superadmin only.
+   * @summary Permanently removes a group and all its data. Owner only.
    */
   @Delete('{id}')
   @SuccessResponse('204', 'No Content')
@@ -184,9 +184,9 @@ export class GroupController extends Controller {
       if (e?.status === 404) {
         throw httpError(404, 'Group not found');
       }
-      if (e?.message?.includes('superadmin')) {
+      if (e?.message?.includes('owner')) {
         this.setStatus(403);
-        throw new Error('Must be superadmin to delete group');
+        throw new Error('Must be owner to delete group');
       }
       throw e;
     }
@@ -194,7 +194,7 @@ export class GroupController extends Controller {
 
   /**
    * Soft-delete a group
-   * @summary Marks a group as deleted. Superadmin only.
+   * @summary Marks a group as deleted. Owner only.
    */
   @Post('{id}/soft-delete')
   @SuccessResponse('200', 'OK')
@@ -211,9 +211,9 @@ export class GroupController extends Controller {
       this.setStatus(200);
       return { success: true };
     } catch (e: any) {
-      if (e?.message?.includes('superadmin')) {
+      if (e?.message?.includes('owner')) {
         this.setStatus(403);
-        throw new Error('Must be superadmin to soft-delete group');
+        throw new Error('Must be owner to soft-delete group');
       }
       throw e;
     }
@@ -221,7 +221,7 @@ export class GroupController extends Controller {
 
   /**
    * Recover a soft-deleted group
-   * @summary Restores a soft-deleted group. Superadmin only.
+   * @summary Restores a soft-deleted group. Owner only.
    */
   @Post('{id}/recover')
   @SuccessResponse('200', 'OK')
@@ -238,9 +238,9 @@ export class GroupController extends Controller {
       this.setStatus(200);
       return { success: true };
     } catch (e: any) {
-      if (e?.message?.includes('superadmin')) {
+      if (e?.message?.includes('owner')) {
         this.setStatus(403);
-        throw new Error('Must be superadmin to recover group');
+        throw new Error('Must be owner to recover group');
       }
       throw e;
     }
@@ -278,7 +278,7 @@ export class GroupController extends Controller {
 
   /**
    * Leave a group
-   * @summary Remove the current user from the group. Superadmin cannot leave.
+   * @summary Remove the current user from the group. Owner cannot leave.
    */
   @Post('{id}/leave')
   @SuccessResponse('200', 'OK')
@@ -295,9 +295,9 @@ export class GroupController extends Controller {
       this.setStatus(200);
       return { success: true };
     } catch (e: any) {
-      if (e?.message?.includes('Superadmin cannot leave')) {
+      if (e?.message?.includes('Owner cannot leave')) {
         this.setStatus(403);
-        throw new Error('Superadmin cannot leave the group.');
+        throw new Error('Owner cannot leave the group.');
       }
       throw e;
     }
@@ -329,7 +329,7 @@ export class GroupController extends Controller {
 
   /**
    * Remove a member from the group
-   * @summary Admin removes a member. Cannot remove superadmin.
+   * @summary Admin removes a member. Cannot remove owner.
    */
   @Post('{id}/members/{memberId}/remove')
   @SuccessResponse('200', 'OK')
@@ -355,9 +355,9 @@ export class GroupController extends Controller {
       this.setStatus(200);
       return { success: true };
     } catch (e: any) {
-      if (e?.message?.includes('superadmin')) {
+      if (e?.message?.includes('owner')) {
         this.setStatus(403);
-        throw new Error('Cannot remove superadmin from group');
+        throw new Error('Cannot remove owner from group');
       }
       if (e?.message?.includes('Member not found')) {
         throw httpError(404, String(e.message));
@@ -368,7 +368,7 @@ export class GroupController extends Controller {
 
   /**
    * Set a member's role (admin or member)
-   * @summary Admin sets a member's role. Cannot change superadmin.
+   * @summary Admin sets a member's role. Cannot change owner.
    */
   @Put('{id}/members/{memberId}/role')
   @SuccessResponse('200', 'OK')
@@ -394,9 +394,9 @@ export class GroupController extends Controller {
       this.setStatus(200);
       return { success: true };
     } catch (e: any) {
-      if (e?.message?.includes('superadmin')) {
+      if (e?.message?.includes('owner')) {
         this.setStatus(403);
-        throw new Error('Cannot change superadmin role');
+        throw new Error('Cannot change owner role');
       }
       if (e?.message?.includes('Member not found')) {
         throw httpError(404, String(e.message));
@@ -406,12 +406,12 @@ export class GroupController extends Controller {
   }
 
   /**
-   * Transfer superadmin role to another member
-   * @summary Superadmin transfers ownership to an admin or member.
+   * Transfer owner role to another member
+   * @summary Owner transfers ownership to an admin or member.
    */
-  @Put('{id}/superadmin')
+  @Put('{id}/owner')
   @SuccessResponse('200', 'OK')
-  public async setSuperAdmin(
+  public async setOwner(
     @Path() id: string,
     @Body() body: { performedBy: string; userId: string }
   ): Promise<{ success: boolean }> {
@@ -423,16 +423,16 @@ export class GroupController extends Controller {
     if (!group) {
       throw httpError(404, 'Group not found');
     }
-    if (group.superAdminId !== body.performedBy) {
+    if (group.ownerId !== body.performedBy) {
       this.setStatus(403);
-      throw new Error('Must be superadmin to transfer ownership');
+      throw new Error('Must be owner to transfer ownership');
     }
     try {
-      await this.groupService.setSuperAdmin(id, body.userId, body.performedBy);
+      await this.groupService.setOwner(id, body.userId, body.performedBy);
       this.setStatus(200);
       return { success: true };
     } catch (e: any) {
-      if (e?.message?.includes('Already superadmin')) {
+      if (e?.message?.includes('Already owner')) {
         this.setStatus(400);
         throw e;
       }

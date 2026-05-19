@@ -7,6 +7,7 @@ import {
   Modal,
   TouchableOpacity,
   ScrollView,
+  Dimensions,
 } from 'react-native';
 import { useRouter, usePathname, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -112,6 +113,7 @@ export function GroupEventsView({
 
   const [showNotifs, setShowNotifs] = useState(false);
   const [showSwitchGroups, setShowSwitchGroups] = useState(false);
+  const [switchGroupsAnchor, setSwitchGroupsAnchor] = useState<{ x: number; y: number } | null>(null);
 
   const requestOverview = useCallback(() => {
     goToOverview();
@@ -127,10 +129,14 @@ export function GroupEventsView({
       { label: 'All Groups', onPress: requestOverview },
       {
         label: group.name,
-        onPress: titleIsSwitchable
-          ? () => setShowSwitchGroups(true)
-          : () => router.push(`/(tabs)/groups/${groupId}` as Href),
+        onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
         showSwitchChevron: titleIsSwitchable,
+        onSwitchChevronPress: titleIsSwitchable
+          ? (anchor) => {
+              setSwitchGroupsAnchor(anchor);
+              setShowSwitchGroups(true);
+            }
+          : undefined,
       },
       { label: 'Events' },
     ];
@@ -185,6 +191,13 @@ export function GroupEventsView({
       showGroup={false}
     />
   );
+  const switchMenuWidth = 240;
+  const windowWidth = Dimensions.get('window').width;
+  const switchMenuLeft = Math.max(
+    12,
+    Math.min((switchGroupsAnchor?.x ?? windowWidth - 12) - switchMenuWidth + 20, windowWidth - switchMenuWidth - 12)
+  );
+  const switchMenuTop = Math.max(12, (switchGroupsAnchor?.y ?? 0) + 10);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
@@ -192,18 +205,22 @@ export function GroupEventsView({
       <GroupsBreadcrumbTrail segments={breadcrumbSegments} />
       {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
         <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
-          <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowSwitchGroups(false)} activeOpacity={1}>
-            <View style={styles.switchGroupsCard}>
-              <Text style={styles.switchGroupsTitle}>Switch group</Text>
+          <View style={styles.switchGroupsOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSwitchGroups(false)} activeOpacity={1} />
+            <View style={[styles.switchGroupsCard, { top: switchMenuTop, left: switchMenuLeft, width: switchMenuWidth }]}>
               <ScrollView style={styles.switchGroupsList} keyboardShouldPersistTaps="handled">
-                {switchableGroups.map((g) => (
+                {switchableGroups.map((g, idx) => (
                   <TouchableOpacity
                     key={g.id}
                     onPress={() => {
                       setShowSwitchGroups(false);
                       onSwitchGroup(g.id);
                     }}
-                    style={styles.switchGroupsRow}
+                    style={[
+                      styles.switchGroupsRow,
+                      idx === 0 && styles.switchGroupsRowFirst,
+                      (idx === 0 || idx === switchableGroups.length - 1) && styles.switchGroupsRowEdge,
+                    ]}
                   >
                     <Text style={styles.switchGroupsRowText} numberOfLines={2}>
                       {g.name}
@@ -213,7 +230,7 @@ export function GroupEventsView({
                 ))}
               </ScrollView>
             </View>
-          </TouchableOpacity>
+          </View>
         </Modal>
       ) : null}
       <View style={styles.content}>{body}</View>
@@ -241,33 +258,17 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     textAlign: 'center',
   },
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
+  switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
   switchGroupsCard: {
+    position: 'absolute',
     backgroundColor: Colors.surface,
-    borderRadius: 20,
-    paddingVertical: 16,
+    borderRadius: 16,
+    paddingVertical: 8,
     paddingHorizontal: 0,
-    width: '100%',
-    maxWidth: 340,
-    maxHeight: '70%',
+    maxHeight: 320,
     ...Shadows.lg,
   },
-  switchGroupsTitle: {
-    fontSize: 13,
-    fontFamily: Fonts.semiBold,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingHorizontal: 20,
-    marginBottom: 8,
-  },
-  switchGroupsList: { maxHeight: 400 },
+  switchGroupsList: { maxHeight: 300 },
   switchGroupsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -278,5 +279,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: Colors.border,
   },
+  switchGroupsRowFirst: { borderTopWidth: 0 },
+  switchGroupsRowEdge: { paddingVertical: 12 },
   switchGroupsRowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
 });

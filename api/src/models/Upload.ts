@@ -1,5 +1,5 @@
 /**
- * Request a short-lived signed URL to PUT an image into API local storage (`api/data`).
+ * Request a short-lived signed URL to PUT a file into API local storage (`api/data`).
  */
 export interface PresignUploadRequest {
   userId: string;
@@ -17,7 +17,7 @@ export interface PresignUploadResponse {
 }
 
 export interface PresignGetBatchRequest {
-  /** Stored image URLs from the database (API file URLs or pass-through externals). */
+  /** Stored file URLs from the database (API file URLs or pass-through externals). */
   sourceUrls: string[];
 }
 

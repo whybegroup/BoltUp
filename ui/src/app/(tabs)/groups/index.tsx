@@ -126,12 +126,12 @@ export default function GroupsScreen() {
                             <Text style={[styles.adminBadgeText, { color: '#B45309' }]}>Pending</Text>
                           </View>
                         )}
-                        {g.superAdminId === currentUserId && (
+                        {g.ownerId === currentUserId && (
                           <View style={[styles.adminBadge, { backgroundColor: '#FEF9C3', borderColor: '#EAB308' }]}>
-                            <Text style={[styles.adminBadgeText, { color: '#854D0E' }]}>Super Admin</Text>
+                            <Text style={[styles.adminBadgeText, { color: '#854D0E' }]}>Owner</Text>
                           </View>
                         )}
-                        {g.membershipStatus === 'admin' && g.superAdminId !== currentUserId && (
+                        {g.membershipStatus === 'admin' && g.ownerId !== currentUserId && (
                           <View style={styles.adminBadge}>
                             <Text style={styles.adminBadgeText}>Admin</Text>
                           </View>

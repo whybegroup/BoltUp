@@ -109,7 +109,7 @@ export class PollController extends Controller {
   }
 
   /**
-   * Close poll early (creator/admin/superadmin).
+   * Close poll early (creator/admin/owner).
    */
   @Post('{id}/close')
   public async closePoll(@Path() id: string, @Body() body: PollCloseInput): Promise<Poll> {

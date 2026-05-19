@@ -176,13 +176,13 @@ export class PollService {
   private async getActiveMemberRole(
     groupId: string,
     userId: string,
-  ): Promise<'member' | 'admin' | 'superadmin' | null> {
+  ): Promise<'member' | 'admin' | 'owner' | null> {
     const m = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },
       select: { status: true, role: true },
     });
     if (!m || m.status !== 'active') return null;
-    return m.role as 'member' | 'admin' | 'superadmin';
+    return m.role as 'member' | 'admin' | 'owner';
   }
 
   private async assertCanCreatePoll(groupId: string, actorId: string): Promise<void> {
@@ -920,8 +920,12 @@ export class PollService {
       where: { id: pollId },
       include: {
         options: true,
-        votes: { include: { user: { select: { id: true, name: true, displayName: true } } } },
-        textAnswers: { include: { user: { select: { id: true, name: true, displayName: true } } } },
+        votes: {
+          include: { user: { select: { id: true, name: true, displayName: true, avatarSeed: true, thumbnail: true } } },
+        },
+        textAnswers: {
+          include: { user: { select: { id: true, name: true, displayName: true, avatarSeed: true, thumbnail: true } } },
+        },
       },
     });
     if (!poll) throw Object.assign(new Error('Poll not found'), { status: 404 });
@@ -965,6 +969,8 @@ export class PollService {
         voters: optionVotes.map((v) => ({
           userId: v.userId,
           userName: v.user.displayName || v.user.name,
+          avatarSeed: v.user.avatarSeed ?? null,
+          thumbnail: v.user.thumbnail ?? null,
           rank: grouped.get(key)?.questionType === 'rating' ? (v.rank ?? 1) : undefined,
         })),
       });
@@ -979,6 +985,8 @@ export class PollService {
             userId: t.userId,
             userName: t.user.displayName || t.user.name,
             answer: t.answer,
+            avatarSeed: t.user.avatarSeed ?? null,
+            thumbnail: t.user.thumbnail ?? null,
           }));
         q.textResponses = responses;
         q.textResponseCount = responses.length;
@@ -1009,6 +1017,8 @@ export class PollService {
             userId: r.userId,
             userName: 'Anonymous',
             answer: r.answer,
+            avatarSeed: null,
+            thumbnail: null,
           }));
         }
       }
@@ -1025,7 +1035,7 @@ export class PollService {
     if (!poll) throw Object.assign(new Error('Poll not found'), { status: 404 });
     const isCreator = poll.createdBy === actorUserId;
     const role = await this.getActiveMemberRole(poll.groupId, actorUserId);
-    const isAdmin = role === 'admin' || role === 'superadmin';
+    const isAdmin = role === 'admin' || role === 'owner';
     if (!isCreator && !isAdmin) {
       throw Object.assign(new Error('Forbidden'), { status: 403 });
     }
@@ -1039,7 +1049,7 @@ export class PollService {
     });
     if (!poll) throw Object.assign(new Error('Poll not found'), { status: 404 });
     const role = await this.getActiveMemberRole(poll.groupId, actorUserId);
-    const isAdmin = role === 'admin' || role === 'superadmin';
+    const isAdmin = role === 'admin' || role === 'owner';
     if (poll.createdBy !== actorUserId && !isAdmin) {
       throw Object.assign(new Error('Forbidden'), { status: 403 });
     }

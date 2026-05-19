@@ -183,7 +183,7 @@ export default function CreateGroupScreen() {
         desc: draftDesc.trim(),
         thumbnail,
         coverPhotos: draftCoverPhotos,
-        superAdminId: actorId,
+        ownerId: actorId,
         avatarSeed: draftSeed || draftName.trim() || undefined,
         createdBy: actorId,
         adminIds: [actorId],

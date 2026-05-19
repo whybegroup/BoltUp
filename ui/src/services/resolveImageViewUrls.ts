@@ -1,4 +1,4 @@
-import { UploadsService } from '@moijia/client';
+import { StorageService } from '@moijia/client';
 
 export function isDirectRenderableImageUrl(url: string): boolean {
   if (!url?.trim()) return false;
@@ -23,7 +23,7 @@ export async function resolveImageViewUrls(urls: string[]): Promise<Map<string, 
   if (needsApi.length === 0) return out;
 
   try {
-    const res = await UploadsService.presignGetBatch({ sourceUrls: needsApi });
+    const res = await StorageService.presignGetBatch({ sourceUrls: needsApi });
     for (const row of res.results) {
       out.set(row.sourceUrl, row.viewUrl);
     }

@@ -10,6 +10,10 @@ type AddImageButtonProps = {
   tile?: boolean;
   label?: string;
   triggerIconName?: 'camera-outline' | 'image-outline';
+  /** Title for the camera/library/link option sheet */
+  optionsModalTitle?: string;
+  /** Title for the URL entry modal */
+  linkModalTitle?: string;
   onTakePhoto: () => Promise<void> | void;
   onChooseFromLibrary: () => Promise<void> | void;
   onInsertLink: (url: string) => Promise<void> | void;
@@ -22,6 +26,8 @@ export function AddImageButton({
   tile = false,
   label = 'Add photo',
   triggerIconName = 'camera-outline',
+  optionsModalTitle = 'Insert image',
+  linkModalTitle = 'Insert image link',
   onTakePhoto,
   onChooseFromLibrary,
   onInsertLink,
@@ -57,7 +63,7 @@ export function AddImageButton({
             <Pressable style={styles.overlayBackdrop} onPress={closeAll} />
             <View style={styles.overlayCenter} pointerEvents="box-none">
               <View style={styles.card} pointerEvents="auto">
-                <Text style={styles.title}>Insert image</Text>
+                <Text style={styles.title}>{optionsModalTitle}</Text>
                 <TouchableOpacity
                   style={styles.optionBtn}
                   onPress={async () => {
@@ -100,7 +106,7 @@ export function AddImageButton({
             <Pressable style={styles.overlayBackdrop} onPress={closeAll} />
             <View style={styles.overlayCenter} pointerEvents="box-none">
               <View style={styles.card} pointerEvents="auto">
-                <Text style={styles.title}>Insert image link</Text>
+                <Text style={styles.title}>{linkModalTitle}</Text>
                 <TextInput
                   value={linkUrl}
                   onChangeText={setLinkUrl}

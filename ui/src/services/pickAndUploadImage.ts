@@ -1,7 +1,8 @@
 import { Alert, Platform } from 'react-native';
 import { File as ExpoFile } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { UploadsService } from '@moijia/client';
+import * as DocumentPicker from 'expo-document-picker';
+import { StorageService } from '@moijia/client';
 
 function isCancelled(e: unknown): boolean {
   return e instanceof Error && e.message === 'cancelled';
@@ -11,6 +12,12 @@ export type PickedImageAsset = {
   uri: string;
   contentType: string;
   fileName?: string;
+};
+
+export type PickedFileAsset = {
+  uri: string;
+  contentType: string;
+  fileName: string;
 };
 
 /** Opens the image library; throws `cancelled` if the user backs out. */
@@ -58,13 +65,32 @@ export async function pickImageFromCamera(): Promise<PickedImageAsset> {
   };
 }
 
+/** Opens the document picker; throws `cancelled` if the user backs out. */
+export async function pickFileFromDevice(): Promise<PickedFileAsset> {
+  const result = await DocumentPicker.getDocumentAsync({
+    multiple: false,
+    copyToCacheDirectory: true,
+    type: '*/*',
+  });
+  if (result.canceled || !result.assets?.length) {
+    throw new Error('cancelled');
+  }
+  const asset = result.assets[0];
+  const fileName = asset.name?.trim() || `file-${Date.now()}`;
+  return {
+    uri: asset.uri,
+    contentType: asset.mimeType || 'application/octet-stream',
+    fileName,
+  };
+}
+
 /**
  * Presign + PUT to the API (local `api/data` storage; set API_PUBLIC_URL if clients use another host).
  */
 export async function uploadPickedImageAsset(userId: string, asset: PickedImageAsset): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload photos.');
 
-  const presign = await UploadsService.presignUpload({
+  const presign = await StorageService.presignUpload({
     userId,
     contentType: asset.contentType,
     filename: asset.fileName,
@@ -88,6 +114,59 @@ export async function uploadPickedImageAsset(userId: string, asset: PickedImageA
   }
 
   return presign.publicUrl;
+}
+
+export async function uploadPickedFileAsset(userId: string, asset: PickedFileAsset): Promise<string> {
+  if (!userId) throw new Error('You must be signed in to upload files.');
+
+  const presign = await StorageService.presignUpload({
+    userId,
+    contentType: asset.contentType,
+    filename: asset.fileName,
+  });
+
+  let body: Blob | ArrayBuffer;
+  if (Platform.OS === 'web') {
+    body = await (await fetch(asset.uri)).blob();
+  } else {
+    const file = new ExpoFile(asset.uri);
+    body = await file.arrayBuffer();
+  }
+
+  const put = await fetch(presign.uploadUrl, {
+    method: 'PUT',
+    body,
+    headers: { 'Content-Type': asset.contentType },
+  });
+  if (!put.ok) {
+    throw new Error(`Upload failed (${put.status}). Check upload settings.`);
+  }
+
+  return presign.publicUrl;
+}
+
+/** Picks any file from the device and uploads it. Throws `cancelled` when picker closes. */
+export async function pickAndUploadFileFromDevice(
+  userId: string
+): Promise<{ publicUrl: string; fileName: string }> {
+  const asset = await pickFileFromDevice();
+  const publicUrl = await uploadPickedFileAsset(userId, asset);
+  return { publicUrl, fileName: asset.fileName };
+}
+
+/** Converts a managed `/storage/files/...` URL to forced-download endpoint. */
+export function uploadUrlToDownloadUrl(sourceUrl: string): string {
+  const trimmed = sourceUrl?.trim();
+  if (!trimmed) return sourceUrl;
+  try {
+    const u = new URL(trimmed);
+    const prefix = '/storage/files/';
+    if (!u.pathname.startsWith(prefix)) return sourceUrl;
+    const rest = u.pathname.slice(prefix.length);
+    return `${u.origin}/storage/download/${rest}`;
+  } catch {
+    return sourceUrl;
+  }
 }
 
 /** Picks from library then presigns + PUT. Throws `cancelled` if the user backs out of the picker. */
@@ -199,7 +278,7 @@ export function coverPhotoDraftDisplayUri(d: CoverPhotoDraft): string {
 export async function uploadWebImageFile(userId: string, file: File): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload photos.');
   const contentType = file.type?.startsWith('image/') ? file.type : 'image/jpeg';
-  const presign = await UploadsService.presignUpload({
+  const presign = await StorageService.presignUpload({
     userId,
     contentType,
     filename: file.name,

@@ -23,8 +23,8 @@ export interface Group {
   inviteCode?: string | null;
   /** When true, new members must be approved; when false, join is immediate */
   requireApprovalToJoin: boolean;
-  /** ID of the group's super admin */
-  superAdminId: string;
+  /** ID of the group's owner */
+  ownerId: string;
   /** Array of admin user IDs */
   adminIds: string[];
   /** Array of member user IDs */
@@ -57,7 +57,7 @@ export interface GroupScoped {
   membershipStatus: MembershipStatus;
   /** Present when member or admin */
   inviteCode?: string | null;
-  superAdminId?: string;
+  ownerId?: string;
   adminIds?: string[];
   memberIds?: string[];
   /** Present when admin only */
@@ -83,7 +83,7 @@ export interface GroupInput {
   avatarSeed?: string | null;
   inviteCode?: string | null;
   requireApprovalToJoin?: boolean;
-  superAdminId: string;
+  ownerId: string;
   adminIds?: string[];
   memberIds?: string[];
   createdBy: string;
@@ -100,7 +100,7 @@ export interface GroupUpdate {
   coverPhotos?: string[];
   avatarSeed?: string | null;
   requireApprovalToJoin?: boolean;
-  superAdminId?: string;
+  ownerId?: string;
   adminIds?: string[];
   memberIds?: string[];
   updatedBy: string;
@@ -109,7 +109,7 @@ export interface GroupUpdate {
 /**
  * Group member role
  */
-export type GroupRole = 'member' | 'admin' | 'superadmin';
+export type GroupRole = 'member' | 'admin' | 'owner';
 
 /**
  * Group member status

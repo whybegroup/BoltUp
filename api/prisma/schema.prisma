@@ -162,7 +162,7 @@ model GroupMember {
   id        Int      @id @default(autoincrement())
   groupId   String
   userId    String
-  role      String   @default("member") // member, admin, superadmin
+  role      String   @default("member") // member, admin, owner
   status    String   @default("active") // pending, active, rejected
   colorHex  String?  // User's custom color for this group
   /// JSON: per-group notification toggles (AND with user global prefs)

@@ -92,7 +92,12 @@ import { ReactionEmojiGlyph } from '../../components/ReactionEmojiGlyph';
 import { EmojiBar } from '../../components/EmojiBar';
 import { ImageLightboxModal } from '../../components/ImageLightboxModal';
 import { AddImageButton } from '../../components/AddImageButton';
-import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../../services/pickAndUploadImage';
+import {
+  pickAndUploadCoverPhoto,
+  takeAndUploadCoverPhoto,
+  pickAndUploadFileFromDevice,
+  uploadUrlToDownloadUrl,
+} from '../../services/pickAndUploadImage';
 import { useResolvedImageUrls } from '../../hooks/useResolvedImageUrls';
 import { firstSearchParam, parseReturnToParam, withReturnTo } from '../../utils/navigationReturn';
 import Toast from 'react-native-toast-message';
@@ -276,7 +281,7 @@ function DescText({ text }: { text: string }) {
           if (m.index > last) parts.push(<Text key={`t${i}-${last}`}>{line.slice(last, m.index)}</Text>);
           const url = m[0];
           parts.push(
-            <Text key={`u${i}-${m.index}`} style={styles.link} onPress={() => Linking.openURL(url)}>{url}</Text>
+            <Text key={`u${i}-${m.index}`} style={styles.link} onPress={() => Linking.openURL(uploadUrlToDownloadUrl(url))}>{url}</Text>
           );
           last = m.index + m[0].length;
         }
@@ -319,7 +324,7 @@ function CommentMentionText({ text, style }: { text: string; style?: StyleProp<T
       const slice = line.slice(r.start, r.end);
       if (r.kind === 'url') {
         parts.push(
-          <Text key={`u${r.start}`} style={styles.link} onPress={() => Linking.openURL(slice)}>
+          <Text key={`u${r.start}`} style={styles.link} onPress={() => Linking.openURL(uploadUrlToDownloadUrl(slice))}>
             {slice}
           </Text>
         );
@@ -351,6 +356,13 @@ function CommentMentionText({ text, style }: { text: string; style?: StyleProp<T
 }
 
 export default function EventDetailScreen() {
+  const appendFileLinkLine = useCallback((text: string, fileName: string, url: string) => {
+    const safeName = (fileName || 'Attachment').replace(/\s+/g, ' ').trim();
+    const suffix = `${safeName}: ${url}`;
+    const base = text.trimEnd();
+    return base ? `${base}\n\n${suffix}` : suffix;
+  }, []);
+
   const params = useLocalSearchParams<{ id: string; returnTo?: string | string[] }>();
   const router = useRouter();
   const pathname = usePathname();
@@ -492,6 +504,8 @@ export default function EventDetailScreen() {
   const [showAttend,  setShowAttend]  = useState(false);
   const [memoFor,     setMemoFor]     = useState<RSVPInput.status | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
+  const [commentDraftPhotos, setCommentDraftPhotos] = useState<string[]>([]);
+  const [commentDraftPhotoBusy, setCommentDraftPhotoBusy] = useState(false);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [commentEdit, setCommentEdit] = useState<{ commentId: string } | null>(null);
   const [commentEditText, setCommentEditText] = useState('');
@@ -967,12 +981,13 @@ export default function EventDetailScreen() {
       return;
     }
     const raw = commentDraft.trim();
-    if (!raw) return;
+    if (!raw && commentDraftPhotos.length === 0) return;
     try {
       const newComment: CommentInput = {
         id: uid(),
         userId: currentUserId,
-        text: raw,
+        text: raw || undefined,
+        photos: commentDraftPhotos.length > 0 ? [...commentDraftPhotos] : undefined,
       };
       if (replyTargetCommentId) {
         newComment.replyToCommentId = replyTargetCommentId;
@@ -994,6 +1009,7 @@ export default function EventDetailScreen() {
         }
       }
       setCommentDraft('');
+      setCommentDraftPhotos([]);
       setReplyTargetCommentId(null);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
     } catch (error: unknown) {
@@ -1004,10 +1020,56 @@ export default function EventDetailScreen() {
     currentUserId,
     canCollaborateActivities,
     commentDraft,
+    commentDraftPhotos,
     replyTargetCommentId,
     mentionMemberRows,
     createCommentMutation,
   ]);
+
+  const uploadCommentDraftPhoto = useCallback(async () => {
+    if (!currentUserId || commentDraftPhotoBusy) return;
+    try {
+      setCommentDraftPhotoBusy(true);
+      const url = await pickAndUploadCoverPhoto(currentUserId);
+      if (!url) return;
+      setCommentDraftPhotos((prev) => [...prev, url]);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to add photo');
+    } finally {
+      setCommentDraftPhotoBusy(false);
+    }
+  }, [commentDraftPhotoBusy, currentUserId]);
+
+  const takeCommentDraftPhoto = useCallback(async () => {
+    if (!currentUserId || commentDraftPhotoBusy) return;
+    try {
+      setCommentDraftPhotoBusy(true);
+      const url = await takeAndUploadCoverPhoto(currentUserId);
+      if (!url) return;
+      setCommentDraftPhotos((prev) => [...prev, url]);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to add photo');
+    } finally {
+      setCommentDraftPhotoBusy(false);
+    }
+  }, [commentDraftPhotoBusy, currentUserId]);
+
+  const attachCommentDraftFile = useCallback(async () => {
+    if (!currentUserId || commentDraftPhotoBusy) return;
+    try {
+      setCommentDraftPhotoBusy(true);
+      const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+      if (!uploaded?.publicUrl) return;
+      setCommentDraft((prev) =>
+        appendFileLinkLine(prev, uploaded.fileName, uploadUrlToDownloadUrl(uploaded.publicUrl))
+      );
+    } catch (e) {
+      if (e instanceof Error && e.message === 'cancelled') return;
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to attach file');
+    } finally {
+      setCommentDraftPhotoBusy(false);
+    }
+  }, [appendFileLinkLine, commentDraftPhotoBusy, currentUserId]);
 
   const beginEditEventComment = useCallback(
     (commentId: string) => {
@@ -1175,9 +1237,9 @@ export default function EventDetailScreen() {
   }
   const canDeleteEvent =
     ev.createdBy === currentUserId ||
-    group.superAdminId === currentUserId ||
+    group.ownerId === currentUserId ||
     (group.adminIds ?? []).includes(currentUserId);
-  /** Host and group admins/super-admins may delete past occurrences (API matches). */
+  /** Host and group admins/owners may delete past occurrences (API matches). */
   const canDeleteEventLive = canDeleteEvent;
   const activityIdeasOn = ev.activityIdeasEnabled ?? false;
   const activityIdeasEffective = canEditLive ? draftActivityIdeasEnabled : activityIdeasOn;
@@ -1230,7 +1292,7 @@ export default function EventDetailScreen() {
   const myActivityVoteOptionIds = ev.myActivityVoteOptionIds ?? [];
   const canResolveTimeSuggestions =
     ev.createdBy === currentUserId ||
-    group.superAdminId === currentUserId ||
+    group.ownerId === currentUserId ||
     (group.adminIds ?? []).includes(currentUserId);
   const pendingTimeSuggestions = timeSuggestions.filter((s) => s.status === 'pending');
 
@@ -2646,6 +2708,21 @@ export default function EventDetailScreen() {
             formatCommentTime={formatForumCommentTime}
             draftText={commentDraft}
             onDraftTextChange={setCommentDraft}
+            draftPhotoUrls={commentDraftPhotos}
+            onDraftPhotoUrlsChange={setCommentDraftPhotos}
+            onUploadDraftPhoto={() => void uploadCommentDraftPhoto()}
+            onTakeDraftPhoto={() => void takeCommentDraftPhoto()}
+            onAddDraftPhotoByUrl={(url) => setCommentDraftPhotos((prev) => [...prev, url])}
+            draftPhotoBusy={commentDraftPhotoBusy}
+            onAttachDraftFile={() => void attachCommentDraftFile()}
+            onOpenDraftPhoto={({ urls, index }) =>
+              setLightbox({
+                urls,
+                index,
+                name: currentUserId ? getUserSafe(currentUserId).displayName : 'You',
+                ts: new Date(),
+              })
+            }
             replyTargetId={replyTargetCommentId}
             onReplyTargetChange={setReplyTargetCommentId}
             onSubmitDraft={() => void submitEventThreadComment()}
