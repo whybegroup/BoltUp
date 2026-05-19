@@ -23,10 +23,12 @@ import { extractUploadUrlsFromForumBody } from '../utils/groupPostBodyUploads';
 import { NotificationService } from './NotificationService';
 import { LocalUploadService } from './LocalUploadService';
 import { UserService } from './UserService';
+import { sortByGroupOrder } from '../utils/groupOrder';
 
 const prisma = new PrismaClient();
 const notificationService = new NotificationService();
 const localUploads = new LocalUploadService();
+const userService = new UserService();
 
 const GROUP_COVER_PHOTOS_INCLUDE = { orderBy: { id: 'asc' as const } };
 
@@ -178,7 +180,9 @@ export class GroupService {
       },
     });
 
-    return groups.map((g) => this.mapGroupScoped(g, userId));
+    const mapped = groups.map((g) => this.mapGroupScoped(g, userId));
+    const orderIds = await userService.getGroupOrder(userId);
+    return sortByGroupOrder(mapped, orderIds);
   }
 
   /**

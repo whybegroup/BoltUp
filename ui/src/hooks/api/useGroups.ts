@@ -8,12 +8,14 @@ import {
 } from '@tanstack/react-query';
 import {
   GroupsService,
+  UsersService,
   type GroupInput,
   type GroupUpdate,
   type GroupScoped,
   type MembershipRequestAction,
   type Partial_NotifPrefs_,
 } from '@moijia/client';
+import { reorderGroupsInCache } from '../../utils/groupOrder';
 import { queryKeys } from '../../config/queryClient';
 import { refetchIntervalUnlessNotFound, retryUnlessNotFound } from '../../utils/apiErrors';
 
@@ -66,6 +68,40 @@ export function useGroupMembers(id: string, userId: string, opts?: { enabled?: b
     enabled: opts?.enabled !== false && !!id && !!userId,
     retry: retryUnlessNotFound,
     refetchInterval: refetchIntervalUnlessNotFound(3000),
+  });
+}
+
+export function useUpdateGroupOrder(userId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (groupIds: string[]) =>
+      UsersService.setGroupOrder(userId, { groupIds }),
+    onMutate: async (groupIds) => {
+      const key = queryKeys.groups.all(userId, true);
+      await queryClient.cancelQueries({ queryKey: key });
+      const prev = queryClient.getQueryData<GroupScoped[]>(key);
+      if (prev) {
+        queryClient.setQueryData(key, reorderGroupsInCache(prev, groupIds));
+      }
+      const keyNoDeleted = queryKeys.groups.all(userId, false);
+      const prevNoDeleted = queryClient.getQueryData<GroupScoped[]>(keyNoDeleted);
+      if (prevNoDeleted) {
+        queryClient.setQueryData(keyNoDeleted, reorderGroupsInCache(prevNoDeleted, groupIds));
+      }
+      return { prev, prevNoDeleted };
+    },
+    onError: (_err, _ids, ctx) => {
+      if (ctx?.prev) {
+        queryClient.setQueryData(queryKeys.groups.all(userId, true), ctx.prev);
+      }
+      if (ctx?.prevNoDeleted) {
+        queryClient.setQueryData(queryKeys.groups.all(userId, false), ctx.prevNoDeleted);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
+    },
   });
 }
 

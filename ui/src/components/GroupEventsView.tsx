@@ -4,15 +4,10 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
-  Modal,
-  TouchableOpacity,
-  ScrollView,
-  Dimensions,
 } from 'react-native';
 import { useRouter, usePathname, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { Colors, Fonts, Shadows } from '../constants/theme';
+import { Colors, Fonts } from '../constants/theme';
 import {
   useGroup,
   useGroups,
@@ -24,19 +19,21 @@ import { type EventDetailed } from '@moijia/client';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { GroupsTopHeader } from './GroupsTopHeader';
 import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
+import { useGroupsActivitySectionSwitch } from './GroupsActivitySectionSwitch';
 import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { ListView } from './ListView';
 import { withReturnTo } from '../utils/navigationReturn';
+import { useGroupsBreadcrumbGroupSwitch } from './groupsBreadcrumbDropdown';
 
 export type GroupEventsViewProps = {
   groupId: string;
-  switchableGroups?: { id: string; name: string }[];
+  orderedSwitcherGroups?: { id: string; name: string }[];
   onSwitchGroup?: (groupId: string) => void;
 };
 
 export function GroupEventsView({
   groupId,
-  switchableGroups = [],
+  orderedSwitcherGroups = [],
   onSwitchGroup,
 }: GroupEventsViewProps) {
   const router = useRouter();
@@ -112,14 +109,18 @@ export function GroupEventsView({
   const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
 
   const [showNotifs, setShowNotifs] = useState(false);
-  const [showSwitchGroups, setShowSwitchGroups] = useState(false);
-  const [switchGroupsAnchor, setSwitchGroupsAnchor] = useState<{ x: number; y: number } | null>(null);
+  const { chevronProps: groupChevronProps, modal: groupSwitchModal } = useGroupsBreadcrumbGroupSwitch(
+    group ? { id: groupId, name: group.name } : null,
+    orderedSwitcherGroups,
+    onSwitchGroup
+  );
 
   const requestOverview = useCallback(() => {
     goToOverview();
   }, [goToOverview]);
 
-  const titleIsSwitchable = switchableGroups.length > 0 && !!onSwitchGroup;
+  const { segment: activitySectionSegment, modal: activitySectionSwitchModal } =
+    useGroupsActivitySectionSwitch(groupId, 'events', { returnPathname: pathname });
 
   const breadcrumbSegments: BreadcrumbSegment[] = useMemo(() => {
     if (!group) {
@@ -130,17 +131,11 @@ export function GroupEventsView({
       {
         label: group.name,
         onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
-        showSwitchChevron: titleIsSwitchable,
-        onSwitchChevronPress: titleIsSwitchable
-          ? (anchor) => {
-              setSwitchGroupsAnchor(anchor);
-              setShowSwitchGroups(true);
-            }
-          : undefined,
+        ...groupChevronProps,
       },
-      { label: 'Events' },
+      activitySectionSegment,
     ];
-  }, [group, groupId, titleIsSwitchable, requestOverview, router]);
+  }, [group, groupId, requestOverview, router, activitySectionSegment, groupChevronProps]);
 
   useEffect(() => {
     if (isError || (group && group.membershipStatus === 'none')) {
@@ -191,48 +186,12 @@ export function GroupEventsView({
       showGroup={false}
     />
   );
-  const switchMenuWidth = 240;
-  const windowWidth = Dimensions.get('window').width;
-  const switchMenuLeft = Math.max(
-    12,
-    Math.min((switchGroupsAnchor?.x ?? windowWidth - 12) - switchMenuWidth + 20, windowWidth - switchMenuWidth - 12)
-  );
-  const switchMenuTop = Math.max(12, (switchGroupsAnchor?.y ?? 0) + 10);
-
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {groupsTopHeader}
       <GroupsBreadcrumbTrail segments={breadcrumbSegments} />
-      {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
-          <View style={styles.switchGroupsOverlay}>
-            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSwitchGroups(false)} activeOpacity={1} />
-            <View style={[styles.switchGroupsCard, { top: switchMenuTop, left: switchMenuLeft, width: switchMenuWidth }]}>
-              <ScrollView style={styles.switchGroupsList} keyboardShouldPersistTaps="handled">
-                {switchableGroups.map((g, idx) => (
-                  <TouchableOpacity
-                    key={g.id}
-                    onPress={() => {
-                      setShowSwitchGroups(false);
-                      onSwitchGroup(g.id);
-                    }}
-                    style={[
-                      styles.switchGroupsRow,
-                      idx === 0 && styles.switchGroupsRowFirst,
-                      (idx === 0 || idx === switchableGroups.length - 1) && styles.switchGroupsRowEdge,
-                    ]}
-                  >
-                    <Text style={styles.switchGroupsRowText} numberOfLines={2}>
-                      {g.name}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-      ) : null}
+      {activitySectionSwitchModal}
+      {groupSwitchModal}
       <View style={styles.content}>{body}</View>
       <NotificationsPanelModal
         visible={showNotifs}
@@ -258,28 +217,4 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     textAlign: 'center',
   },
-  switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
-  switchGroupsCard: {
-    position: 'absolute',
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 0,
-    maxHeight: 320,
-    ...Shadows.lg,
-  },
-  switchGroupsList: { maxHeight: 300 },
-  switchGroupsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
-  },
-  switchGroupsRowFirst: { borderTopWidth: 0 },
-  switchGroupsRowEdge: { paddingVertical: 12 },
-  switchGroupsRowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
 });

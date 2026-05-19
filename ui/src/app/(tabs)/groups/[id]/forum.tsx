@@ -1,8 +1,8 @@
-import { useMemo, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { GroupForumView } from '../../../../components/GroupForumView';
-import { useGroups } from '../../../../hooks/api';
 import { useCurrentUserContext } from '../../../../contexts/CurrentUserContext';
+import { useOrderedSwitcherGroups } from '../../../../hooks/useOrderedSwitcherGroups';
 import { firstSearchParam } from '../../../../utils/navigationReturn';
 
 export default function GroupForumScreen() {
@@ -11,25 +11,7 @@ export default function GroupForumScreen() {
   const { userId: currentUserId } = useCurrentUserContext();
   const groupId = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const { data: allGroups = [] } = useGroups(currentUserId ?? '', true);
-  const listGroups = useMemo(
-    () =>
-      allGroups.filter(
-        (g) =>
-          g.membershipStatus === 'member' ||
-          g.membershipStatus === 'admin' ||
-          g.membershipStatus === 'pending'
-      ),
-    [allGroups]
-  );
-
-  const switchableGroups = useMemo(
-    () =>
-      listGroups
-        .filter((g) => g.id !== groupId)
-        .map((g) => ({ id: g.id, name: g.name })),
-    [listGroups, groupId]
-  );
+  const { orderedSwitcherGroups } = useOrderedSwitcherGroups(currentUserId ?? '');
 
   const onSwitchGroup = useCallback(
     (nextId: string) => {
@@ -47,7 +29,7 @@ export default function GroupForumScreen() {
   return (
     <GroupForumView
       groupId={groupId}
-      switchableGroups={switchableGroups}
+      orderedSwitcherGroups={orderedSwitcherGroups}
       onSwitchGroup={onSwitchGroup}
     />
   );

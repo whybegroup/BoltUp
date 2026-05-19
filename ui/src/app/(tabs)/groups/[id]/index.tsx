@@ -1,8 +1,8 @@
-import { useMemo, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { GroupDetailView } from '../../../../components/GroupDetailView';
-import { useGroups } from '../../../../hooks/api';
 import { useCurrentUserContext } from '../../../../contexts/CurrentUserContext';
+import { useOrderedSwitcherGroups } from '../../../../hooks/useOrderedSwitcherGroups';
 import { firstSearchParam, parseReturnToParam } from '../../../../utils/navigationReturn';
 
 export default function GroupsTabGroupDetail() {
@@ -10,30 +10,9 @@ export default function GroupsTabGroupDetail() {
   const params = useLocalSearchParams<{ id: string; returnTo?: string | string[] }>();
   const { userId: currentUserId } = useCurrentUserContext();
   const groupId = Array.isArray(params.id) ? params.id[0] : params.id;
-  const returnToHref = useMemo(
-    () => parseReturnToParam(firstSearchParam(params.returnTo)),
-    [params.returnTo]
-  );
+  const returnToHref = parseReturnToParam(firstSearchParam(params.returnTo));
 
-  const { data: allGroups = [] } = useGroups(currentUserId ?? '', true);
-  const listGroups = useMemo(
-    () =>
-      allGroups.filter(
-        (g) =>
-          g.membershipStatus === 'member' ||
-          g.membershipStatus === 'admin' ||
-          g.membershipStatus === 'pending'
-      ),
-    [allGroups]
-  );
-
-  const switchableGroups = useMemo(
-    () =>
-      listGroups
-        .filter((g) => g.id !== groupId)
-        .map((g) => ({ id: g.id, name: g.name })),
-    [listGroups, groupId]
-  );
+  const { orderedSwitcherGroups } = useOrderedSwitcherGroups(currentUserId ?? '');
 
   const onSwitchGroup = useCallback(
     (nextId: string) => {
@@ -52,7 +31,7 @@ export default function GroupsTabGroupDetail() {
     <GroupDetailView
       groupId={groupId}
       returnToHref={returnToHref}
-      switchableGroups={switchableGroups}
+      orderedSwitcherGroups={orderedSwitcherGroups}
       onSwitchGroup={onSwitchGroup}
     />
   );

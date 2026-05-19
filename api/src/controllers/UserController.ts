@@ -11,7 +11,7 @@ import {
   SuccessResponse,
   Response,
 } from 'tsoa';
-import { User, UserInput, UserUpdate } from '../models';
+import { User, UserInput, UserUpdate, GroupOrderInput } from '../models';
 import { UserService } from '../services/UserService';
 
 @Route('users')
@@ -63,6 +63,23 @@ export class UserController extends Controller {
   @Post('sync')
   public async syncUser(@Body() body: UserInput): Promise<User> {
     return this.userService.upsertFromAuth(body);
+  }
+
+  /**
+   * Set preferred group list order for the user
+   * @summary Persists drag-and-drop order for All Groups and group switchers
+   */
+  @Put('{id}/group-order')
+  public async setGroupOrder(
+    @Path() id: string,
+    @Body() body: GroupOrderInput
+  ): Promise<string[]> {
+    try {
+      return await this.userService.setGroupOrder(id, body);
+    } catch (e: any) {
+      this.setStatus(400);
+      throw new Error(e?.message ?? 'Invalid group order');
+    }
   }
 
   /**

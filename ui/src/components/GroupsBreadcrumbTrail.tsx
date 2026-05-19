@@ -8,6 +8,8 @@ export type BreadcrumbSegment = {
   onPress?: () => void;
   /** When true (typically on the last segment), shows a small chevron after the label. */
   showSwitchChevron?: boolean;
+  /** When true, chevron points up (dropdown open). */
+  switchChevronOpen?: boolean;
   /** Optional handler for switch chevron press (separate from label press). */
   onSwitchChevronPress?: (anchor: { x: number; y: number }) => void;
 };
@@ -30,7 +32,12 @@ export function GroupsBreadcrumbTrail({ segments }: GroupsBreadcrumbTrailProps) 
             </Text>
           );
           const chevronNode = seg.showSwitchChevron ? (
-            <Ionicons name="chevron-down" size={14} color={Colors.textMuted} style={styles.breadcrumbChevron} />
+            <Ionicons
+              name={seg.switchChevronOpen ? 'chevron-up' : 'chevron-down'}
+              size={14}
+              color={Colors.textMuted}
+              style={styles.breadcrumbChevron}
+            />
           ) : null;
           return (
             <Fragment key={`${seg.label}-${i}`}>
@@ -88,8 +95,6 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 14,
     backgroundColor: Colors.bg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.border,
   },
   breadcrumbInner: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   breadcrumbSep: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted },

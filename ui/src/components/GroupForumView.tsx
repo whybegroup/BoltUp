@@ -43,6 +43,8 @@ import {
 } from '../hooks/api';
 import { GroupsTopHeader } from './GroupsTopHeader';
 import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
+import { useGroupsActivitySectionSwitch } from './GroupsActivitySectionSwitch';
+import { useGroupsBreadcrumbGroupSwitch } from './groupsBreadcrumbDropdown';
 import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { EmojiBar } from './EmojiBar';
 import { UserAvatar } from './UserAvatar';
@@ -79,7 +81,7 @@ import {
 
 export type GroupForumViewProps = {
   groupId: string;
-  switchableGroups?: { id: string; name: string }[];
+  orderedSwitcherGroups?: { id: string; name: string }[];
   onSwitchGroup?: (groupId: string) => void;
 };
 
@@ -259,7 +261,7 @@ function postEditDiffersFromPublished(
   return merged !== original;
 }
 
-export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }: GroupForumViewProps) {
+export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGroup }: GroupForumViewProps) {
   const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
   const scrollRef = useRef<ScrollView | null>(null);
@@ -276,8 +278,6 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   const [draftBadgeTick, setDraftBadgeTick] = useState(0);
   const bumpDraftBadgeTick = useCallback(() => setDraftBadgeTick((n) => n + 1), []);
   const [showNotifs, setShowNotifs] = useState(false);
-  const [showSwitchGroups, setShowSwitchGroups] = useState(false);
-  const [switchGroupsAnchor, setSwitchGroupsAnchor] = useState<{ x: number; y: number } | null>(null);
   /** Inline edit draft when `editingPostId` is set. */
   const [postBody, setPostBody] = useState('');
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -364,11 +364,18 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
   const { data: commentQuickReactions = [...DEFAULT_COMMENT_QUICK_REACTIONS_LIST] } =
     useCommentQuickReactions(currentUserId);
 
-  const titleIsSwitchable = switchableGroups.length > 0 && !!onSwitchGroup;
+  const { chevronProps: groupChevronProps, modal: groupSwitchModal } = useGroupsBreadcrumbGroupSwitch(
+    group ? { id: groupId, name: group.name } : null,
+    orderedSwitcherGroups,
+    onSwitchGroup
+  );
 
   const goToOverview = useCallback(() => {
     router.replace('/(tabs)/groups');
   }, [router]);
+
+  const { segment: activitySectionSegment, modal: activitySectionSwitchModal } =
+    useGroupsActivitySectionSwitch(groupId, 'posts');
 
   const breadcrumbSegments: BreadcrumbSegment[] = useMemo(() => {
     if (!group) return [{ label: 'All Groups', onPress: goToOverview }];
@@ -377,17 +384,11 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
       {
         label: group.name,
         onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
-        showSwitchChevron: titleIsSwitchable,
-        onSwitchChevronPress: titleIsSwitchable
-          ? (anchor) => {
-              setSwitchGroupsAnchor(anchor);
-              setShowSwitchGroups(true);
-            }
-          : undefined,
+        ...groupChevronProps,
       },
-      { label: 'Posts' },
+      activitySectionSegment,
     ];
-  }, [group, goToOverview, groupId, router, titleIsSwitchable]);
+  }, [group, goToOverview, groupId, router, activitySectionSegment, groupChevronProps]);
 
   const eventEligibleGroupCount = useMemo(
     () =>
@@ -1675,6 +1676,8 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         unreadCount={unreadNotifCount}
       />
       <GroupsBreadcrumbTrail segments={breadcrumbSegments} />
+      {activitySectionSwitchModal}
+      {groupSwitchModal}
 
       <ScrollView
         ref={(node) => {
@@ -2111,48 +2114,7 @@ export function GroupForumView({ groupId, switchableGroups = [], onSwitchGroup }
         </Modal>
       ) : null}
 
-      {showSwitchGroups && onSwitchGroup && switchableGroups.length > 0 ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowSwitchGroups(false)}>
-          <View style={styles.switchGroupsOverlay}>
-            <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setShowSwitchGroups(false)} activeOpacity={1} />
-            <View
-              style={[
-                styles.switchGroupsCard,
-                {
-                  top: Math.max(12, (switchGroupsAnchor?.y ?? 0) + 10),
-                  left: Math.max(
-                    12,
-                    Math.min((switchGroupsAnchor?.x ?? Dimensions.get('window').width - 12) - 220, Dimensions.get('window').width - 252)
-                  ),
-                  width: 240,
-                },
-              ]}
-            >
-              <ScrollView style={styles.switchGroupsList} keyboardShouldPersistTaps="handled">
-                {switchableGroups.map((g, idx) => (
-                  <TouchableOpacity
-                    key={g.id}
-                    onPress={() => {
-                      setShowSwitchGroups(false);
-                      onSwitchGroup(g.id);
-                    }}
-                    style={[
-                      styles.switchGroupsRow,
-                      idx === 0 && styles.switchGroupsRowFirst,
-                      (idx === 0 || idx === switchableGroups.length - 1) && styles.switchGroupsRowEdge,
-                    ]}
-                  >
-                    <Text style={styles.switchGroupsRowText} numberOfLines={2}>
-                      {g.name}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-      ) : null}
+      {groupSwitchModal}
 
       {reactionQuickPickerTarget && currentUserId ? (
         <Modal
@@ -3200,30 +3162,6 @@ const styles = StyleSheet.create({
   },
   commentMeta: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 4 },
   commentBody: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.text, lineHeight: 20 },
-  switchGroupsOverlay: { ...StyleSheet.absoluteFillObject },
-  switchGroupsCard: {
-    position: 'absolute',
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 0,
-    maxHeight: 320,
-    ...Shadows.lg,
-  },
-  switchGroupsList: { maxHeight: 300 },
-  switchGroupsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
-  },
-  switchGroupsRowFirst: { borderTopWidth: 0 },
-  switchGroupsRowEdge: { paddingVertical: 12 },
-  switchGroupsRowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
 });
 
 type ForumPostMarkdownBodyProps = {
