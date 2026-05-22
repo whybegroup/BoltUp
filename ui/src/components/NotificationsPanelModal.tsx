@@ -14,7 +14,7 @@ import { Colors, Fonts, Layout, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
 import { NotificationListIcon } from './NotificationListIcon';
 import { useUpdateNotification, useMarkAllNotificationsRead } from '../hooks/api';
-import { withReturnTo } from '../utils/navigationReturn';
+import { navigateFromNotification } from '../utils/notificationNavigation';
 
 export type NotificationsPanelGroup = { id: string; name: string };
 
@@ -88,19 +88,7 @@ export function NotificationsPanelModal({
                       }
                       if (!n.navigable) return;
                       onClose();
-                      if (n.dest === Notification.dest.EVENT && n.eventId) {
-                        router.push(withReturnTo(`/event/${n.eventId}`, pathname));
-                      } else if (n.dest === Notification.dest.GROUP && n.groupId) {
-                        router.push(withReturnTo(`/(tabs)/groups/${n.groupId}`, pathname));
-                      } else if (n.dest === Notification.dest.POLL && n.pollId) {
-                        if (n.groupId) {
-                          router.push(
-                            withReturnTo(`/(tabs)/groups/${n.groupId}/polls/${n.pollId}`, pathname)
-                          );
-                        } else {
-                          router.push(withReturnTo(`/poll/${n.pollId}`, pathname));
-                        }
-                      }
+                      navigateFromNotification(router, pathname, n);
                     }}
                     style={[
                       styles.row,

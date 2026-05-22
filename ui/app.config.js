@@ -13,6 +13,13 @@ const plugins = [
   'expo-font',
   'expo-web-browser',
   [
+    'expo-notifications',
+    {
+      icon: './assets/favicon.png',
+      color: '#FAFAF9',
+    },
+  ],
+  [
     'expo-image-picker',
     {
       photosPermission: 'moijia needs access to your photos to upload images to events.',
@@ -59,5 +66,11 @@ module.exports = {
       typedRoutes: true,
       tsconfigPaths: true,
     },
+    extra: {
+      eas: {
+        projectId: "6d4b4dda-eff5-4a0f-80e2-3cc092089a5d",
+      },
+    },
+    "owner": "whybe"
   },
 };

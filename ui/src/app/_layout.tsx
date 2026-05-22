@@ -19,6 +19,7 @@ import { store } from '../store';
 import { queryClient } from '../config/queryClient';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { CurrentUserProvider } from '../contexts/CurrentUserContext';
+import { PushNotificationsRegistrar } from '../components/PushNotificationsRegistrar';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -141,6 +142,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <CurrentUserProvider>
+            <PushNotificationsRegistrar />
             <GestureHandlerRootView style={{ flex: 1 }}>
               <SafeAreaProvider>
                 <StatusBar style="dark" />

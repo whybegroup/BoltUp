@@ -45,6 +45,7 @@ model User {
   groupPostReactions      GroupPostReaction[]
   groupPostComments       GroupPostComment[]
   groupPostCommentReactions GroupPostCommentReaction[]
+  pushTokens              PushToken[]
 
   @@map("users")
 }
@@ -498,4 +499,23 @@ model Notification {
   updatedAt  DateTime @updatedAt
 
   @@map("notifications")
+}
+
+// ============================================
+// Push notification tokens (Expo)
+// ============================================
+
+model PushToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  String   // ios | android
+  deviceId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_tokens")
 }

@@ -6,18 +6,22 @@ import {
   Path,
   Post,
   Put,
+  Query,
   Route,
   Tags,
   SuccessResponse,
   Response,
 } from 'tsoa';
 import { User, UserInput, UserUpdate, GroupOrderInput } from '../models';
+import type { PushTokenInput } from '../models/PushToken';
 import { UserService } from '../services/UserService';
+import { PushTokenService } from '../services/PushTokenService';
 
 @Route('users')
 @Tags('Users')
 export class UserController extends Controller {
   private userService = new UserService();
+  private pushTokenService = new PushTokenService();
 
   /**
    * Get all users
@@ -80,6 +84,34 @@ export class UserController extends Controller {
       this.setStatus(400);
       throw new Error(e?.message ?? 'Invalid group order');
     }
+  }
+
+  /**
+   * Register an Expo push token for a user (iOS/Android)
+   * @summary Upserts a device push token for remote notifications
+   */
+  @Post('{id}/push-token')
+  @SuccessResponse('204', 'No Content')
+  public async registerPushToken(
+    @Path() id: string,
+    @Body() body: PushTokenInput
+  ): Promise<void> {
+    await this.pushTokenService.register(id, body);
+    this.setStatus(204);
+  }
+
+  /**
+   * Remove a push token (e.g. on sign-out)
+   * @summary Unregisters a device push token
+   */
+  @Delete('{id}/push-token')
+  @SuccessResponse('204', 'No Content')
+  public async unregisterPushToken(
+    @Path() id: string,
+    @Query() token: string
+  ): Promise<void> {
+    await this.pushTokenService.unregister(id, token);
+    this.setStatus(204);
   }
 
   /**

@@ -1,8 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import { Notification, NotificationInput } from '../models';
 import { notifTypeToPrefKey, parseNotifPrefsJson } from '../utils/notifPrefsCore';
+import { PushNotificationService } from './PushNotificationService';
 
 const prisma = new PrismaClient();
+const pushNotificationService = new PushNotificationService();
 
 export class NotificationService {
   /**
@@ -40,7 +42,11 @@ export class NotificationService {
         navigable: input.navigable ?? false,
       },
     });
-    return this.mapNotification(notification);
+    const mapped = this.mapNotification(notification);
+    if (mapped.userId) {
+      void pushNotificationService.sendForNotification(mapped).catch(() => undefined);
+    }
+    return mapped;
   }
 
   /**
