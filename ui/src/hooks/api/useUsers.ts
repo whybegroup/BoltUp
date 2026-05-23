@@ -7,8 +7,6 @@ export function useUsers() {
     queryKey: queryKeys.users.all,
     queryFn: () => UsersService.getUsers(),
     staleTime: 0,
-    refetchInterval: 3000,
-    refetchIntervalInBackground: false,
   });
 }
 

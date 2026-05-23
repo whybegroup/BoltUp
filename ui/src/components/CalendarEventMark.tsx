@@ -1,7 +1,5 @@
 import { View, StyleSheet } from 'react-native';
-import { Colors } from '../constants/theme';
 import { isGrayedCalendarVisual, type CalendarRsvpVisual } from '../utils/calendarEventRsvp';
-import { groupColorWithOpacity } from '../utils/helpers';
 import { CalendarEventRsvpFill } from './CalendarEventRsvpFill';
 
 const GRAYED_MARK_BG = '#E4E4E7';
@@ -10,52 +8,54 @@ type CalendarEventMarkProps = {
   visual: CalendarRsvpVisual;
   accentColor: string;
   patternId: string;
-  selected?: boolean;
   variant: 'month' | 'year';
 };
 
-/** Month/year: gray stripes = no response, yellow stripes = maybe, white = going, gray = can't go. */
+const DOT_SIZE = { month: 5, year: 4 } as const;
+
+function dotBase(variant: 'month' | 'year') {
+  const size = DOT_SIZE[variant];
+  return {
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    overflow: 'hidden' as const,
+  };
+}
+
+/** Month/year: gray stripes = no response, yellow stripes = maybe, filled = going, gray = can't go. */
 export function CalendarEventMark({
   visual,
   accentColor,
   patternId,
-  selected = false,
   variant,
 }: CalendarEventMarkProps) {
-  const borderColor = selected ? Colors.accentFg : accentColor;
-  const markWrap = variant === 'month' ? styles.monthStripeMark : styles.yearStripeMark;
+  const base = dotBase(variant);
 
   if (visual === 'none' || visual === 'maybe') {
     return (
-      <View style={[markWrap, { borderLeftColor: borderColor }]}>
+      <View style={[base, styles.ring, { borderColor: accentColor }]}>
         <CalendarEventRsvpFill
           striped
           backgroundColor={visual === 'maybe' ? '#FFFBEB' : '#E8E8ED'}
           patternId={patternId}
           stripeTone={visual === 'maybe' ? 'maybe' : 'neutral'}
-          onDarkBackground={selected}
         />
       </View>
     );
   }
 
   if (visual === 'going') {
-    return (
-      <View
-        style={[
-          variant === 'month' ? styles.monthSolidMark : styles.yearSolidMark,
-          { borderLeftColor: borderColor, backgroundColor: groupColorWithOpacity(accentColor, 0.2) },
-        ]}
-      />
-    );
+    return <View style={[base, { backgroundColor: accentColor }]} />;
   }
 
   if (isGrayedCalendarVisual(visual)) {
     return (
       <View
         style={[
-          variant === 'month' ? styles.monthSolidMark : styles.yearSolidMark,
-          { borderLeftColor: borderColor, backgroundColor: GRAYED_MARK_BG },
+          base,
+          styles.ring,
+          { borderColor: accentColor, backgroundColor: GRAYED_MARK_BG },
         ]}
       />
     );
@@ -65,30 +65,7 @@ export function CalendarEventMark({
 }
 
 const styles = StyleSheet.create({
-  monthStripeMark: {
-    width: 12,
-    height: 4,
-    borderRadius: 1,
-    borderLeftWidth: 2,
-    overflow: 'hidden',
-  },
-  yearStripeMark: {
-    width: 9,
-    height: 3,
-    borderRadius: 1,
-    borderLeftWidth: 1.5,
-    overflow: 'hidden',
-  },
-  monthSolidMark: {
-    width: 12,
-    height: 4,
-    borderRadius: 1,
-    borderLeftWidth: 2,
-  },
-  yearSolidMark: {
-    width: 9,
-    height: 3,
-    borderRadius: 1,
-    borderLeftWidth: 1.5,
+  ring: {
+    borderWidth: 1,
   },
 });

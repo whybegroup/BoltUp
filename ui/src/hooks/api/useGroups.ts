@@ -17,7 +17,7 @@ import {
 } from '@moijia/client';
 import { reorderGroupsInCache } from '../../utils/groupOrder';
 import { queryKeys } from '../../config/queryClient';
-import { refetchIntervalUnlessNotFound, retryUnlessNotFound } from '../../utils/apiErrors';
+import { retryUnlessNotFound } from '../../utils/apiErrors';
 
 /** Reuse list data so group detail can render without waiting on a duplicate GET /groups/:id. */
 function readGroupScopedFromCaches(
@@ -38,7 +38,6 @@ export function useGroups(userId: string, includeDeleted = false) {
     queryKey: queryKeys.groups.all(userId, includeDeleted),
     queryFn: () => GroupsService.getGroups(userId, includeDeleted),
     enabled: !!userId,
-    refetchInterval: 3000, // Poll every 3s so changes (e.g. declined request) appear without refresh
     placeholderData: keepPreviousData, // Avoid flicker when toggling includeDeleted
   });
 }
@@ -50,8 +49,6 @@ export function useGroup(id: string, userId: string, opts?: { enabled?: boolean 
     queryFn: () => GroupsService.getGroup(id, userId),
     enabled: (opts?.enabled ?? true) && !!id && !!userId,
     retry: retryUnlessNotFound,
-    refetchInterval: refetchIntervalUnlessNotFound(3000),
-    refetchIntervalInBackground: true,
     placeholderData: (previousData) => {
       const fromList = readGroupScopedFromCaches(queryClient, userId, id);
       if (fromList) return fromList;
@@ -67,7 +64,6 @@ export function useGroupMembers(id: string, userId: string, opts?: { enabled?: b
     queryFn: () => GroupsService.getGroupMembers(id, userId),
     enabled: opts?.enabled !== false && !!id && !!userId,
     retry: retryUnlessNotFound,
-    refetchInterval: refetchIntervalUnlessNotFound(3000),
   });
 }
 
@@ -206,7 +202,6 @@ export function usePendingRequests(id: string, userId: string, opts?: { enabled?
     queryFn: () => GroupsService.getPendingRequests(id, userId),
     enabled: opts?.enabled !== false && !!id && !!userId,
     retry: retryUnlessNotFound,
-    refetchInterval: refetchIntervalUnlessNotFound(3000),
   });
 }
 
@@ -346,7 +341,6 @@ export function useAllGroupMemberColors(userId: string) {
     queryKey: queryKeys.groups.allMemberColors(userId),
     queryFn: () => GroupsService.getAllMemberColors(userId),
     enabled: !!userId,
-    refetchInterval: 3000,
   });
 
   useEffect(() => {

@@ -10,54 +10,45 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  KeyboardAvoidingView,
   Dimensions,
 } from 'react-native';
+import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import * as Clipboard from 'expo-clipboard';
-import { useRouter, usePathname, type Href } from 'expo-router';
+import { usePathname, type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../utils/helpers';
-import { Toggle, formSectionTitleStyle, Avatar } from './ui';
+import { formSectionTitleStyle, Avatar } from './ui';
 import {
   useGroup,
-  useGroups,
   useUsers,
   useGroupMembers,
   useGroupMemberColor,
   usePendingRequests,
-  useHandleMembershipRequest,
   useUpdateGroup,
   useRegenerateInviteCode,
   useLeaveGroup,
   useSoftDeleteGroup,
   useDeleteGroup,
   useRecoverGroup,
-  useRemoveMember,
-  useSetMemberRole,
-  useSetOwner,
-  useNotifications,
-  useAllGroupMemberColors,
   useEvents,
 } from '../hooks/api';
-import { MembershipRequestAction } from '@moijia/client';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { GroupAvatar } from './GroupAvatar';
-import { GroupMemberThemeAndNotifications } from './GroupMemberThemeAndNotifications';
 import { AvatarPickerModal } from './AvatarPickerModal';
 import { UserAvatar } from './UserAvatar';
 import { deleteManagedUploadFireAndForget } from '../services/managedUploadDelete';
 import { ResolvableImage } from './ResolvableImage';
 import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 import Toast from 'react-native-toast-message';
-import { GroupsTopHeader } from './GroupsTopHeader';
-import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
-import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { ImageLightboxModal } from './ImageLightboxModal';
-import { withReturnTo } from '../utils/navigationReturn';
-import { useGroupsBreadcrumbGroupSwitch } from './groupsBreadcrumbDropdown';
+import { groupSubpageFromPathname } from './groupScope/useGroupSubpage';
+import { groupsTabParentHref, navigateGroupsTabTo } from '../utils/tabBreadcrumbNav';
+import { useGroupScopeNav } from './groupScope/GroupScopeNavContext';
 import { AddImageButton } from './AddImageButton';
 
 const AVATAR_SIZE = 56;
@@ -71,57 +62,52 @@ function descriptionExceedsTwoLines(raw: string): boolean {
   return false;
 }
 
-export type GroupDetailSwitchableGroup = { id: string; name: string };
-
 export type GroupDetailViewProps = {
   groupId: string;
-  /** When `router.back()` is not available, navigate here (decoded in-app path). */
-  returnToHref?: string;
-  /** Other groups the user can open from detail mode (excludes current `groupId`). */
-  orderedSwitcherGroups?: GroupDetailSwitchableGroup[];
-  onSwitchGroup?: (groupId: string) => void;
 };
 
-export function GroupDetailView({
-  groupId,
-  returnToHref,
-  orderedSwitcherGroups = [],
-  onSwitchGroup,
-}: GroupDetailViewProps) {
+export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const dismiss = useCallback(() => {
-    if (returnToHref) {
-      router.replace(returnToHref as Href);
-      return;
-    }
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-    router.replace('/(tabs)/groups');
-  }, [router, returnToHref]);
+  const groupsTabNav = useGroupScopeNav();
 
-  const goToOverview = useCallback(() => {
-    router.replace('/(tabs)/groups');
-  }, [router]);
+  const navigateToParent = useCallback(() => {
+    const subpage = groupSubpageFromPathname(pathname, groupId);
+    const parent = groupsTabParentHref(groupId, subpage);
+    if (parent) {
+      navigateGroupsTabTo(router, parent, groupId, groupsTabNav);
+    }
+  }, [pathname, groupId, router, groupsTabNav]);
+
+  const dismiss = navigateToParent;
+
+  const goToAllGroups = useCallback(() => {
+    navigateGroupsTabTo(router, '/(tabs)/groups' as Href, groupId, groupsTabNav);
+  }, [router, groupId, groupsTabNav]);
 
   const { userId: currentUserId } = useCurrentUserContext();
 
-  const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
-  const { data: memberColorData } = useGroupMemberColor(groupId, currentUserId ?? '');
-  const { data: users = [] } = useUsers();
-  const { data: groupMembers = [] } = useGroupMembers(groupId, currentUserId ?? '', {
+  const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
+  const { data: memberColorData, refetch: refetchMemberColor } = useGroupMemberColor(
+    groupId,
+    currentUserId ?? ''
+  );
+  const { data: users = [], refetch: refetchUsers } = useUsers();
+  const { data: groupMembers = [], refetch: refetchGroupMembers } = useGroupMembers(
+    groupId,
+    currentUserId ?? '',
+    {
     enabled:
       !!group && (group.membershipStatus === 'member' || group.membershipStatus === 'admin'),
-  });
-  const { data: pendingRequestUsers = [] } = usePendingRequests(groupId, currentUserId ?? '', {
-    enabled: group?.membershipStatus === 'admin',
-  });
-  const handleMembershipRequest = useHandleMembershipRequest(groupId, currentUserId ?? '');
-  const removeMemberMutation = useRemoveMember(groupId, currentUserId ?? '');
-  const setMemberRole = useSetMemberRole(groupId, currentUserId ?? '');
-  const setOwner = useSetOwner(groupId, currentUserId ?? '');
+    }
+  );
+  const { data: pendingRequestUsers = [], refetch: refetchPendingRequests } = usePendingRequests(
+    groupId,
+    currentUserId ?? '',
+    {
+      enabled: group?.membershipStatus === 'admin',
+    }
+  );
   const updateGroup = useUpdateGroup(groupId, currentUserId ?? '');
   const regenerateInviteCodeMutation = useRegenerateInviteCode(groupId, currentUserId ?? '');
   const leaveGroupMutation = useLeaveGroup();
@@ -129,10 +115,6 @@ export function GroupDetailView({
   const hardDeleteMutation = useDeleteGroup(currentUserId ?? '');
   const recoverMutation = useRecoverGroup(currentUserId ?? '');
 
-  const [showNotifs, setShowNotifs] = useState(false);
-  const { data: allGroupsForChrome = [] } = useGroups(currentUserId ?? '', true);
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
-  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
   /** Events starting up to 14d ago (ongoing) through 7d ahead (upcoming). */
   const groupEventsFetchWindow = useMemo(() => {
     const now = new Date();
@@ -156,7 +138,7 @@ export function GroupDetailView({
     limit: 200,
     enabled: fetchGroupWeekEvents,
   });
-  const [eventsSummaryRefreshTick, setEventsSummaryRefreshTick] = useState(0);
+  const [eventsSummaryNowTick, setEventsSummaryNowTick] = useState(0);
   const groupEventsSummary = useMemo(() => {
     const nowMs = Date.now();
     const { weekEndMs } = groupEventsFetchWindow;
@@ -172,7 +154,15 @@ export function GroupDetailView({
       }
     }
     return { inProgressCount, upcomingCount };
-  }, [groupWeekEvents, groupEventsFetchWindow, eventsSummaryRefreshTick]);
+  }, [groupWeekEvents, groupEventsFetchWindow, eventsSummaryNowTick]);
+  const { refreshControl } = usePullToRefresh([
+    refetchGroup,
+    refetchUsers,
+    refetchGroupMembers,
+    refetchPendingRequests,
+    refetchGroupEvents,
+    refetchMemberColor,
+  ]);
     const groupEventsSummaryButtonLine = useMemo(() => {
     const { inProgressCount, upcomingCount } = groupEventsSummary;
     const parts: string[] = [];
@@ -180,16 +170,6 @@ export function GroupDetailView({
     if (upcomingCount > 0) parts.push(`${upcomingCount} upcoming events`);
     return parts.join(' · ');
   }, [groupEventsSummary.inProgressCount, groupEventsSummary.upcomingCount]);
-  const eventEligibleGroupCount = useMemo(
-    () =>
-      allGroupsForChrome.filter(
-        (g) =>
-          !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
-      ).length,
-    [allGroupsForChrome]
-  );
-  const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
-
   const [draftName, setDraftName] = useState('');
   const [draftDesc, setDraftDesc] = useState('');
   const [draftAnnouncement, setDraftAnnouncement] = useState('');
@@ -244,12 +224,9 @@ export function GroupDetailView({
       router.replace('/(tabs)/groups');
     }
   }, [isError, group?.membershipStatus, router]);
-  const [memberMenu,  setMemberMenu]  = useState<{ userId: string } | null>(null);
   const [showLeave,   setShowLeave]   = useState(false);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showMembersModal, setShowMembersModal] = useState(false);
-  const [showGroupSettingsModal, setShowGroupSettingsModal] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
@@ -265,12 +242,9 @@ export function GroupDetailView({
 
   useEffect(() => {
     if (!fetchGroupWeekEvents) return;
-    const interval = setInterval(() => {
-      refetchGroupEvents();
-      setEventsSummaryRefreshTick((t) => t + 1);
-    }, 10000);
+    const interval = setInterval(() => setEventsSummaryNowTick((t) => t + 1), 60000);
     return () => clearInterval(interval);
-  }, [fetchGroupWeekEvents, refetchGroupEvents]);
+  }, [fetchGroupWeekEvents]);
 
   const usersMap = useMemo(() => {
     const map: Record<string, any> = {};
@@ -288,12 +262,6 @@ export function GroupDetailView({
   const getUser = (userId: string) => {
     return membersMap[userId] || usersMap[userId] || { id: userId, name: 'Loading...', displayName: 'Loading...', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   };
-
-  const { chevronProps: groupChevronProps, modal: groupSwitchModal } = useGroupsBreadcrumbGroupSwitch(
-    group ? { id: groupId, name: group.name } : null,
-    orderedSwitcherGroups,
-    onSwitchGroup
-  );
 
   useEffect(() => {
     setDescExpanded(false);
@@ -313,9 +281,9 @@ export function GroupDetailView({
       resetProfileDrafts();
       setEditingGroupProfile(false);
       setDescExpanded(false);
-      goToOverview();
+      goToAllGroups();
     });
-  }, [confirmDiscardThen, resetProfileDrafts, goToOverview]);
+  }, [confirmDiscardThen, resetProfileDrafts, goToAllGroups]);
 
   const requestExitProfileEdit = useCallback(() => {
     confirmDiscardThen(() => {
@@ -332,20 +300,6 @@ export function GroupDetailView({
     return descriptionExceedsTwoLines(src);
   }, [editingGroupProfile, isAdminForDesc, draftDesc, group?.desc]);
 
-  const breadcrumbSegments: BreadcrumbSegment[] = useMemo(() => {
-    if (!group) {
-      return [{ label: 'All Groups', onPress: requestOverview }];
-    }
-    return [
-      { label: 'All Groups', onPress: requestOverview },
-      {
-        label: group.name,
-        onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
-        ...groupChevronProps,
-      },
-    ];
-  }, [group, groupId, requestOverview, router, groupChevronProps]);
-
   if (!group) {
     return null;
   }
@@ -360,7 +314,6 @@ export function GroupDetailView({
   const admins = group.adminIds ?? [];
   const isOwner = ownerId === currentUserId;
   const isAdmin = group.membershipStatus === 'admin';
-  const canManageMembers = isAdmin || isOwner;
   const isPending = group.membershipStatus === 'pending';
   const isSoftDeleted = !!group.deletedAt;
   const canEditMain = isAdmin && !isPending;
@@ -369,22 +322,12 @@ export function GroupDetailView({
     !!currentUserId &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
   const canEditAnnouncement = !isPending && (isAdmin || isOwner);
-  const visiblePendingMembers = canManageMembers ? pendingRequestUsers : [];
+  const visiblePendingMembers = (isAdmin || isOwner) ? pendingRequestUsers : [];
   const membersCount = (group.memberIds ?? []).length;
   const membersPreviewLabel = `${membersCount} member${membersCount === 1 ? '' : 's'}`;
   const pendingPreviewLabel =
     visiblePendingMembers.length > 0 ? ` · ${visiblePendingMembers.length} pending` : '';
   const membersPreviewSubLabel = `${membersPreviewLabel}${pendingPreviewLabel}`;
-  const ownerMemberIds = ownerId && (group.memberIds ?? []).includes(ownerId)
-    ? [ownerId]
-    : [];
-  const adminMemberIds = (group.memberIds ?? []).filter(
-    (memberId) => memberId !== ownerId && admins.includes(memberId)
-  );
-  const regularMemberIds = (group.memberIds ?? []).filter(
-    (memberId) => memberId !== ownerId && !admins.includes(memberId)
-  );
-
   const leaveGroup = async () => {
     if (!currentUserId) return;
     try {
@@ -426,68 +369,6 @@ export function GroupDetailView({
       await recoverMutation.mutateAsync(groupId);
     } catch (e: any) {
       const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to recover';
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Error', msg);
-    }
-  };
-
-  const approveReq = async (userId: string) => {
-    try {
-      await handleMembershipRequest.mutateAsync({
-        userId,
-        action: MembershipRequestAction.action.APPROVE,
-      });
-    } catch (e: any) {
-      const msg = e?.body?.message ?? e?.response?.data?.message ?? e?.message ?? 'Could not approve';
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Error', msg);
-    }
-  };
-
-  const declineReq = async (userId: string) => {
-    try {
-      await handleMembershipRequest.mutateAsync({
-        userId,
-        action: MembershipRequestAction.action.REJECT,
-      });
-    } catch {
-      /* handled by mutation UI if needed */
-    }
-  };
-
-  const removeMember = async (userId: string) => {
-    if (userId === currentUserId || userId === ownerId) return;
-    setMemberMenu(null);
-    try {
-      await removeMemberMutation.mutateAsync(userId);
-    } catch (e: any) {
-      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to remove member';
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Error', msg);
-    }
-  };
-
-  const toggleAdmin = async (userId: string) => {
-    if (userId === ownerId || !group) return;
-    setMemberMenu(null);
-    const isCurrentlyAdmin = (group.adminIds ?? []).includes(userId);
-    const newRole = isCurrentlyAdmin ? 'member' : 'admin';
-    try {
-      await setMemberRole.mutateAsync({ memberId: userId, role: newRole });
-    } catch (e: any) {
-      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to update admin';
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Error', msg);
-    }
-  };
-
-  const transferOwner = async (userId: string) => {
-    if (userId === ownerId || !group) return;
-    setMemberMenu(null);
-    try {
-      await setOwner.mutateAsync(userId);
-    } catch (e: any) {
-      const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to transfer ownership';
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Error', msg);
     }
@@ -537,6 +418,8 @@ export function GroupDetailView({
         desc: draftDesc.trim(),
         updatedBy: currentUserId ?? '',
       });
+      setEditingGroupProfile(false);
+      setDescExpanded(false);
       Toast.show({ type: 'success', text1: 'Changes saved' });
     } catch {
       if (Platform.OS === 'web') window.alert('Failed to save changes');
@@ -702,23 +585,8 @@ export function GroupDetailView({
     </View>
   ) : null;
 
-  const groupsTopHeader = (
-    <GroupsTopHeader
-      userId={currentUserId}
-      eventEligibleGroupCount={eventEligibleGroupCount}
-      showNotifs={showNotifs}
-      onToggleNotifs={() => setShowNotifs((p) => !p)}
-      unreadCount={unreadNotifCount}
-    />
-  );
-
-  const breadcrumbRow = <GroupsBreadcrumbTrail segments={breadcrumbSegments} />;
-
   const scrollAndOverlays = (
     <>
-      {groupsTopHeader}
-      {breadcrumbRow}
-
       {(() => {
         const annTrim = (group.announcement ?? '').trim();
         if (!annTrim && !canEditAnnouncement) return null;
@@ -765,10 +633,11 @@ export function GroupDetailView({
         );
       })()}
 
-      <ScrollView
+      <KeyboardSafeScrollView
         style={styles.groupScrollView}
         contentContainerStyle={styles.groupScrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={refreshControl}
       >
         <View style={styles.groupMainCardWrap}>
           <View style={styles.groupMainCard}>
@@ -876,7 +745,9 @@ export function GroupDetailView({
                 ) : null}
                 {canOpenGroupSettings ? (
                   <TouchableOpacity
-                    onPress={() => setShowGroupSettingsModal(true)}
+                    onPress={() =>
+                      router.push(`/(tabs)/groups/${groupId}/settings` as Href)
+                    }
                     style={styles.groupProfileEditBtn}
                     hitSlop={8}
                     accessibilityRole="button"
@@ -914,7 +785,9 @@ export function GroupDetailView({
             (group.membershipStatus === 'member' || group.membershipStatus === 'admin') &&
             !(canEditMain && editingGroupProfile) ? (
               <TouchableOpacity
-                onPress={() => setShowMembersModal(true)}
+                onPress={() =>
+                  router.push(`/(tabs)/groups/${groupId}/members` as Href)
+                }
                 style={styles.membersPreviewBtn}
                 activeOpacity={0.65}
                 accessibilityRole="button"
@@ -1066,7 +939,7 @@ export function GroupDetailView({
               <View style={[styles.card, { marginBottom: 16 }]}>
                 <TouchableOpacity
                   onPress={() =>
-                    router.push(withReturnTo(`/(tabs)/groups/${groupId}/events`, pathname))
+                    router.push(`/(tabs)/groups/${groupId}/events` as Href)
                   }
                   style={[styles.memberRow, styles.rowBorder]}
                   activeOpacity={0.7}
@@ -1086,7 +959,7 @@ export function GroupDetailView({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() =>
-                    router.push(withReturnTo(`/(tabs)/groups/${groupId}/polls`, pathname))
+                    router.push(`/(tabs)/groups/${groupId}/polls` as Href)
                   }
                   style={[styles.memberRow, styles.rowBorder]}
                   activeOpacity={0.7}
@@ -1104,7 +977,7 @@ export function GroupDetailView({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() =>
-                    router.push(withReturnTo(`/(tabs)/groups/${groupId}/forum`, pathname))
+                    router.push(`/(tabs)/groups/${groupId}/forum` as Href)
                   }
                   style={styles.memberRow}
                   activeOpacity={0.7}
@@ -1173,7 +1046,7 @@ export function GroupDetailView({
           )}
         </View>
         )}
-      </ScrollView>
+      </KeyboardSafeScrollView>
 
       <ImageLightboxModal
         visible={groupPhotoLightbox !== null}
@@ -1296,217 +1169,10 @@ export function GroupDetailView({
         </Modal>
       )}
 
-      {showMembersModal ? (
-        <Modal visible animationType="slide" onRequestClose={() => setShowMembersModal(false)}>
-          <SafeAreaView style={styles.membersModalWrap} edges={['top', 'left', 'right', 'bottom']}>
-            <View style={styles.membersModalHeader}>
-              <Text style={styles.membersModalTitle}>Members</Text>
-              <TouchableOpacity
-                onPress={() => setShowMembersModal(false)}
-                style={styles.membersModalClose}
-                accessibilityRole="button"
-                accessibilityLabel="Close members list"
-              >
-                <Ionicons name="close" size={26} color={Colors.textSub} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.membersModalScroll} keyboardShouldPersistTaps="handled">
-              <View style={styles.membersModalCardWrap}>
-                {[
-                  { title: 'OWNER', memberIds: ownerMemberIds },
-                  { title: 'ADMINS', memberIds: adminMemberIds },
-                  { title: 'MEMBERS', memberIds: regularMemberIds },
-                ].map((section) => {
-                  if (section.memberIds.length === 0) return null;
-                  return (
-                    <View key={section.title} style={{ marginBottom: 16 }}>
-                      <Text style={styles.sectionLabel}>{section.title}</Text>
-                      <View style={[styles.card, { overflow: 'hidden' }]}>
-                        {section.memberIds.map((memberId, i) => {
-                          const rowAdmin = admins.includes(memberId);
-                          const rowOwner = memberId === ownerId;
-                          const isMe = memberId === currentUserId;
-                          const u = getUser(memberId);
-                          const displayName = u.displayName;
-                          if (canManageMembers) {
-                            const canAction = !isMe && !rowOwner;
-                            return (
-                              <TouchableOpacity
-                                key={memberId}
-                                onPress={() => canAction && setMemberMenu({ userId: memberId })}
-                                style={[styles.memberRow, i < section.memberIds.length - 1 && styles.rowBorder]}
-                                activeOpacity={canAction ? 0.7 : 1}
-                              >
-                                <UserAvatar seed={u.displayName || u.name} backgroundColor={[u.avatarSeed]} thumbnail={u.thumbnail} size={38} />
-                                <View style={{ flex: 1 }}>
-                                  <Text style={[styles.memberName, isMe && styles.memberNameMe]}>
-                                    {displayName}
-                                    {isMe ? <Text style={styles.youLabel}> · me</Text> : ''}
-                                  </Text>
-                                  <Text style={styles.memberRole}>
-                                    {rowOwner ? 'Owner' : rowAdmin ? 'Admin' : 'Member'}
-                                  </Text>
-                                </View>
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                  {rowOwner && <Ionicons name="star" size={16} color="#CA8A04" />}
-                                  {!rowOwner && rowAdmin && (
-                                    <View style={styles.adminBadge}>
-                                      <Text style={styles.adminBadgeText}>Admin</Text>
-                                    </View>
-                                  )}
-                                  {canAction && <Text style={{ color: Colors.textMuted, fontSize: 16 }}>›</Text>}
-                                </View>
-                              </TouchableOpacity>
-                            );
-                          }
-                          return (
-                            <View key={memberId} style={[styles.memberRow, i < section.memberIds.length - 1 && styles.rowBorder]}>
-                              <UserAvatar seed={u.displayName || u.name} backgroundColor={[u.avatarSeed]} thumbnail={u.thumbnail} size={38} />
-                              <View style={{ flex: 1 }}>
-                                <Text style={[styles.memberName, isMe && styles.memberNameMe]}>
-                                  {displayName}
-                                  {isMe ? <Text style={styles.youLabel}> · me</Text> : ''}
-                                </Text>
-                                <Text style={styles.memberRole}>
-                                  {rowOwner ? 'Owner' : rowAdmin ? 'Admin' : 'Member'}
-                                </Text>
-                              </View>
-                              {rowOwner && <Ionicons name="star" size={16} color="#CA8A04" />}
-                            </View>
-                          );
-                        })}
-                      </View>
-                    </View>
-                  );
-                })}
-                {canManageMembers && visiblePendingMembers.length > 0 ? (
-                  <View style={{ marginBottom: 16 }}>
-                    <Text style={styles.sectionLabel}>PENDING REQUESTS · {visiblePendingMembers.length}</Text>
-                    <View style={[styles.card, { overflow: 'hidden' }]}>
-                      {visiblePendingMembers.map((pendingUser, i) => (
-                        <View key={`pending-${pendingUser.id}`} style={[styles.memberRow, i < visiblePendingMembers.length - 1 && styles.rowBorder]}>
-                          <UserAvatar seed={pendingUser.displayName || pendingUser.name} backgroundColor={[pendingUser.avatarSeed]} thumbnail={pendingUser.thumbnail} size={38} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.memberName}>{pendingUser.displayName}</Text>
-                            <Text style={styles.memberHandle}>{pendingUser.name} · pending</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', gap: 6 }}>
-                            <TouchableOpacity onPress={() => approveReq(pendingUser.id)} style={styles.approveBtn}>
-                              <Text style={styles.approveBtnText}>Approve</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={() => declineReq(pendingUser.id)} style={styles.declineBtn}>
-                              <Text style={styles.declineBtnText}>Decline</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                ) : null}
-              </View>
-            </ScrollView>
-          </SafeAreaView>
-        </Modal>
-      ) : null}
-
-      {showGroupSettingsModal ? (
-        <Modal visible animationType="slide" onRequestClose={() => setShowGroupSettingsModal(false)}>
-          <SafeAreaView style={styles.membersModalWrap} edges={['top', 'left', 'right', 'bottom']}>
-            <View style={styles.membersModalHeader}>
-              <Text style={styles.membersModalTitle}>Group settings</Text>
-              <TouchableOpacity
-                onPress={() => setShowGroupSettingsModal(false)}
-                style={styles.membersModalClose}
-                accessibilityRole="button"
-                accessibilityLabel="Close group settings"
-              >
-                <Ionicons name="close" size={26} color={Colors.textSub} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.membersModalScroll} keyboardShouldPersistTaps="handled">
-              <View style={styles.membersModalCardWrap}>
-                {(isAdmin || isOwner) ? (
-                  <>
-                    <Text style={styles.sectionLabel}>Group Privacy</Text>
-                    <View style={[styles.card, { marginBottom: 16 }]}>
-                      <Toggle
-                        value={group.requireApprovalToJoin}
-                        style={{ borderBottomWidth: 0, paddingHorizontal: 16 }}
-                        onChange={async (v) => {
-                          if (updateGroup.isPending) return;
-                          try {
-                            await updateGroup.mutateAsync({
-                              requireApprovalToJoin: v,
-                              updatedBy: currentUserId ?? '',
-                            });
-                          } catch {
-                            if (Platform.OS === 'web') window.alert('Failed to update join approval setting');
-                            else Alert.alert('Error', 'Failed to update join approval setting');
-                          }
-                        }}
-                        label="Require approval to join?"
-                      />
-                    </View>
-                  </>
-                ) : null}
-                {(group.membershipStatus === 'member' || group.membershipStatus === 'admin') && !!currentUserId ? (
-                  <GroupMemberThemeAndNotifications groupId={groupId} userId={currentUserId} groupName={group.name} />
-                ) : null}
-              </View>
-            </ScrollView>
-          </SafeAreaView>
-        </Modal>
-      ) : null}
-
-      {memberMenu && canManageMembers ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setMemberMenu(null)}>
-          <TouchableOpacity style={styles.menuOverlay} onPress={() => setMemberMenu(null)} activeOpacity={1}>
-            <View style={styles.menuCard}>
-              <View style={styles.menuHeader}>
-                <Text style={styles.menuHeaderText} numberOfLines={1}>
-                  {getUser(memberMenu.userId).displayName}
-                </Text>
-              </View>
-              {isOwner && (
-                <TouchableOpacity
-                  onPress={() => transferOwner(memberMenu.userId)}
-                  style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}
-                >
-                  <Ionicons name="star" size={20} color="#CA8A04" />
-                  <Text style={styles.menuItemText}>Transfer owner</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                onPress={() => toggleAdmin(memberMenu.userId)}
-                style={[styles.menuItem, { borderBottomWidth: 1, borderBottomColor: Colors.border }]}
-              >
-                <Ionicons
-                  name={admins.includes(memberMenu.userId) ? 'person-outline' : 'star-outline'}
-                  size={20}
-                  color={Colors.text}
-                />
-                <Text style={styles.menuItemText}>
-                  {admins.includes(memberMenu.userId) ? 'Remove admin' : 'Make admin'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => removeMember(memberMenu.userId)} style={styles.menuItem}>
-                <Ionicons name="person-remove-outline" size={20} color={Colors.notGoing} />
-                <Text style={[styles.menuItemText, { color: Colors.notGoing }]}>Remove from group</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      ) : null}
-
-      {groupSwitchModal}
-
       {showAnnouncementReadModal ? (
         <Modal visible animationType="slide" onRequestClose={closeAnnouncementModal}>
           <SafeAreaView style={styles.membersModalWrap} edges={['top', 'left', 'right', 'bottom']}>
-            <KeyboardAvoidingView
-              style={styles.announcementModalKeyboard}
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            >
+            <KeyboardFormRoot style={styles.announcementModalKeyboard}>
               <View style={styles.membersModalHeader}>
                 <Text
                   style={[styles.membersModalTitle, { flex: 1, marginRight: 8 }]}
@@ -1540,7 +1206,7 @@ export function GroupDetailView({
                   </TouchableOpacity>
                 </View>
               </View>
-              <ScrollView style={styles.membersModalScroll} keyboardShouldPersistTaps="handled">
+              <KeyboardSafeScrollView style={styles.membersModalScroll}>
                 <View style={styles.membersModalCardWrap}>
                   {editingAnnouncement ? (
                     <>
@@ -1588,29 +1254,20 @@ export function GroupDetailView({
                     </Text>
                   )}
                 </View>
-              </ScrollView>
-            </KeyboardAvoidingView>
+              </KeyboardSafeScrollView>
+            </KeyboardFormRoot>
           </SafeAreaView>
         </Modal>
       ) : null}
 
-      <NotificationsPanelModal
-        visible={showNotifs}
-        onClose={() => setShowNotifs(false)}
-        userId={currentUserId || ''}
-        notifications={notifs}
-        isLoading={notifsLoading}
-        groups={allGroupsForChrome.map((g) => ({ id: g.id, name: g.name }))}
-        groupColors={groupColors}
-      />
     </>
   );
 
-  return <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>{scrollAndOverlays}</SafeAreaView>;
+  return <View style={styles.page}>{scrollAndOverlays}</View>;
 }
 
 const styles = StyleSheet.create({
-  safe:             { flex: 1, backgroundColor: Colors.bg },
+  page:             { flex: 1, backgroundColor: Colors.bg },
   groupScrollView:  { flex: 1, backgroundColor: Colors.bg },
   groupScrollContent: { flexGrow: 1, backgroundColor: Colors.bg, paddingBottom: 8 },
   groupMainCardWrap:{ marginHorizontal: 20, marginTop: 10, marginBottom: 4 },

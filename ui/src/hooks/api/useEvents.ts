@@ -32,11 +32,9 @@ export function useEvents(filters: EventFilters) {
       ),
     enabled: filters.enabled !== false && !!filters.userId,
     staleTime: 0,
-    refetchInterval: 3000,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     refetchOnReconnect: true,
-    refetchIntervalInBackground: false,
   });
 }
 
@@ -46,11 +44,9 @@ export function useEvent(id: string, userId: string) {
     queryFn: () => EventsService.getEvent(id, userId),
     enabled: !!id && !!userId,
     staleTime: 0,
-    refetchInterval: 3000,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     refetchOnReconnect: true,
-    refetchIntervalInBackground: true,
   });
 }
 

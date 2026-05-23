@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useSegments } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { StatusBar } from 'expo-status-bar';
 import { AppState, Platform } from 'react-native';
 import { focusManager } from '@tanstack/react-query';
@@ -17,9 +18,11 @@ import { Provider as ReduxProvider } from 'react-redux';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { store } from '../store';
 import { queryClient } from '../config/queryClient';
+import { refreshAppOnResume } from '../utils/refreshAppOnResume';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { CurrentUserProvider } from '../contexts/CurrentUserContext';
 import { PushNotificationsRegistrar } from '../components/PushNotificationsRegistrar';
+import { NavigationGuardReset } from '../components/NavigationGuardReset';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -50,17 +53,12 @@ function RootLayoutNav() {
   // Always mount Stack — returning null here unmounts the navigator and can trigger
   // "Rendered fewer hooks than expected" in expo-router / React Navigation during sign-out.
   return (
+    <>
+    <NavigationGuardReset />
     <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <Stack.Screen name="login" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen
-        name="event/[id]"
-        options={{
-          presentation: 'transparentModal',
-          animation: 'fade',
-          contentStyle: { backgroundColor: 'transparent' },
-        }}
-      />
+      <Stack.Screen name="event/[id]" />
       <Stack.Screen
         name="create-event"
         options={{
@@ -95,6 +93,7 @@ function RootLayoutNav() {
       />
       <Stack.Screen name="groups/[id]" />
     </Stack>
+    </>
   );
 }
 
@@ -120,12 +119,17 @@ export default function RootLayout() {
     if (fontsLoaded || fontError) SplashScreen.hideAsync();
   }, [fontsLoaded, fontError]);
 
-  // Refetch notifications when app comes to foreground
+  // Refetch visible data when returning from background (native only).
   useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let prevState = AppState.currentState;
     const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      const wasBackground =
+        prevState === 'background' || prevState === 'inactive' || prevState === 'unknown';
+      if (wasBackground && nextAppState === 'active') {
+        refreshAppOnResume();
       }
+      prevState = nextAppState;
     });
 
     return () => {
@@ -142,7 +146,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <CurrentUserProvider>
-            <PushNotificationsRegistrar />
+            {Platform.OS !== 'web' ? <PushNotificationsRegistrar /> : null}
             <GestureHandlerRootView style={{ flex: 1 }}>
               <SafeAreaProvider>
                 <StatusBar style="dark" />

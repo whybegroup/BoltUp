@@ -8,7 +8,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, usePathname } from 'expo-router';
+import { usePathname } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Notification } from '@moijia/client';
 import { Colors, Fonts, Layout, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
@@ -88,7 +89,9 @@ export function NotificationsPanelModal({
                       }
                       if (!n.navigable) return;
                       onClose();
-                      navigateFromNotification(router, pathname, n);
+                      requestAnimationFrame(() => {
+                        navigateFromNotification(router, pathname, n);
+                      });
                     }}
                     style={[
                       styles.row,

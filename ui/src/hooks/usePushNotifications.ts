@@ -3,11 +3,13 @@ import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
-import { useRouter, usePathname } from 'expo-router';
+import { usePathname } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { PushTokenInput, UsersService } from '@moijia/client';
-import { queryClient } from '../config/queryClient';
 import { navigateFromNotificationPayload } from '../utils/notificationNavigation';
+import { refreshAppOnResume } from '../utils/refreshAppOnResume';
 
+// Native only (web uses usePushNotifications.web.ts)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: false,
@@ -65,6 +67,10 @@ export function usePushNotifications(userId: string | null) {
   useEffect(() => {
     if (Platform.OS === 'web' || !userId) return;
 
+    const receivedSub = Notifications.addNotificationReceivedListener(() => {
+      refreshAppOnResume();
+    });
+
     let cancelled = false;
 
     const register = async () => {
@@ -88,6 +94,7 @@ export function usePushNotifications(userId: string | null) {
 
     return () => {
       cancelled = true;
+      receivedSub.remove();
       const token = registeredTokenRef.current;
       registeredTokenRef.current = null;
       if (token) {
@@ -106,16 +113,18 @@ export function usePushNotifications(userId: string | null) {
     if (handledResponseIdRef.current === responseId) return;
     handledResponseIdRef.current = responseId;
 
+    refreshAppOnResume();
     const data = pushPayloadFromResponse(lastResponse);
-    navigateFromNotificationPayload(router, pathname, {
-      dest: data.dest,
-      eventId: data.eventId,
-      groupId: data.groupId,
-      pollId: data.pollId,
-      navigable: !!(data.groupId || data.eventId || data.pollId),
+    requestAnimationFrame(() => {
+      navigateFromNotificationPayload(router, pathname, {
+        dest: data.dest,
+        eventId: data.eventId,
+        groupId: data.groupId,
+        pollId: data.pollId,
+        postId: data.postId,
+        commentId: data.commentId,
+        navigable: !!(data.groupId || data.eventId || data.pollId || data.postId),
+      });
     });
-    if (userId) {
-      queryClient.invalidateQueries({ queryKey: ['notifications'] });
-    }
   }, [lastResponse, router, pathname, userId]);
 }

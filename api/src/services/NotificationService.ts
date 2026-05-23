@@ -109,6 +109,8 @@ export class NotificationService {
       groupId?: string;
       eventId?: string;
       pollId?: string;
+      postId?: string;
+      commentId?: string;
       dest?: 'group' | 'event' | 'poll';
     }
   ): Promise<Notification | null> {
@@ -124,8 +126,10 @@ export class NotificationService {
       groupId: options?.groupId,
       eventId: options?.eventId,
       pollId: options?.pollId,
+      postId: options?.postId,
+      commentId: options?.commentId,
       dest: options?.dest,
-      navigable: !!(options?.groupId || options?.eventId || options?.pollId),
+      navigable: !!(options?.groupId || options?.eventId || options?.pollId || options?.postId),
     });
   }
 
@@ -142,6 +146,8 @@ export class NotificationService {
       groupId?: string;
       eventId?: string;
       pollId?: string;
+      postId?: string;
+      commentId?: string;
       dest?: 'group' | 'event' | 'poll';
     }
   ): Promise<Notification[]> {

@@ -1368,6 +1368,105 @@ export class EventService {
     return this.mapCommentWithPhotos(full!, input.userId);
   }
 
+  private resolveEventCommentMentionRecipients(
+    authorId: string,
+    text: string | undefined | null,
+    mentionedUserIds: string[] | undefined,
+    memberRows: MemberRow[],
+    allowedGroupUserIds: Set<string>
+  ): Set<string> {
+    const mentionTokens = extractMentionTokens(text);
+    const ids = new Set<string>();
+    for (const raw of mentionedUserIds ?? []) {
+      const canon = resolveCanonicalMemberUserId(raw, allowedGroupUserIds);
+      if (canon && canon !== authorId) ids.add(canon);
+    }
+    const fromText = resolveMentionRecipientIds(mentionTokens, memberRows, authorId);
+    for (const uid of fromText) ids.add(uid);
+    return ids;
+  }
+
+  /** Notify newly @mentioned group members on an event comment. Returns resolved recipient ids. */
+  private async notifyEventCommentMentions(params: {
+    event: { id: string; title: string; groupId: string };
+    authorId: string;
+    authorDisplayName: string;
+    text: string | undefined | null;
+    mentionedUserIds?: string[];
+    commentSnippet: string;
+    commentId: string;
+    previousText?: string;
+  }): Promise<Set<string>> {
+    const mentionTokens = extractMentionTokens(params.text);
+    if (
+      mentionTokens.length === 0 &&
+      !(params.mentionedUserIds && params.mentionedUserIds.length > 0)
+    ) {
+      return new Set();
+    }
+
+    const groupMembers = await prisma.groupMember.findMany({
+      where: {
+        groupId: params.event.groupId,
+        status: { in: ['active', 'pending'] },
+      },
+      include: { user: true },
+    });
+
+    const rowByUserId = new Map<string, MemberRow>();
+    for (const m of groupMembers as any[]) {
+      rowByUserId.set(m.userId, {
+        userId: m.userId,
+        displayName: m.user.displayName,
+        name: m.user.name,
+      });
+    }
+    const memberRows = [...rowByUserId.values()];
+    const allowedGroupUserIds = new Set(rowByUserId.keys());
+
+    const mentionRecipients = this.resolveEventCommentMentionRecipients(
+      params.authorId,
+      params.text,
+      params.mentionedUserIds,
+      memberRows,
+      allowedGroupUserIds
+    );
+
+    if (params.previousText !== undefined) {
+      const previousRecipients = this.resolveEventCommentMentionRecipients(
+        params.authorId,
+        params.previousText,
+        undefined,
+        memberRows,
+        allowedGroupUserIds
+      );
+      for (const uid of previousRecipients) mentionRecipients.delete(uid);
+    }
+
+    if (mentionRecipients.size === 0) return mentionRecipients;
+
+    const snippet =
+      params.commentSnippet.length > 160
+        ? `${params.commentSnippet.slice(0, 157)}…`
+        : params.commentSnippet;
+    const mentionBody = `${params.authorDisplayName} mentioned you in a comment on "${params.event.title}": ${snippet}`;
+
+    for (const uid of mentionRecipients) {
+      await notificationService
+        .createForUser(uid, COMMENT_MENTION_NOTIFICATION_TITLE, mentionBody, {
+          type: 'mention',
+          icon: '@',
+          eventId: params.event.id,
+          groupId: params.event.groupId,
+          commentId: params.commentId,
+          dest: 'event',
+        })
+        .catch((err) => console.error('Failed to create mention notification:', err));
+    }
+
+    return mentionRecipients;
+  }
+
   /**
    * Create a comment
    */
@@ -1421,62 +1520,15 @@ export class EventService {
 
     if (event && user) {
       const commentSnippet = text || (photos.length > 0 ? 'shared a photo' : 'commented');
-      const mentionTokens = extractMentionTokens(text);
-      let mentionRecipients = new Set<string>();
-
-      if (mentionTokens.length > 0 || (mentionedUserIds && mentionedUserIds.length > 0)) {
-        // Anyone in the group can be @mentioned; resolve only against this group's roster
-        const groupMembers = await prisma.groupMember.findMany({
-          where: {
-            groupId: event.groupId,
-            status: { in: ['active', 'pending'] },
-          },
-          include: { user: true },
-        });
-
-        const rowByUserId = new Map<string, MemberRow>();
-        for (const m of groupMembers as any[]) {
-          rowByUserId.set(m.userId, {
-            userId: m.userId,
-            displayName: m.user.displayName,
-            name: m.user.name,
-          });
-        }
-
-        const memberRows = [...rowByUserId.values()];
-        const allowedGroupUserIds = new Set(rowByUserId.keys());
-
-        // 1) Explicit client ids first (canonical match — avoids UUID case/hyphen mismatches
-        //    that would drop valid mentioned users who are not the event host).
-        mentionRecipients = new Set<string>();
-        for (const raw of mentionedUserIds ?? []) {
-          const canon = resolveCanonicalMemberUserId(raw, allowedGroupUserIds);
-          if (canon && canon !== input.userId) {
-            mentionRecipients.add(canon);
-          }
-        }
-        // 2) Merge @tokens from comment text
-        const fromText = resolveMentionRecipientIds(mentionTokens, memberRows, input.userId);
-        for (const uid of fromText) {
-          mentionRecipients.add(uid);
-        }
-
-        const snippet =
-          commentSnippet.length > 160 ? `${commentSnippet.slice(0, 157)}…` : commentSnippet;
-        const mentionBody = `${user.displayName} mentioned you in a comment on "${event.title}": ${snippet}`;
-
-        for (const uid of mentionRecipients) {
-          await notificationService
-            .createForUser(uid, COMMENT_MENTION_NOTIFICATION_TITLE, mentionBody, {
-              type: 'mention',
-              icon: '@',
-              eventId: event.id,
-              groupId: event.groupId,
-              dest: 'event',
-            })
-            .catch((err) => console.error('Failed to create mention notification:', err));
-        }
-      }
+      const mentionRecipients = await this.notifyEventCommentMentions({
+        event,
+        authorId: input.userId,
+        authorDisplayName: user.displayName,
+        text,
+        mentionedUserIds,
+        commentSnippet,
+        commentId: comment.id,
+      });
 
       // Everyone watching the event gets "New Comment" except the commenter and anyone already notified via @mention
       const watcherIds = await this.getUserIdsWatchingEvent(eventId);
@@ -1526,6 +1578,8 @@ export class EventService {
     if (!nextText && nextPhotos.length === 0) {
       throw { status: 400, message: 'Comment cannot be empty' };
     }
+
+    const previousText = comment.text ?? undefined;
 
     const eventId = comment.eventId;
     let nextReplyToId: string | null | undefined = undefined;
@@ -1578,6 +1632,23 @@ export class EventService {
         include: COMMENT_INCLUDE_FOR_API,
       });
     }
+
+    const event = await prisma.event.findUnique({ where: { id: eventId } });
+    const author = await prisma.user.findUnique({ where: { id: input.actorId } });
+    if (event && author && input.text !== undefined) {
+      const commentSnippet = nextText || (nextPhotos.length > 0 ? 'shared a photo' : 'commented');
+      await this.notifyEventCommentMentions({
+        event,
+        authorId: input.actorId,
+        authorDisplayName: author.displayName,
+        text: nextText,
+        mentionedUserIds: input.mentionedUserIds,
+        commentSnippet,
+        commentId: id,
+        previousText,
+      });
+    }
+
     return this.mapCommentWithPhotos(updated, input.actorId);
   }
 

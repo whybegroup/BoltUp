@@ -28,14 +28,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 22,
     borderRadius: 9999,
-    backgroundColor: 'rgba(10, 10, 10, 0.62)',
+    backgroundColor: 'rgba(10, 10, 10, 0.4)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.12)',
     ...(Platform.OS === 'ios'
       ? {
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.35,
+          shadowOpacity: 0.2,
           shadowRadius: 12,
         }
       : { elevation: 12 }),

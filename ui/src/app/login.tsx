@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Platform, TextInput, ScrollView, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Platform, TextInput } from 'react-native';
+import { KeyboardFormRoot, KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { signInWithGoogle, signInWithEmail, signUpWithEmail } from '../config/firebase';
 import { googleIosClientId, googleWebClientId } from '../config/googleAuth';
@@ -137,14 +138,9 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
-      >
-        <ScrollView
+      <KeyboardFormRoot keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}>
+        <KeyboardSafeScrollView
           contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.header}>
@@ -240,8 +236,8 @@ export default function LoginScreen() {
           <Text style={styles.disclaimer}>
             By continuing, you agree to our Terms of Service and Privacy Policy
           </Text>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </KeyboardSafeScrollView>
+      </KeyboardFormRoot>
     </SafeAreaView>
   );
 }

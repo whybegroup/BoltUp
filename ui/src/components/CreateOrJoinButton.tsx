@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,13 +7,16 @@ import {
   Modal,
   TextInput,
   Platform,
-  ScrollView,
   Pressable,
+  type ScrollView,
   type TextStyle,
 } from 'react-native';
+import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
-import { useRouter, usePathname } from 'expo-router';
+import { usePathname } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { useGuardedPress } from '../hooks/useGuardedPress';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { useJoinByInviteCode } from '../hooks/api';
 import { withReturnTo } from '../utils/navigationReturn';
@@ -37,33 +40,43 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noGroupFor, setNoGroupFor] = useState<'event' | 'poll' | null>(null);
   const [inviteCode, setInviteCode] = useState('');
+  const menuScrollRef = useRef<ScrollView>(null);
 
   const closeMenu = () => setMenuOpen(false);
 
-  const onNewEvent = () => {
+  const scrollInviteIntoView = () => {
+    if (Platform.OS === 'web') return;
+    requestAnimationFrame(() => {
+      menuScrollRef.current?.scrollToEnd({ animated: true });
+    });
+  };
+
+  const onNewEvent = useGuardedPress(() => {
     closeMenu();
     if (eventEligibleGroupCount === 0) {
       setNoGroupFor('event');
       return;
     }
     router.push(withReturnTo('/create-event', pathname));
-  };
+  });
 
-  const onNewGroup = () => {
+  const onNewGroup = useGuardedPress(() => {
     closeMenu();
     router.push(withReturnTo('/create-group', pathname));
-  };
+  });
 
-  const onNewPoll = () => {
+  const onNewPoll = useGuardedPress(() => {
     closeMenu();
     if (eventEligibleGroupCount === 0) {
       setNoGroupFor('poll');
       return;
     }
     router.push(withReturnTo('/create-poll', pathname));
-  };
+  });
 
-  const onJoinSubmit = () => {
+  const openMenu = useGuardedPress(() => setMenuOpen(true));
+
+  const onJoinSubmit = useGuardedPress(() => {
     if (!userId?.trim() || !inviteCode.trim()) return;
     joinByCode.mutate(
       { inviteCode: inviteCode.trim(), userId },
@@ -83,16 +96,16 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
         },
       }
     );
-  };
+  }, { disabled: joinByCode.isPending, cooldownMs: 800 });
 
   return (
     <>
-      <TouchableOpacity onPress={() => setMenuOpen(true)} style={styles.trigger}>
+      <TouchableOpacity onPress={openMenu} style={styles.trigger}>
         <Text style={styles.triggerText}>+ Add</Text>
       </TouchableOpacity>
 
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
-        <View style={styles.menuRoot}>
+        <KeyboardFormRoot style={styles.menuRoot}>
           <Pressable style={styles.menuBackdropFill} onPress={closeMenu} />
           <View style={styles.menuCardOuter}>
             <View style={styles.menuCard}>
@@ -102,8 +115,8 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
                   <Ionicons name="close" size={22} color={Colors.textMuted} />
                 </TouchableOpacity>
               </View>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
+              <KeyboardSafeScrollView
+                ref={menuScrollRef}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.menuScroll}
               >
@@ -148,6 +161,7 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
                   <TextInput
                     value={inviteCode}
                     onChangeText={setInviteCode}
+                    onFocus={scrollInviteIntoView}
                     placeholder="Enter invite code"
                     placeholderTextColor={Colors.textMuted}
                     style={[styles.inviteInput, Platform.OS === 'web' && webInputNoFocusRing]}
@@ -161,10 +175,10 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
                     <Text style={styles.inviteJoinBtnText}>{joinByCode.isPending ? 'Joining…' : 'Join'}</Text>
                   </TouchableOpacity>
                 </View>
-              </ScrollView>
+              </KeyboardSafeScrollView>
             </View>
           </View>
-        </View>
+        </KeyboardFormRoot>
       </Modal>
 
       <NoGroupForActionModal

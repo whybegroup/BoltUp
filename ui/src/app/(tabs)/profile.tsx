@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Platform, TextInput, ActivityIndicator } from 'react-native';
+import { KeyboardSafeScrollView } from '../../components/KeyboardSafeScrollView';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Layout, Radius } from '../../constants/theme';
-import { useUpdateUser } from '../../hooks/api';
+import { useUpdateUser, useUser } from '../../hooks/api';
+import { usePullToRefresh } from '../../hooks/usePullToRefresh';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 import { UserAvatar } from '../../components/UserAvatar';
@@ -15,6 +17,8 @@ const REMINDER_OPTIONS = ['Never', '1 hour before', '1 day before', '1 week befo
 export default function ProfileScreen() {
   const { user: firebaseUser, signOut } = useAuth();
   const { userId, user, loading } = useCurrentUserContext();
+  const { refetch: refetchUser } = useUser(userId || '');
+  const { refreshControl } = usePullToRefresh(refetchUser);
   const updateUser = useUpdateUser(userId || '');
 
   const [draftDisplayName, setDraftDisplayName] = useState('');
@@ -106,7 +110,10 @@ export default function ProfileScreen() {
         <View />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+      <KeyboardSafeScrollView
+        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+        refreshControl={refreshControl}
+      >
         {/* User card */}
         <View style={styles.userCard}>
           <TouchableOpacity
@@ -281,7 +288,7 @@ export default function ProfileScreen() {
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </KeyboardSafeScrollView>
 
       <AvatarPickerModal
         variant="user"

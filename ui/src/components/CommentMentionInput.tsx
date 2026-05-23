@@ -7,8 +7,10 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  type NativeSyntheticEvent,
   type StyleProp,
   type TextInputProps,
+  type TextInputSelectionChangeEventData,
   type ViewStyle,
 } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
@@ -22,12 +24,8 @@ type MentionMember = Pick<User, 'id' | 'displayName' | 'name'>;
 
 export type ActiveMention = { start: number; query: string };
 
-/**
- * Active @mention at end of text (cursor assumed at text.length).
- * Matches how the composer is used on the event screen.
- */
-export function getActiveMentionAtEnd(text: string): ActiveMention | null {
-  const cursor = text.length;
+/** Active @mention at the given cursor (or end of text when cursor omitted). */
+export function getActiveMentionAtCursor(text: string, cursor: number): ActiveMention | null {
   if (cursor < 1) return null;
   let i = cursor - 1;
   while (i >= 0 && /[a-zA-Z0-9_]/.test(text[i]!)) i -= 1;
@@ -37,6 +35,11 @@ export function getActiveMentionAtEnd(text: string): ActiveMention | null {
   const query = text.slice(i + 1, cursor).toLowerCase();
   if (/[\s\n]/.test(query)) return null;
   return { start: i, query };
+}
+
+/** @deprecated Use getActiveMentionAtCursor(text, text.length) */
+export function getActiveMentionAtEnd(text: string): ActiveMention | null {
+  return getActiveMentionAtCursor(text, text.length);
 }
 
 type Props = Omit<TextInputProps, 'value' | 'onChangeText'> & {
@@ -64,9 +67,12 @@ export function CommentMentionInput({
   style,
   wrapperStyle,
   stacked = false,
+  selection,
+  onSelectionChange,
   ...rest
 }: Props) {
-  const ctx = useMemo(() => getActiveMentionAtEnd(value), [value]);
+  const cursor = selection?.end ?? value.length;
+  const ctx = useMemo(() => getActiveMentionAtCursor(value, cursor), [value, cursor]);
 
   const suggestions = useMemo(() => {
     if (!ctx) return [];
@@ -87,10 +93,17 @@ export function CommentMentionInput({
 
   const insertMention = (slug: string) => {
     if (!ctx) return;
+    const end = selection?.end ?? value.length;
     const before = value.slice(0, ctx.start);
-    const after = value.slice(value.length);
+    const after = value.slice(end);
     const token = slug.toLowerCase();
-    onChangeText(`${before}@${token} ${after}`);
+    const mention = `@${token} `;
+    const newText = `${before}${mention}${after}`;
+    const cursorPos = before.length + mention.length;
+    onChangeText(newText);
+    onSelectionChange?.({
+      nativeEvent: { selection: { start: cursorPos, end: cursorPos } },
+    } as NativeSyntheticEvent<TextInputSelectionChangeEventData>);
   };
 
   const rootStyle = stacked
@@ -101,6 +114,8 @@ export function CommentMentionInput({
     <TextInput
       value={value}
       onChangeText={onChangeText}
+      selection={selection}
+      onSelectionChange={onSelectionChange}
       style={style}
       autoCorrect={false}
       autoCapitalize="sentences"

@@ -269,6 +269,8 @@ export interface CommentUpdateInput {
    * Pass `null` for a top-level comment. When omitted, reply target is unchanged.
    */
   replyToCommentId?: string | null;
+  /** Client-resolved mention targets; server validates against the event's group roster */
+  mentionedUserIds?: string[];
 }
 
 /** Input for deleting a comment */

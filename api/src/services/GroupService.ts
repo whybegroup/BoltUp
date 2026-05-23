@@ -24,11 +24,19 @@ import { NotificationService } from './NotificationService';
 import { LocalUploadService } from './LocalUploadService';
 import { UserService } from './UserService';
 import { sortByGroupOrder } from '../utils/groupOrder';
+import {
+  extractMentionTokens,
+  resolveMentionRecipientIds,
+  resolveCanonicalMemberUserId,
+  type MemberRow,
+} from '../utils/commentMentions';
 
 const prisma = new PrismaClient();
 const notificationService = new NotificationService();
 const localUploads = new LocalUploadService();
 const userService = new UserService();
+
+const FORUM_MENTION_NOTIFICATION_TITLE = 'You were mentioned';
 
 const GROUP_COVER_PHOTOS_INCLUDE = { orderBy: { id: 'asc' as const } };
 
@@ -621,6 +629,110 @@ export class GroupService {
     };
   }
 
+  private resolveForumMentionRecipients(
+    authorId: string,
+    text: string | undefined | null,
+    mentionedUserIds: string[] | undefined,
+    memberRows: MemberRow[],
+    allowedGroupUserIds: Set<string>
+  ): Set<string> {
+    const mentionTokens = extractMentionTokens(text);
+    const ids = new Set<string>();
+    for (const raw of mentionedUserIds ?? []) {
+      const canon = resolveCanonicalMemberUserId(raw, allowedGroupUserIds);
+      if (canon && canon !== authorId) ids.add(canon);
+    }
+    const fromText = resolveMentionRecipientIds(mentionTokens, memberRows, authorId);
+    for (const uid of fromText) ids.add(uid);
+    return ids;
+  }
+
+  private async notifyForumMentions(params: {
+    groupId: string;
+    authorId: string;
+    text: string;
+    mentionedUserIds?: string[];
+    postId: string;
+    commentId?: string;
+    postTitle: string;
+    kind: 'post' | 'comment';
+    /** When editing, skip users already mentioned in the previous body. */
+    previousText?: string;
+    previousMentionedUserIds?: string[];
+  }): Promise<void> {
+    const mentionTokens = extractMentionTokens(params.text);
+    if (
+      mentionTokens.length === 0 &&
+      !(params.mentionedUserIds && params.mentionedUserIds.length > 0)
+    ) {
+      return;
+    }
+
+    const [author, groupMembers] = await Promise.all([
+      prisma.user.findUnique({ where: { id: params.authorId } }),
+      prisma.groupMember.findMany({
+        where: {
+          groupId: params.groupId,
+          status: { in: ['active', 'pending'] },
+        },
+        include: { user: true },
+      }),
+    ]);
+    if (!author) return;
+
+    const rowByUserId = new Map<string, MemberRow>();
+    for (const m of groupMembers as any[]) {
+      rowByUserId.set(m.userId, {
+        userId: m.userId,
+        displayName: m.user.displayName,
+        name: m.user.name,
+      });
+    }
+    const memberRows = [...rowByUserId.values()];
+    const allowedGroupUserIds = new Set(rowByUserId.keys());
+
+    const mentionRecipients = this.resolveForumMentionRecipients(
+      params.authorId,
+      params.text,
+      params.mentionedUserIds,
+      memberRows,
+      allowedGroupUserIds
+    );
+
+    if (params.previousText !== undefined || params.previousMentionedUserIds !== undefined) {
+      const previousRecipients = this.resolveForumMentionRecipients(
+        params.authorId,
+        params.previousText,
+        params.previousMentionedUserIds,
+        memberRows,
+        allowedGroupUserIds
+      );
+      for (const uid of previousRecipients) mentionRecipients.delete(uid);
+    }
+
+    if (mentionRecipients.size === 0) return;
+
+    const snippetRaw = params.text.trim() || (params.kind === 'post' ? 'posted' : 'commented');
+    const snippet = snippetRaw.length > 160 ? `${snippetRaw.slice(0, 157)}…` : snippetRaw;
+    const mentionBody =
+      params.kind === 'post'
+        ? `${author.displayName} mentioned you in a post "${params.postTitle}": ${snippet}`
+        : `${author.displayName} mentioned you in a comment on "${params.postTitle}": ${snippet}`;
+
+    for (const uid of mentionRecipients) {
+      await notificationService
+        .createForUser(uid, FORUM_MENTION_NOTIFICATION_TITLE, mentionBody, {
+          type: 'mention',
+          icon: '@',
+          groupId: params.groupId,
+          postId: params.postId,
+          commentId: params.commentId,
+          dest: 'group',
+        })
+        .catch((err) => console.error('Failed to create forum mention notification:', err));
+    }
+  }
+
   private mapGroupPost(row: any): GroupPost {
     return {
       id: row.id,
@@ -669,13 +781,22 @@ export class GroupService {
         },
       },
     });
+    await this.notifyForumMentions({
+      groupId,
+      authorId: input.userId,
+      text: input.body,
+      mentionedUserIds: input.mentionedUserIds,
+      postId: created.id,
+      postTitle: created.title,
+      kind: 'post',
+    });
     return this.mapGroupPost(created);
   }
 
   public async updateGroupPost(postId: string, input: GroupPostUpdateInput): Promise<GroupPost> {
     const post = await prisma.groupPost.findUnique({
       where: { id: postId },
-      select: { id: true, groupId: true, userId: true },
+      select: { id: true, groupId: true, userId: true, body: true },
     });
     if (!post) throw new Error('Post not found');
     if (post.userId !== input.userId) {
@@ -685,6 +806,7 @@ export class GroupService {
     const body = input.body.trim();
     if (!body) throw new Error('Post body is required');
     const title = input.title.trim() || 'Post';
+    const previousBody = post.body;
     const updated = await prisma.groupPost.update({
       where: { id: postId },
       data: {
@@ -698,6 +820,16 @@ export class GroupService {
           orderBy: { createdAt: 'asc' },
         },
       },
+    });
+    await this.notifyForumMentions({
+      groupId: post.groupId,
+      authorId: input.userId,
+      text: body,
+      mentionedUserIds: input.mentionedUserIds,
+      postId,
+      postTitle: updated.title,
+      kind: 'post',
+      previousText: previousBody,
     });
     return this.mapGroupPost(updated);
   }
@@ -775,7 +907,7 @@ export class GroupService {
   ): Promise<GroupPostComment> {
     const post = await prisma.groupPost.findUnique({
       where: { id: postId },
-      select: { groupId: true },
+      select: { groupId: true, title: true },
     });
     if (!post) throw new Error('Post not found');
     await this.requireActiveMember(post.groupId, input.userId);
@@ -798,6 +930,16 @@ export class GroupService {
       },
       include: { reactions: { select: { emoji: true, userId: true } } },
     });
+    await this.notifyForumMentions({
+      groupId: post.groupId,
+      authorId: input.userId,
+      text: input.body,
+      mentionedUserIds: input.mentionedUserIds,
+      postId,
+      commentId: created.id,
+      postTitle: post.title,
+      kind: 'comment',
+    });
     return this.mapGroupPostComment(created);
   }
 
@@ -807,7 +949,7 @@ export class GroupService {
   ): Promise<GroupPostComment> {
     const comment = await prisma.groupPostComment.findUnique({
       where: { id: commentId },
-      include: { post: { select: { groupId: true } } },
+      include: { post: { select: { groupId: true, title: true } } },
     });
     if (!comment) throw new Error('Comment not found');
     if (comment.userId !== input.userId) {
@@ -818,6 +960,7 @@ export class GroupService {
     if (!body) throw new Error('Comment body is required');
 
     const postId = comment.postId;
+    const previousBody = comment.body;
     let nextParentId: string | null | undefined = undefined;
     if (input.parentCommentId !== undefined) {
       if (input.parentCommentId === null) {
@@ -849,6 +992,17 @@ export class GroupService {
         ...(nextParentId !== undefined ? { parentCommentId: nextParentId } : {}),
       },
       include: { reactions: { select: { emoji: true, userId: true } } },
+    });
+    await this.notifyForumMentions({
+      groupId: comment.post.groupId,
+      authorId: input.userId,
+      text: body,
+      mentionedUserIds: input.mentionedUserIds,
+      postId,
+      commentId,
+      postTitle: comment.post.title,
+      kind: 'comment',
+      previousText: previousBody,
     });
     return this.mapGroupPostComment(updated);
   }

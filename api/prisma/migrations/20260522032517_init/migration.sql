@@ -6,6 +6,7 @@ CREATE TABLE "users" (
     "avatarSeed" TEXT,
     "thumbnail" TEXT,
     "notifPrefsJson" TEXT,
+    "groupOrderJson" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );
@@ -119,37 +120,12 @@ CREATE TABLE "events" (
     "enableWaitlist" BOOLEAN DEFAULT false,
     "allowMaybe" BOOLEAN NOT NULL DEFAULT true,
     "rsvpDeadline" DATETIME,
-    "activityIdeasEnabled" BOOLEAN NOT NULL DEFAULT false,
-    "activityVotesAnonymous" BOOLEAN NOT NULL DEFAULT false,
     "recurrenceRule" TEXT,
     "recurrenceSeriesId" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "events_groupId_fkey" FOREIGN KEY ("groupId") REFERENCES "groups" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "events_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "users" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "event_activity_options" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "eventId" TEXT NOT NULL,
-    "label" TEXT NOT NULL,
-    "createdBy" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "event_activity_options_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "events" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "event_activity_options_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "event_activity_votes" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "eventId" TEXT NOT NULL,
-    "optionId" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "event_activity_votes_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "events" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "event_activity_votes_optionId_fkey" FOREIGN KEY ("optionId") REFERENCES "event_activity_options" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "event_activity_votes_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -351,6 +327,18 @@ CREATE TABLE "notifications" (
     "updatedAt" DATETIME NOT NULL
 );
 
+-- CreateTable
+CREATE TABLE "push_tokens" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "platform" TEXT NOT NULL,
+    "deviceId" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "push_tokens_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "groups_inviteCode_key" ON "groups"("inviteCode");
 
@@ -374,9 +362,6 @@ CREATE UNIQUE INDEX "group_members_groupId_userId_key" ON "group_members"("group
 
 -- CreateIndex
 CREATE INDEX "events_recurrenceSeriesId_idx" ON "events"("recurrenceSeriesId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "event_activity_votes_eventId_userId_optionId_key" ON "event_activity_votes"("eventId", "userId", "optionId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "rsvps_eventId_userId_key" ON "rsvps"("eventId", "userId");
@@ -413,3 +398,9 @@ CREATE INDEX "poll_option_suggestions_pollId_questionKey_idx" ON "poll_option_su
 
 -- CreateIndex
 CREATE INDEX "poll_option_suggestions_pollId_status_idx" ON "poll_option_suggestions"("pollId", "status");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "push_tokens_token_key" ON "push_tokens"("token");
+
+-- CreateIndex
+CREATE INDEX "push_tokens_userId_idx" ON "push_tokens"("userId");

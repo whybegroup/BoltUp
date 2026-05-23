@@ -10,7 +10,7 @@ import {
 } from '@moijia/client';
 import { queryKeys } from '../../config/queryClient';
 import '../../config/apiBase';
-import { refetchIntervalUnlessNotFound, retryUnlessNotFound } from '../../utils/apiErrors';
+import { retryUnlessNotFound } from '../../utils/apiErrors';
 
 /** Works when Metro serves a stale `@moijia/client` bundle without `deletePoll`. */
 async function deletePollNetwork(pollId: string, uid: string): Promise<void> {
@@ -41,18 +41,11 @@ async function deletePollNetwork(pollId: string, uid: string): Promise<void> {
   }
 }
 
-export type UsePollsOptions = {
-  /** Refetch list on this interval (ms). Used for embedded group polls view. */
-  refetchIntervalMs?: number;
-};
-
-export function usePolls(userId: string, opts?: UsePollsOptions) {
+export function usePolls(userId: string) {
   return useQuery<Poll[]>({
     queryKey: queryKeys.polls.list(userId),
     queryFn: () => PollsService.listPolls(userId),
     enabled: !!userId,
-    refetchInterval: opts?.refetchIntervalMs ?? false,
-    refetchIntervalInBackground: false,
   });
 }
 
@@ -63,9 +56,7 @@ export function usePoll(id: string, userId: string) {
     enabled: Boolean(id?.trim() && userId?.trim()),
     staleTime: 0,
     retry: retryUnlessNotFound,
-    refetchInterval: refetchIntervalUnlessNotFound(3000),
     refetchOnWindowFocus: true,
-    refetchIntervalInBackground: false,
   });
 }
 
@@ -122,9 +113,7 @@ export function usePollResults(id: string, userId: string, opts?: { enabled?: bo
     enabled: (opts?.enabled ?? true) && Boolean(id?.trim() && userId?.trim()),
     staleTime: 0,
     retry: retryUnlessNotFound,
-    refetchInterval: refetchIntervalUnlessNotFound(3000),
     refetchOnWindowFocus: true,
-    refetchIntervalInBackground: false,
   });
 }
 
@@ -187,7 +176,6 @@ export function usePollOptionSuggestions(pollId: string, userId: string, enabled
     enabled: Boolean(pollId?.trim() && userId?.trim() && enabled),
     staleTime: 0,
     retry: retryUnlessNotFound,
-    refetchInterval: refetchIntervalUnlessNotFound(5000),
     refetchOnWindowFocus: true,
   });
 }

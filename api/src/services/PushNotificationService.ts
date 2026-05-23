@@ -22,6 +22,8 @@ export class PushNotificationService {
     if (notification.groupId) data.groupId = notification.groupId;
     if (notification.eventId) data.eventId = notification.eventId;
     if (notification.pollId) data.pollId = notification.pollId;
+    if (notification.postId) data.postId = notification.postId;
+    if (notification.commentId) data.commentId = notification.commentId;
     if (notification.dest) data.dest = notification.dest;
 
     const messages: ExpoPushMessage[] = [];

@@ -1,97 +1,29 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import {
-  View,
-  StyleSheet,
-} from 'react-native';
-import { useRouter, type Href } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEffect } from 'react';
+import { View, StyleSheet } from 'react-native';
+import { type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors } from '../constants/theme';
-import {
-  useGroup,
-  useGroups,
-  useNotifications,
-  useAllGroupMemberColors,
-  usePoll,
-} from '../hooks/api';
+import { useGroup } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
-import { GroupsTopHeader } from './GroupsTopHeader';
-import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
-import { useGroupsActivitySectionSwitch } from './GroupsActivitySectionSwitch';
-import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { PollDetailScreen } from './PollDetailScreen';
-import { breadcrumbTruncate } from '../utils/helpers';
-import { useGroupsBreadcrumbGroupSwitch } from './groupsBreadcrumbDropdown';
+import { useGroupScopeNav } from './groupScope/GroupScopeNavContext';
 
 export type GroupPollDetailViewProps = {
   groupId: string;
   pollId: string;
-  orderedSwitcherGroups?: { id: string; name: string }[];
-  onSwitchGroup?: (groupId: string) => void;
 };
 
-export function GroupPollDetailView({
-  groupId,
-  pollId,
-  orderedSwitcherGroups = [],
-  onSwitchGroup,
-}: GroupPollDetailViewProps) {
+export function GroupPollDetailView({ groupId, pollId }: GroupPollDetailViewProps) {
   const router = useRouter();
+  const groupsTabNav = useGroupScopeNav();
   const { userId: currentUserId } = useCurrentUserContext();
 
   const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
-  const { data: poll } = usePoll(pollId, currentUserId ?? '');
-  const { data: allGroupsForChrome = [] } = useGroups(currentUserId ?? '', true);
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
-  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
 
   const fetchPollsForGroup =
     !!currentUserId &&
     !!group &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
-
-  const goToOverview = useCallback(() => {
-    router.replace('/(tabs)/groups');
-  }, [router]);
-
-  const eventEligibleGroupCount = useMemo(
-    () =>
-      allGroupsForChrome.filter(
-        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
-      ).length,
-    [allGroupsForChrome]
-  );
-  const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
-
-  const [showNotifs, setShowNotifs] = useState(false);
-  const { chevronProps: groupChevronProps, modal: groupSwitchModal } = useGroupsBreadcrumbGroupSwitch(
-    group ? { id: groupId, name: group.name } : null,
-    orderedSwitcherGroups,
-    onSwitchGroup
-  );
-
-  const requestOverview = useCallback(() => {
-    goToOverview();
-  }, [goToOverview]);
-
-  const { segment: activitySectionSegment, modal: activitySectionSwitchModal } =
-    useGroupsActivitySectionSwitch(groupId, 'polls');
-
-  const breadcrumbSegments: BreadcrumbSegment[] = useMemo(() => {
-    const pollLabel = breadcrumbTruncate(poll?.title?.trim() ? poll.title : 'Poll');
-    if (!group) {
-      return [{ label: 'All Groups', onPress: requestOverview }];
-    }
-    return [
-      { label: 'All Groups', onPress: requestOverview },
-      {
-        label: group.name,
-        onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
-        ...groupChevronProps,
-      },
-      activitySectionSegment,
-      { label: pollLabel },
-    ];
-  }, [group, groupId, requestOverview, router, poll?.title, activitySectionSegment, groupChevronProps]);
 
   useEffect(() => {
     if (isError || (group && group.membershipStatus === 'none')) {
@@ -109,41 +41,19 @@ export function GroupPollDetailView({
     return null;
   }
 
-  const groupsTopHeader = (
-    <GroupsTopHeader
-      userId={currentUserId}
-      eventEligibleGroupCount={eventEligibleGroupCount}
-      showNotifs={showNotifs}
-      onToggleNotifs={() => setShowNotifs((p) => !p)}
-      unreadCount={unreadNotifCount}
-    />
-  );
-
   const body =
     !fetchPollsForGroup || !pollId ? null : (
-      <PollDetailScreen variant="groups" pollId={pollId} routeGroupId={groupId} />
-    );
-  return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      {groupsTopHeader}
-      <GroupsBreadcrumbTrail segments={breadcrumbSegments} />
-      {activitySectionSwitchModal}
-      {groupSwitchModal}
-      <View style={styles.content}>{body}</View>
-      <NotificationsPanelModal
-        visible={showNotifs}
-        onClose={() => setShowNotifs(false)}
-        userId={currentUserId || ''}
-        notifications={notifs}
-        isLoading={notifsLoading}
-        groups={allGroupsForChrome.map((g) => ({ id: g.id, name: g.name }))}
-        groupColors={groupColors}
+      <PollDetailScreen
+        variant="groups"
+        pollId={pollId}
+        routeGroupId={groupId}
+        groupsTabNav={groupsTabNav}
       />
-    </SafeAreaView>
-  );
+    );
+
+  return <View style={styles.page}>{body}</View>;
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bg },
-  content: { flex: 1, minHeight: 0 },
+  page: { flex: 1, backgroundColor: Colors.bg },
 });

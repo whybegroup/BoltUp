@@ -160,12 +160,16 @@ export interface GroupPostCreateInput {
   userId: string;
   title: string;
   body: string;
+  /** Client-resolved mention targets; server validates against group roster */
+  mentionedUserIds?: string[];
 }
 
 export interface GroupPostUpdateInput {
   userId: string;
   title: string;
   body: string;
+  /** Client-resolved mention targets; server validates against group roster */
+  mentionedUserIds?: string[];
 }
 
 export interface GroupPostCommentCreateInput {
@@ -173,6 +177,8 @@ export interface GroupPostCommentCreateInput {
   userId: string;
   body: string;
   parentCommentId?: string;
+  /** Client-resolved mention targets; server validates against group roster */
+  mentionedUserIds?: string[];
 }
 
 export interface GroupPostCommentUpdateInput {
@@ -180,6 +186,8 @@ export interface GroupPostCommentUpdateInput {
   body: string;
   /** When set (including `null`), replaces reply parent; omit to leave unchanged. */
   parentCommentId?: string | null;
+  /** Client-resolved mention targets; server validates against group roster */
+  mentionedUserIds?: string[];
 }
 
 export interface GroupPostReactionInput {

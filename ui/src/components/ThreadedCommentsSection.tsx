@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -25,11 +19,14 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { createScrollAboveKeyboardOnFocus } from '../utils/scrollInputAboveKeyboard';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import { CommentsSection } from './CommentsSection';
 import { CommentReplyQuote } from './CommentReplyQuote';
 import { AddImageButton } from './AddImageButton';
 import { ResolvableImage } from './ResolvableImage';
+import { CommentMentionInput } from './CommentMentionInput';
+import type { User } from '@moijia/client';
 
 export const COMMENT_THREAD_OPTIONS_MENU_WIDTH = 240;
 
@@ -147,6 +144,10 @@ export type ThreadedCommentsSectionProps = {
   renderCommentBody?: (comment: ThreadComment) => ReactNode;
   /** Replace only the composer below the list (default: markdown plain TextInput). */
   renderComposer?: () => ReactNode;
+  /** When set, draft and edit inputs use @mention autocomplete. */
+  mentionMembers?: Array<Pick<User, 'id' | 'displayName' | 'name'>>;
+  /** Deep-link: scroll to and briefly highlight this comment. */
+  focusCommentId?: string;
   /**
    * Replace default edit UI for a comment. Return null to use built-in group-style editor.
    * Receives child subtree to render under the edited comment.
@@ -203,10 +204,15 @@ export function ThreadedCommentsSection({
   renderAvatar,
   renderCommentBody,
   renderComposer,
+  mentionMembers,
+  focusCommentId,
   renderEditingComment,
   reactionButtonRefs,
 }: ThreadedCommentsSectionProps) {
+  const consumedFocusCommentRef = useRef<string | null>(null);
   const commentRowRefs = useRef<Record<string, View | null>>({});
+  const commentComposerRef = useRef<View | null>(null);
+  const commentEditMountRef = useRef<View | null>(null);
   const commentRowTopByIdRef = useRef<Record<string, number>>({});
   const commentMenuButtonRefs = useRef<Record<string, View | null>>({});
   const highlightOpacityByIdRef = useRef<Record<string, Animated.Value>>({});
@@ -270,6 +276,20 @@ export function ThreadedCommentsSection({
     },
     [getHighlightOpacity, scrollOffsetYRef, scrollRef, scrollViewportYRef]
   );
+
+  useEffect(() => {
+    if (!focusCommentId || consumedFocusCommentRef.current === focusCommentId) return;
+    if (!comments.some((c) => c.id === focusCommentId)) return;
+    consumedFocusCommentRef.current = focusCommentId;
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => jumpToComment(focusCommentId));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [focusCommentId, comments, jumpToComment]);
 
   const openCommentMenu = useCallback((commentId: string) => {
     const node = commentMenuButtonRefs.current[commentId] as
@@ -348,6 +368,7 @@ export function ThreadedCommentsSection({
                       <Text style={[styles.commentName, styles.commentNameMe]}>
                         {`${displayName} (me)`}
                       </Text>
+                      {' '}
                       <Text style={styles.commentTimeInline}>
                         {formatCommentTime(comment.createdAt)}
                       </Text>
@@ -369,7 +390,7 @@ export function ThreadedCommentsSection({
                     supportsEditReplyParent && !!(commentEditParentId && editParent);
 
                   return (
-                    <>
+                    <View ref={commentEditMountRef} collapsable={false}>
                       {hasReplyTarget ? (
                         <View style={styles.commentEditReplyComposer}>
                           <View style={styles.composerReplyPreviewRow}>
@@ -405,19 +426,40 @@ export function ThreadedCommentsSection({
                           to a thread.
                         </Text>
                       ) : null}
-                      <TextInput
-                        value={commentEditText}
-                        onChangeText={onCommentEditTextChange}
-                        placeholder={
-                          supportsEditReplyParent && commentEditParentId
-                            ? 'Write a reply'
-                            : 'Edit comment'
-                        }
-                        placeholderTextColor={Colors.textMuted}
-                        style={[styles.commentInput, styles.commentEditInput]}
-                        multiline
-                        textAlignVertical="top"
-                      />
+                      {mentionMembers ? (
+                        <CommentMentionInput
+                          stacked
+                          value={commentEditText}
+                          onChangeText={onCommentEditTextChange}
+                          onFocus={scrollEditIntoView}
+                          members={mentionMembers}
+                          currentUserId={currentUserId}
+                          placeholder={
+                            supportsEditReplyParent && commentEditParentId
+                              ? 'Write a reply'
+                              : 'Edit comment'
+                          }
+                          placeholderTextColor={Colors.textMuted}
+                          style={[styles.commentInput, styles.commentEditInput]}
+                          multiline
+                          textAlignVertical="top"
+                        />
+                      ) : (
+                        <TextInput
+                          value={commentEditText}
+                          onChangeText={onCommentEditTextChange}
+                          onFocus={scrollEditIntoView}
+                          placeholder={
+                            supportsEditReplyParent && commentEditParentId
+                              ? 'Write a reply'
+                              : 'Edit comment'
+                          }
+                          placeholderTextColor={Colors.textMuted}
+                          style={[styles.commentInput, styles.commentEditInput]}
+                          multiline
+                          textAlignVertical="top"
+                        />
+                      )}
                       <View style={styles.commentEditActions}>
                         <TouchableOpacity onPress={onCancelEdit} style={styles.commentEditSecondaryBtn}>
                           <Text style={styles.commentEditSecondaryBtnText}>Cancel</Text>
@@ -438,7 +480,7 @@ export function ThreadedCommentsSection({
                           )}
                         </TouchableOpacity>
                       </View>
-                    </>
+                    </View>
                   );
                 })()}
               </View>
@@ -480,6 +522,7 @@ export function ThreadedCommentsSection({
                     <Text style={[styles.commentName, isMine && styles.commentNameMe]}>
                       {isMine ? `${displayName} (me)` : displayName}
                     </Text>
+                    {' '}
                     <Text style={styles.commentTimeInline}>
                       {formatCommentTime(comment.createdAt)}
                     </Text>
@@ -632,6 +675,26 @@ export function ThreadedCommentsSection({
   const canSubmitDraft =
     draftText.trim().length > 0 || draftPhotoUrls.length > 0 || draftPendingFiles.length > 0;
 
+  const scrollComposerIntoView = useMemo(
+    () =>
+      createScrollAboveKeyboardOnFocus({
+        scrollRef,
+        scrollOffsetYRef,
+        targetRef: commentComposerRef,
+      }),
+    [scrollOffsetYRef, scrollRef]
+  );
+
+  const scrollEditIntoView = useMemo(
+    () =>
+      createScrollAboveKeyboardOnFocus({
+        scrollRef,
+        scrollOffsetYRef,
+        targetRef: commentEditMountRef,
+      }),
+    [scrollOffsetYRef, scrollRef]
+  );
+
   return (
     <>
       <CommentsSection
@@ -643,7 +706,7 @@ export function ThreadedCommentsSection({
           {renderComposer ? (
             renderComposer()
           ) : (
-            <View style={styles.commentComposer}>
+            <View ref={commentComposerRef} style={styles.commentComposer}>
               {replyTargetComment ? (
                 <View style={styles.composerReplyPreviewRow}>
                   <View style={[styles.replyQuoteStrip, styles.composerReplyQuoteStrip]}>
@@ -671,14 +734,30 @@ export function ThreadedCommentsSection({
                   </TouchableOpacity>
                 </View>
               ) : null}
-              <TextInput
-                value={draftText}
-                onChangeText={onDraftTextChange}
-                placeholder={replyTargetId ? 'Write a reply' : 'Add a comment'}
-                placeholderTextColor={Colors.textMuted}
-                style={styles.commentInput}
-                multiline
-              />
+              {mentionMembers ? (
+                <CommentMentionInput
+                  stacked
+                  value={draftText}
+                  onChangeText={onDraftTextChange}
+                  onFocus={scrollComposerIntoView}
+                  members={mentionMembers}
+                  currentUserId={currentUserId}
+                  placeholder={replyTargetId ? 'Write a reply' : 'Add a comment'}
+                  placeholderTextColor={Colors.textMuted}
+                  style={styles.commentInput}
+                  multiline
+                />
+              ) : (
+                <TextInput
+                  value={draftText}
+                  onChangeText={onDraftTextChange}
+                  onFocus={scrollComposerIntoView}
+                  placeholder={replyTargetId ? 'Write a reply' : 'Add a comment'}
+                  placeholderTextColor={Colors.textMuted}
+                  style={styles.commentInput}
+                  multiline
+                />
+              )}
               {onDraftPhotoUrlsChange && (onUploadDraftPhoto || onTakeDraftPhoto || onAddDraftPhotoByUrl) ? (
                 <View style={styles.commentComposerAttachRow}>
                   <AddImageButton
@@ -1088,7 +1167,7 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontFamily: Fonts.regular,
     flexShrink: 0,
-    marginLeft: 8,
+    paddingLeft: 6,
   },
   commentText: { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, lineHeight: 20 },
   replyQuoteStrip: {

@@ -867,7 +867,11 @@ export class PollService {
         continue;
       }
       if (q.type === 'rating') {
-        normalizedPicked.push(...qPicked.map((pollOptionId, idx) => ({ pollOptionId, rank: idx + 1 })));
+        const orderIndex = new Map(optionIds.map((oid, idx) => [oid, idx]));
+        const ranked = qPicked
+          .slice()
+          .sort((a, b) => (orderIndex.get(a) ?? 0) - (orderIndex.get(b) ?? 0));
+        normalizedPicked.push(...ranked.map((pollOptionId, idx) => ({ pollOptionId, rank: idx + 1 })));
         continue;
       }
       normalizedPicked.push(...qPicked.map((pollOptionId) => ({ pollOptionId, rank: 1 })));
@@ -933,7 +937,9 @@ export class PollService {
       throw Object.assign(new Error('Forbidden'), { status: 403 });
     }
 
-    const myOptionIds = poll.votes.filter((v) => v.userId === userId).map((v) => v.pollOptionId);
+    const myVotes = poll.votes.filter((v) => v.userId === userId);
+    const myOptionIds = myVotes.map((v) => v.pollOptionId);
+    const myOptionRanks = myVotes.map((v) => ({ optionId: v.pollOptionId, rank: v.rank ?? 1 }));
 
     const grouped = new Map<string, PollQuestionResult>();
     for (const o of poll.options.slice().sort((a, b) => a.sortOrder - b.sortOrder)) {
@@ -993,7 +999,25 @@ export class PollService {
         q.totalVotes = responses.length;
         q.options = [];
       } else if (q.questionType === 'rating') {
-        // Lower average rank is better (e.g. avg 1.33 beats avg 2.0).
+        const optionCount = q.options.length;
+        const participatingUserIds = new Set<string>();
+        const rankByUserOption = new Map<string, number>();
+        for (const o of q.options) {
+          for (const v of o.voters ?? []) {
+            participatingUserIds.add(v.userId);
+            rankByUserOption.set(`${v.userId}::${o.optionId}`, v.rank ?? 1);
+          }
+        }
+        const participantCount = participatingUserIds.size;
+        // Lower average rank is better; unranked options count as optionCount for each voter.
+        q.options = q.options.map((o) => {
+          let sum = 0;
+          for (const uid of participatingUserIds) {
+            sum += rankByUserOption.get(`${uid}::${o.optionId}`) ?? optionCount;
+          }
+          const avgRank = participantCount > 0 ? sum / participantCount : 0;
+          return { ...o, votes: avgRank };
+        });
         const best = Math.min(...q.options.map((o) => o.votes));
         q.totalVotes = q.options.reduce((n, o) => n + o.votes, 0);
         q.options = q.options.map((o) => ({
@@ -1024,7 +1048,7 @@ export class PollService {
       }
     }
 
-    return { pollId, myOptionIds, questions };
+    return { pollId, myOptionIds, myOptionRanks, questions };
   }
 
   public async delete(id: string, actorUserId: string): Promise<void> {

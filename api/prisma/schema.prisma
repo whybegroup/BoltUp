@@ -492,6 +492,8 @@ model Notification {
   groupId    String?
   eventId    String?
   pollId     String?
+  postId     String?
+  commentId  String?
   navigable  Boolean  @default(false)
   dest       String?  // group, event, poll
   userId     String?

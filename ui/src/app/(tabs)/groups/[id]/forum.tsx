@@ -1,36 +1,21 @@
-import { useCallback } from 'react';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { GroupForumView } from '../../../../components/GroupForumView';
-import { useCurrentUserContext } from '../../../../contexts/CurrentUserContext';
-import { useOrderedSwitcherGroups } from '../../../../hooks/useOrderedSwitcherGroups';
-import { firstSearchParam } from '../../../../utils/navigationReturn';
 
 export default function GroupForumScreen() {
-  const router = useRouter();
-  const params = useLocalSearchParams<{ id: string; returnTo?: string | string[] }>();
-  const { userId: currentUserId } = useCurrentUserContext();
+  const params = useLocalSearchParams<{
+    id: string;
+    postId?: string | string[];
+    commentId?: string | string[];
+  }>();
   const groupId = Array.isArray(params.id) ? params.id[0] : params.id;
-
-  const { orderedSwitcherGroups } = useOrderedSwitcherGroups(currentUserId ?? '');
-
-  const onSwitchGroup = useCallback(
-    (nextId: string) => {
-      const rt = firstSearchParam(params.returnTo);
-      const q = rt ? `?returnTo=${encodeURIComponent(rt)}` : '';
-      router.replace(`/(tabs)/groups/${nextId}/forum${q}`);
-    },
-    [router, params.returnTo]
-  );
-
-  if (!groupId) {
-    return null;
-  }
-
+  const focusPostId = Array.isArray(params.postId) ? params.postId[0] : params.postId;
+  const focusCommentId = Array.isArray(params.commentId) ? params.commentId[0] : params.commentId;
+  if (!groupId) return null;
   return (
     <GroupForumView
       groupId={groupId}
-      orderedSwitcherGroups={orderedSwitcherGroups}
-      onSwitchGroup={onSwitchGroup}
+      focusPostId={focusPostId ?? undefined}
+      focusCommentId={focusCommentId ?? undefined}
     />
   );
 }

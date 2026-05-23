@@ -2,20 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  Platform,
   Alert,
+  ScrollView,
   TextInput,
   Modal,
+  Dimensions,
 } from 'react-native';
-import { useRouter, usePathname, type Href } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import {
+  ScrollViewContainer,
+  reorderItems,
+} from 'react-native-reorderable-list';
+import { PollRankingReorderList, RankingPollOptionRowShell } from './PollRankingReorderList';
+import { usePathname, type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { EventFormPopoverChrome } from './EventFormPopoverChrome';
 import { modalTopBarStyles } from './modalTopBarStyles';
 import { formSectionTitleStyle } from './ui';
+import { keyboardAwareScrollProps } from './KeyboardSafeScrollView';
 import {
   usePoll,
   usePollResults,
@@ -30,13 +39,30 @@ import {
   useAllGroupMemberColors,
 } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import Toast from 'react-native-toast-message';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
-import { PollOptionInputKind, type Poll } from '@moijia/client';
+import {
+  ALL_POLLS_HREF,
+  groupsTabParentHref,
+  navigateGroupsTabTo,
+  navigatePollsTabTo,
+  navigateToGroupsTabGroupOverview,
+  type GroupsTabNavCallbacks,
+  type PollsTabNavCallbacks,
+} from '../utils/tabBreadcrumbNav';
+import { PollOptionInputKind, type Poll, type PollQuestionResult, type PollResults } from '@moijia/client';
 import { ResolvableImage } from './ResolvableImage';
 import { UserAvatar } from './UserAvatar';
 import { getDefaultGroupThemeFromName, getGroupColor } from '../utils/helpers';
 
 const MAX_OPTIONS_PER_QUESTION = 50;
+const POLL_SIDE_MARGIN = 20;
+const POLL_H_PAD = 16;
+const POLL_COVER_PHOTO_SIZE = Math.min(
+  112,
+  Math.round((Dimensions.get('window').width - POLL_SIDE_MARGIN * 2 - POLL_H_PAD * 2 - 24) / 3),
+);
 
 function stripHtmlPreview(html: string): string {
   return html
@@ -138,6 +164,35 @@ function isRequiredQuestionAnswered(
   return sel.length > 0;
 }
 
+function pollResultsHasViewerVote(results: PollResults | undefined, userId: string | undefined): boolean {
+  if (!results) return false;
+  if (results.myOptionIds.length > 0) return true;
+  if (!userId) return false;
+  for (const rq of results.questions) {
+    if (rq.textResponses?.some((t) => t.userId === userId)) return true;
+  }
+  return false;
+}
+
+function selectedByQuestionFromResults(
+  results: PollResults,
+  parsedQuestions: ParsedQuestion[],
+): Record<string, string[]> {
+  const rankByOption = new Map(
+    (results.myOptionRanks ?? []).map((r) => [r.optionId, r.rank]),
+  );
+  const next: Record<string, string[]> = {};
+  for (const q of parsedQuestions) {
+    const inQuestion = new Set(q.options.map((o) => o.id));
+    const ids = results.myOptionIds.filter((oid) => inQuestion.has(oid));
+    if (q.type === 'rating') {
+      ids.sort((a, b) => (rankByOption.get(a) ?? 999) - (rankByOption.get(b) ?? 999));
+    }
+    next[q.key] = ids;
+  }
+  return next;
+}
+
 function rankingBadgePlace(
   options: Array<{ optionId: string; votes: number }> | undefined,
   optionId: string,
@@ -152,13 +207,713 @@ function rankingBadgePlace(
   return place >= 1 && place <= 3 ? (place as 1 | 2 | 3) : null;
 }
 
+const RANKING_CHART_MY_FILL = '#22C55E';
+
+function rankingVoteCountsForOption(
+  voters: Array<{ userId: string; rank?: number }> | undefined,
+  rankSlots: number,
+  viewerUserId: string | undefined,
+  draftRankForOption: number,
+  usePreview: boolean,
+): { total: number[]; mine: number[] } {
+  const total = Array.from({ length: rankSlots }, () => 0);
+  const mine = Array.from({ length: rankSlots }, () => 0);
+  if (usePreview && viewerUserId) {
+    for (const v of voters ?? []) {
+      if (v.userId === viewerUserId) continue;
+      const r = v.rank;
+      if (typeof r === 'number' && r >= 1 && r <= rankSlots) {
+        total[r - 1] += 1;
+      }
+    }
+    if (draftRankForOption >= 1 && draftRankForOption <= rankSlots) {
+      total[draftRankForOption - 1] += 1;
+      mine[draftRankForOption - 1] = 1;
+    }
+    return { total, mine };
+  }
+  for (const v of voters ?? []) {
+    const r = v.rank;
+    if (typeof r === 'number' && r >= 1 && r <= rankSlots) {
+      total[r - 1] += 1;
+      if (viewerUserId && v.userId === viewerUserId) {
+        mine[r - 1] += 1;
+      }
+    }
+  }
+  return { total, mine };
+}
+
+/** How many voters ranked this option (any rank), with optional draft vote for the viewer. */
+function rankingResponseCountForOption(
+  voters: Array<{ userId: string }> | undefined,
+  viewerUserId: string | undefined,
+  draftRankForOption: number,
+  usePreview: boolean,
+): number {
+  const list = voters ?? [];
+  if (!usePreview || !viewerUserId) {
+    return list.length;
+  }
+  let count = list.filter((v) => v.userId !== viewerUserId).length;
+  if (draftRankForOption > 0) count += 1;
+  return count;
+}
+
+function choiceVoteCountsForOption(
+  voters: Array<{ userId: string }> | undefined,
+  voteCount: number,
+  viewerUserId: string | undefined,
+  draftSelected: boolean,
+  usePreview: boolean,
+): { total: number; mine: number } {
+  if (usePreview && viewerUserId) {
+    let others = 0;
+    for (const v of voters ?? []) {
+      if (v.userId === viewerUserId) continue;
+      others += 1;
+    }
+    const mine = draftSelected ? 1 : 0;
+    return { total: others + mine, mine };
+  }
+  let mine = 0;
+  for (const v of voters ?? []) {
+    if (viewerUserId && v.userId === viewerUserId) {
+      mine += 1;
+    }
+  }
+  const total = voters && voters.length > 0 ? voters.length : voteCount;
+  return { total, mine };
+}
+
+function choiceMaxVoteCountAcrossOptions(
+  resultQuestion:
+    | { options: Array<{ optionId: string; votes: number; voters?: Array<{ userId: string }> }> }
+    | undefined,
+  viewerUserId?: string,
+  selectedIds?: string[],
+  usePreview = false,
+): number {
+  let max = 0;
+  for (const opt of resultQuestion?.options ?? []) {
+    const draftSelected = selectedIds?.includes(opt.optionId) ?? false;
+    const { total } = choiceVoteCountsForOption(
+      opt.voters,
+      opt.votes,
+      viewerUserId,
+      draftSelected,
+      usePreview,
+    );
+    max = Math.max(max, total);
+  }
+  return max;
+}
+
+function choiceTotalVotesForQuestion(
+  resultQuestion:
+    | { options: Array<{ optionId: string; votes: number; voters?: Array<{ userId: string }> }> }
+    | undefined,
+  viewerUserId?: string,
+  selectedIds?: string[],
+  usePreview = false,
+): number {
+  let total = 0;
+  for (const opt of resultQuestion?.options ?? []) {
+    const draftSelected = selectedIds?.includes(opt.optionId) ?? false;
+    const { total: count } = choiceVoteCountsForOption(
+      opt.voters,
+      opt.votes,
+      viewerUserId,
+      draftSelected,
+      usePreview,
+    );
+    total += count;
+  }
+  return total;
+}
+
+function rankingMaxVoteCountAcrossOptions(
+  resultQuestion:
+    | { options: Array<{ optionId: string; voters?: Array<{ userId: string; rank?: number }> }> }
+    | undefined,
+  rankSlots = 3,
+  viewerUserId?: string,
+  selectedIds?: string[],
+  usePreview = false,
+): number {
+  let max = 0;
+  for (const opt of resultQuestion?.options ?? []) {
+    const selIdx = selectedIds?.indexOf(opt.optionId) ?? -1;
+    const draftRank = selIdx >= 0 ? selIdx + 1 : 0;
+    const { total } = rankingVoteCountsForOption(
+      opt.voters,
+      rankSlots,
+      viewerUserId,
+      draftRank,
+      usePreview,
+    );
+    for (const count of total) {
+      if (count > max) max = count;
+    }
+  }
+  return Math.max(1, max);
+}
+
+/** Average-rank scores per option; mirrors API ranking aggregation with optional draft vote preview. */
+function rankingPlacementScoresForQuestion(
+  resultQuestion: PollQuestionResult | undefined,
+  optionCount: number,
+  viewerUserId: string | undefined,
+  selectedIds: string[],
+  usePreview: boolean,
+): Array<{ optionId: string; votes: number }> | undefined {
+  if (!resultQuestion?.options?.length) return undefined;
+  if (!usePreview || !viewerUserId) {
+    return resultQuestion.options.map((o) => ({ optionId: o.optionId, votes: o.votes }));
+  }
+  const participatingUserIds = new Set<string>();
+  const rankByUserOption = new Map<string, number>();
+  for (const o of resultQuestion.options) {
+    for (const v of o.voters ?? []) {
+      if (v.userId === viewerUserId) continue;
+      participatingUserIds.add(v.userId);
+      rankByUserOption.set(`${v.userId}::${o.optionId}`, v.rank ?? 1);
+    }
+  }
+  participatingUserIds.add(viewerUserId);
+  for (const o of resultQuestion.options) {
+    const idx = selectedIds.indexOf(o.optionId);
+    const rank = idx >= 0 ? idx + 1 : optionCount;
+    rankByUserOption.set(`${viewerUserId}::${o.optionId}`, rank);
+  }
+  const participantCount = participatingUserIds.size;
+  return resultQuestion.options.map((o) => {
+    let sum = 0;
+    for (const uid of participatingUserIds) {
+      sum += rankByUserOption.get(`${uid}::${o.optionId}`) ?? optionCount;
+    }
+    const avgRank = participantCount > 0 ? sum / participantCount : 0;
+    return { optionId: o.optionId, votes: avgRank };
+  });
+}
+
+function formatRankingAvgRank(value: number): string {
+  if (!(value > 0)) return '—';
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function questionResponderLabel(count: number): string {
+  return count === 1 ? '1 user responded' : `${count} users responded`;
+}
+
+function questionResponderCount(
+  resultQuestion: PollQuestionResult | undefined,
+  q: ParsedQuestion,
+  viewerUserId?: string,
+  selectedIds?: string[],
+  usePreview = false,
+): number {
+  if (!resultQuestion) return 0;
+  if (q.type === 'text') {
+    return resultQuestion.textResponseCount ?? resultQuestion.textResponses?.length ?? 0;
+  }
+  const hasVoters = resultQuestion.options.some((o) => (o.voters?.length ?? 0) > 0);
+  if (hasVoters) {
+    if (usePreview && viewerUserId) {
+      const userIds = new Set<string>();
+      for (const o of resultQuestion.options) {
+        for (const v of o.voters ?? []) {
+          if (v.userId !== viewerUserId) userIds.add(v.userId);
+        }
+      }
+      if ((selectedIds?.length ?? 0) > 0) userIds.add(viewerUserId);
+      return userIds.size;
+    }
+    const userIds = new Set<string>();
+    for (const o of resultQuestion.options) {
+      for (const v of o.voters ?? []) {
+        userIds.add(v.userId);
+      }
+    }
+    return userIds.size;
+  }
+  if (q.type === 'rating') {
+    return Math.max(0, ...resultQuestion.options.map((o) => o.responseCount ?? 0));
+  }
+  return resultQuestion.options.reduce((n, o) => n + (o.responseCount ?? 0), 0);
+}
+
+type QuestionResponderModalRow = {
+  responder: string;
+  answer?: string;
+  userId?: string;
+  anonymous?: boolean;
+  avatarSeed?: string | null;
+  thumbnail?: string | null;
+};
+
+function canOpenQuestionRespondersModal(
+  resultQuestion: PollQuestionResult | undefined,
+  q: ParsedQuestion,
+  questionAnonymous: boolean,
+): boolean {
+  if (!resultQuestion) return false;
+  if (q.type === 'text') {
+    return (resultQuestion.textResponseCount ?? resultQuestion.textResponses?.length ?? 0) > 0;
+  }
+  if (questionAnonymous) return false;
+  return resultQuestion.options.some((o) => (o.voters?.length ?? 0) > 0);
+}
+
+function questionResponderModalRows(
+  resultQuestion: PollQuestionResult | undefined,
+  q: ParsedQuestion,
+): QuestionResponderModalRow[] {
+  if (!resultQuestion) return [];
+  if (q.type === 'text') {
+    return (resultQuestion.textResponses ?? []).map((r) => ({
+      responder: r.userName,
+      answer: r.answer,
+      userId: r.userId,
+      avatarSeed: r.avatarSeed,
+      thumbnail: r.thumbnail,
+    }));
+  }
+  const byUser = new Map<
+    string,
+    QuestionResponderModalRow & { choiceLabels: string[]; rankByOptionId: Map<string, number> }
+  >();
+  for (const opt of resultQuestion.options) {
+    for (const v of opt.voters ?? []) {
+      let row = byUser.get(v.userId);
+      if (!row) {
+        row = {
+          responder: v.userName,
+          userId: v.userId,
+          avatarSeed: v.avatarSeed,
+          thumbnail: v.thumbnail,
+          choiceLabels: [],
+          rankByOptionId: new Map(),
+        };
+        byUser.set(v.userId, row);
+      }
+      if (q.type === 'rating') {
+        row.rankByOptionId.set(opt.optionId, v.rank ?? 1);
+      } else {
+        row.choiceLabels.push(opt.label);
+      }
+    }
+  }
+  const labelByOptionId = new Map(resultQuestion.options.map((o) => [o.optionId, o.label]));
+  return Array.from(byUser.values())
+    .map((row) => {
+      if (q.type === 'rating') {
+        const ranked = [...row.rankByOptionId.entries()].sort((a, b) => a[1] - b[1]);
+        const answer = ranked
+          .map(([optionId, rank]) => `#${rank} ${labelByOptionId.get(optionId) ?? 'Option'}`)
+          .join('\n');
+        return {
+          responder: row.responder,
+          answer,
+          userId: row.userId,
+          avatarSeed: row.avatarSeed,
+          thumbnail: row.thumbnail,
+        };
+      }
+      return {
+        responder: row.responder,
+        answer: row.choiceLabels.join(', '),
+        userId: row.userId,
+        avatarSeed: row.avatarSeed,
+        thumbnail: row.thumbnail,
+      };
+    })
+    .sort((a, b) => a.responder.localeCompare(b.responder));
+}
+
+function RankingVoteBarChart({
+  countsByRank,
+  mineByRank,
+  maxCount,
+  fillColor,
+  onPress,
+  disabled,
+}: {
+  countsByRank: number[];
+  mineByRank: number[];
+  maxCount: number;
+  fillColor: string;
+  onPress?: () => void;
+  disabled?: boolean;
+}) {
+  const max = Math.max(1, maxCount);
+  const chart = (
+    <View style={styles.rankingChart}>
+      {countsByRank.map((count, idx) => {
+        const mine = mineByRank[idx] ?? 0;
+        const others = Math.max(0, count - mine);
+        const widthPct = count > 0 ? (count / max) * 100 : 0;
+        return (
+          <View key={idx} style={styles.rankingChartRow}>
+            <Text style={styles.rankingChartRank}>#{idx + 1}</Text>
+            <View style={styles.rankingChartBarArea}>
+              {count > 0 ? (
+                <View style={[styles.rankingChartBarWithCount, { width: `${widthPct}%` }]}>
+                  <View style={styles.rankingChartTrack}>
+                    <View style={styles.rankingChartFillRow}>
+                      {mine > 0 ? (
+                        <View
+                          style={[
+                            styles.rankingChartFillSegment,
+                            { flex: mine, backgroundColor: RANKING_CHART_MY_FILL },
+                          ]}
+                        />
+                      ) : null}
+                      {others > 0 ? (
+                        <View style={[styles.rankingChartFillSegment, { flex: others, backgroundColor: fillColor }]} />
+                      ) : null}
+                    </View>
+                  </View>
+                  <Text style={styles.rankingChartCount}>{count}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+  if (onPress && !disabled) {
+    return (
+      <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.rankingChartPressable}>
+        {chart}
+      </TouchableOpacity>
+    );
+  }
+  return chart;
+}
+
+function ChoiceVoteBarChart({
+  count,
+  mine,
+  maxCount,
+  fillColor,
+  onPress,
+  disabled,
+}: {
+  count: number;
+  mine: number;
+  maxCount: number;
+  fillColor: string;
+  onPress?: () => void;
+  disabled?: boolean;
+}) {
+  const max = Math.max(1, maxCount);
+  const others = Math.max(0, count - mine);
+  const widthPct = count > 0 ? (count / max) * 100 : 0;
+  const chart = (
+    <View style={styles.rankingChartRow}>
+      <View style={styles.rankingChartBarArea}>
+        {count > 0 ? (
+          <View style={[styles.rankingChartBarWithCount, { width: `${widthPct}%` }]}>
+            <View style={styles.rankingChartTrack}>
+              <View style={styles.rankingChartFillRow}>
+                {mine > 0 ? (
+                  <View
+                    style={[
+                      styles.rankingChartFillSegment,
+                      { flex: mine, backgroundColor: RANKING_CHART_MY_FILL },
+                    ]}
+                  />
+                ) : null}
+                {others > 0 ? (
+                  <View style={[styles.rankingChartFillSegment, { flex: others, backgroundColor: fillColor }]} />
+                ) : null}
+              </View>
+            </View>
+            <Text style={styles.rankingChartCount}>{count}</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+  if (onPress && !disabled) {
+    return (
+      <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={styles.rankingChartPressable}>
+        {chart}
+      </TouchableOpacity>
+    );
+  }
+  return chart;
+}
+
+function rankingOptionsForEdit(
+  options: Array<{ id: string; label: string }>,
+  rankedIds: string[],
+): Array<{ id: string; label: string }> {
+  const byId = new Map(options.map((o) => [o.id, o]));
+  const rankedSet = new Set(rankedIds);
+  const ranked = rankedIds.map((id) => byId.get(id)).filter((o): o is { id: string; label: string } => !!o);
+  const unranked = options.filter((o) => !rankedSet.has(o.id));
+  return [...ranked, ...unranked];
+}
+
+type PollVoteOptionRowProps = {
+  opt: { id: string; label: string };
+  q: ParsedQuestion;
+  poll: Poll;
+  palette: ReturnType<typeof getGroupColor>;
+  selected: boolean;
+  rank: number;
+  answersEditable: boolean;
+  results: PollResults | undefined;
+  resultQuestion: PollQuestionResult | undefined;
+  rankingChartMaxCount: number;
+  showRankingCharts: boolean;
+  choiceChartMaxCount: number;
+  choiceQuestionTotalVotes: number;
+  useChoiceChartPreview?: boolean;
+  suggestedBy?: string;
+  drag?: () => void;
+  isActive?: boolean;
+  onPress?: () => void;
+  onOpenRankingDetails?: () => void;
+  onOpenVoteDetails?: () => void;
+  userId?: string;
+  useRankingChartPreview?: boolean;
+  rankingPlacementOptions?: Array<{ optionId: string; votes: number }>;
+  /** Row body inside PollRankingReorderList; drag handle is on the shell. */
+  embeddedInReorderShell?: boolean;
+};
+
+function PollVoteOptionRow({
+  opt,
+  q,
+  poll,
+  palette,
+  selected,
+  rank,
+  answersEditable,
+  results,
+  resultQuestion,
+  rankingChartMaxCount,
+  showRankingCharts,
+  choiceChartMaxCount,
+  choiceQuestionTotalVotes,
+  useChoiceChartPreview = false,
+  suggestedBy,
+  drag,
+  isActive,
+  onPress,
+  onOpenRankingDetails,
+  onOpenVoteDetails,
+  userId,
+  useRankingChartPreview = false,
+  rankingPlacementOptions,
+  embeddedInReorderShell = false,
+}: PollVoteOptionRowProps) {
+  const resultOption = resultQuestion?.options.find((ro) => ro.optionId === opt.id);
+  const questionAnonymous = !!(poll.anonymousVotes || resultQuestion?.anonymousVotes);
+  const placementOptions = rankingPlacementOptions ?? resultQuestion?.options;
+  const rankingPlace =
+    q.type === 'rating' ? rankingBadgePlace(placementOptions, opt.id) : null;
+  const rankingLabel = rankingPlace === 1 ? '1st' : rankingPlace === 2 ? '2nd' : rankingPlace === 3 ? '3rd' : '';
+  const { total: rankingCountsByRank, mine: rankingMineByRank } = rankingVoteCountsForOption(
+    resultOption?.voters,
+    3,
+    questionAnonymous ? undefined : userId,
+    rank,
+    useRankingChartPreview,
+  );
+  const rankingVoterCount =
+    q.type === 'rating'
+      ? useRankingChartPreview
+        ? rankingResponseCountForOption(
+            resultOption?.voters,
+            questionAnonymous ? undefined : userId,
+            rank,
+            true,
+          )
+        : (resultOption?.responseCount ?? (resultOption?.voters?.length ?? 0))
+      : 0;
+  const rankingAvgRank =
+    q.type === 'rating'
+      ? (placementOptions?.find((p) => p.optionId === opt.id)?.votes ?? 0)
+      : 0;
+  const rankingVoteSummary =
+    rankingVoterCount > 0
+      ? `${rankingVoterCount} votes (#${formatRankingAvgRank(rankingAvgRank)})`
+      : `${rankingVoterCount} votes`;
+  const { total: choiceCount, mine: choiceMine } = choiceVoteCountsForOption(
+    resultOption?.voters,
+    resultOption?.votes ?? 0,
+    questionAnonymous ? undefined : userId,
+    selected,
+    useChoiceChartPreview,
+  );
+  const choicePct =
+    choiceQuestionTotalVotes > 0 ? Math.round((choiceCount / choiceQuestionTotalVotes) * 100) : 0;
+  const useRankingDrag =
+    embeddedInReorderShell || (answersEditable && q.type === 'rating' && !!drag);
+  const rowStyle = [
+    styles.voteOptionRow,
+    selected &&
+      q.type !== 'rating' && {
+        ...styles.voteOptionRowSelected,
+        borderColor: palette.cal,
+        backgroundColor: palette.row,
+      },
+    q.type === 'rating' && rankingPlace === 1 && styles.voteOptionRowGold,
+    q.type === 'rating' && rankingPlace === 2 && styles.voteOptionRowSilver,
+    q.type === 'rating' && rankingPlace === 3 && styles.voteOptionRowBronze,
+    q.type === 'rating' && rankingPlace === 1 && styles.voteOptionRowGoldFill,
+    q.type === 'rating' && rankingPlace === 2 && styles.voteOptionRowSilverFill,
+    q.type === 'rating' && rankingPlace === 3 && styles.voteOptionRowBronzeFill,
+    isActive && styles.voteOptionRowDragging,
+  ];
+  const inner = (
+    <>
+      {answersEditable || selected ? (
+        q.type !== 'rating' ? (
+          <View
+            style={[
+              styles.voteRadioOuter,
+              selected && styles.voteRadioOuterSelected,
+              selected && { borderColor: palette.cal },
+            ]}
+          >
+            {selected ? <View style={[styles.voteRadioInner, { backgroundColor: palette.cal }]} /> : null}
+          </View>
+        ) : null
+      ) : null}
+      <View
+        style={{ flex: 1, minWidth: 0 }}
+        pointerEvents={useRankingDrag ? 'none' : 'auto'}
+      >
+        <View style={[styles.optionTopRow, showRankingCharts && styles.optionTopRowRanking]}>
+          <Text style={styles.voteOptionText}>
+            {opt.label}
+            {suggestedBy ? (
+              <Text style={styles.suggestedByInlineText}> · suggested by {suggestedBy}</Text>
+            ) : null}
+          </Text>
+          {rankingPlace ? (
+            <View
+              style={[
+                styles.rankBadge,
+                showRankingCharts && styles.rankBadgeRankingSlot,
+                rankingPlace === 1
+                  ? styles.rankBadgeGold
+                  : rankingPlace === 2
+                    ? styles.rankBadgeSilver
+                    : styles.rankBadgeBronze,
+              ]}
+            >
+              {rankingPlace === 1 ? (
+                <MaterialCommunityIcons name="crown" size={14} color="#B45309" />
+              ) : (
+                <Text style={styles.rankBadgeText}>{rankingLabel}</Text>
+              )}
+            </View>
+          ) : null}
+        </View>
+        {results && resultOption ? (
+          <View
+            style={[styles.resultWrap, styles.resultWrapRanking]}
+            pointerEvents={answersEditable && q.type === 'rating' ? 'none' : 'auto'}
+          >
+            {q.type === 'rating' ? (
+              <>
+                <RankingVoteBarChart
+                  countsByRank={rankingCountsByRank}
+                  mineByRank={rankingMineByRank}
+                  maxCount={rankingChartMaxCount}
+                  fillColor={palette.label}
+                  onPress={onOpenRankingDetails}
+                  disabled={rankingVoterCount === 0 || questionAnonymous || answersEditable}
+                />
+                {questionAnonymous ? (
+                  <Text style={[styles.resultText, styles.rankingChartVoteTotal]}>{rankingVoteSummary}</Text>
+                ) : (
+                  <TouchableOpacity
+                    disabled={rankingVoterCount === 0 || answersEditable}
+                    onPress={onOpenRankingDetails}
+                  >
+                    <Text
+                      style={[
+                        styles.resultText,
+                        styles.rankingChartVoteTotal,
+                        rankingVoterCount > 0 && !answersEditable && styles.resultTextLink,
+                      ]}
+                    >
+                      {rankingVoteSummary}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            ) : (
+              <>
+                <ChoiceVoteBarChart
+                  count={choiceCount}
+                  mine={choiceMine}
+                  maxCount={choiceChartMaxCount}
+                  fillColor={palette.label}
+                  onPress={onOpenVoteDetails}
+                  disabled={choiceCount === 0 || questionAnonymous || answersEditable}
+                />
+                {questionAnonymous ? (
+                  <Text style={[styles.resultText, styles.rankingChartVoteTotal]}>
+                    {choiceCount} votes ({choicePct}%)
+                  </Text>
+                ) : (
+                  <TouchableOpacity
+                    disabled={choiceCount === 0 || answersEditable}
+                    onPress={onOpenVoteDetails}
+                  >
+                    <Text
+                      style={[
+                        styles.resultText,
+                        styles.rankingChartVoteTotal,
+                        choiceCount > 0 && !answersEditable && styles.resultTextLink,
+                      ]}
+                    >
+                      {choiceCount} votes ({choicePct}%)
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+        ) : null}
+      </View>
+    </>
+  );
+  if (useRankingDrag) {
+    return <View style={rowStyle}>{inner}</View>;
+  }
+  return (
+    <TouchableOpacity
+      style={rowStyle}
+      disabled={!answersEditable}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
+      {inner}
+    </TouchableOpacity>
+  );
+}
+
 export type PollDetailScreenProps = {
   pollId: string;
-  variant: 'modal' | 'groups';
+  variant: 'modal' | 'groups' | 'polls';
   /** Required when variant is `groups` — must match the poll’s group (corrected via redirect if wrong). */
   routeGroupId?: string;
-  /** Modal route: `returnTo` query string for dismiss fallback. */
+  /** Polls tab / modal: `returnTo` query string for dismiss fallback (modal only). */
   returnToParam?: string | null;
+  /** Groups-tab poll detail: breadcrumb-parent navigation callbacks. */
+  groupsTabNav?: GroupsTabNavCallbacks;
+  /** Polls-tab poll detail: breadcrumb-parent navigation callbacks. */
+  pollsTabNav?: PollsTabNavCallbacks;
 };
 
 export function PollDetailScreen({
@@ -166,32 +921,47 @@ export function PollDetailScreen({
   variant,
   routeGroupId,
   returnToParam,
+  groupsTabNav,
+  pollsTabNav,
 }: PollDetailScreenProps) {
   const router = useRouter();
   const pathname = usePathname();
   const id = pollId;
   const returnToParsed = useMemo(() => parseReturnToParam(returnToParam ?? undefined), [returnToParam]);
   const { userId } = useCurrentUserContext();
-  const { data: poll, isLoading, isError } = usePoll(id ?? '', userId ?? '');
+  const { data: poll, isLoading, isError, refetch: refetchPoll } = usePoll(id ?? '', userId ?? '');
   const { data: results, refetch: refetchResults } = usePollResults(id ?? '', userId ?? '', {
     enabled: !isError,
   });
-  const { data: group } = useGroup(poll?.groupId ?? '', userId ?? '', { enabled: !isError });
-  const { data: groupColors = {} } = useAllGroupMemberColors(userId ?? '');
+  const { data: group, refetch: refetchGroup } = useGroup(poll?.groupId ?? '', userId ?? '', {
+    enabled: !isError,
+  });
+  const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(userId ?? '');
+  const { data: optionSuggestions = [], refetch: refetchOptionSuggestions } = usePollOptionSuggestions(
+    id ?? '',
+    userId ?? '',
+    !!userId && !isError
+  );
+  const [rankingDragActive, setRankingDragActive] = useState(false);
+  const { refreshControl } = usePullToRefresh(
+    [refetchPoll, refetchResults, refetchGroup, refetchGroupColors, refetchOptionSuggestions],
+    { enabled: Platform.OS !== 'android' || !rankingDragActive },
+  );
   const submitVoteMutation = useSubmitPollVote(id ?? '', userId ?? '');
   const deletePollMutation = useDeletePoll(userId ?? '');
   const closePollMutation = useClosePoll(userId ?? '');
   const setWatchMutation = useSetPollWatch(id ?? '', userId ?? undefined);
   const isPollCreator = !!(poll && userId && poll.createdBy === userId);
-  const { data: optionSuggestions = [] } = usePollOptionSuggestions(id ?? '', userId ?? '', !!userId && !isError);
   const suggestOptionMutation = useSuggestPollOption(id ?? '', userId ?? '');
   const decideSuggestionMutation = useDecidePollOptionSuggestion(id ?? '', userId ?? '');
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string[]>>({});
   const [textAnswerByQuestion, setTextAnswerByQuestion] = useState<Record<string, string>>({});
   /** After a saved vote, answers are read-only until user taps "Update answer". */
   const [editingSavedAnswer, setEditingSavedAnswer] = useState(false);
-  const [showSavedToast, setShowSavedToast] = useState(false);
-  const savedToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Set after a successful submit so the footer shows Update even before results refetch. */
+  const [hasLockedResponse, setHasLockedResponse] = useState(false);
+  /** Bumped only when entering ranking edit (Update) so the reorder list remounts cleanly. */
+  const [rankingEditSession, setRankingEditSession] = useState(0);
   const [detailModal, setDetailModal] = useState<{
     title: string;
     rows: Array<{
@@ -210,21 +980,16 @@ export function PollDetailScreen({
   const [suggestedSuccessQuestionKey, setSuggestedSuccessQuestionKey] = useState<string | null>(null);
   const suggestSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
-  const pollWrapYRef = useRef(0);
-  const pollCardYRef = useRef(0);
-  const questionYInCardRef = useRef<Record<string, number>>({});
+  const questionYInScrollRef = useRef<Record<string, number>>({});
   const parsedQuestions = useMemo(() => (poll ? parseStructuredPollQuestions(poll) : []), [poll]);
 
 
-  const hasSavedVote = useMemo(() => {
-    if (!results) return false;
-    if (results.myOptionIds.length > 0) return true;
-    if (!userId) return false;
-    for (const rq of results.questions) {
-      if (rq.textResponses?.some((t) => t.userId === userId)) return true;
-    }
-    return false;
-  }, [results, userId]);
+  const hasVoteInResults = useMemo(
+    () => pollResultsHasViewerVote(results, userId),
+    [results, userId],
+  );
+
+  const hasSavedVote = hasVoteInResults || hasLockedResponse;
 
   const watchDefaultForViewer = poll ? !!poll.viewerWatchDefault : false;
   const effectiveWatching = poll ? (poll.viewerWatching ?? watchDefaultForViewer) : false;
@@ -300,27 +1065,18 @@ export function PollDetailScreen({
 
   useEffect(() => {
     setEditingSavedAnswer(false);
-    setShowSavedToast(false);
+    setHasLockedResponse(false);
+    setRankingEditSession(0);
     setMissingRequiredKeys([]);
-    questionYInCardRef.current = {};
-    if (savedToastTimerRef.current) {
-      clearTimeout(savedToastTimerRef.current);
-      savedToastTimerRef.current = null;
-    }
+    questionYInScrollRef.current = {};
   }, [id]);
 
-  const triggerSavedToast = useCallback(() => {
-    setShowSavedToast(true);
-    if (savedToastTimerRef.current) clearTimeout(savedToastTimerRef.current);
-    savedToastTimerRef.current = setTimeout(() => {
-      setShowSavedToast(false);
-      savedToastTimerRef.current = null;
-    }, 1400);
-  }, []);
+  useEffect(() => {
+    if (hasVoteInResults) setHasLockedResponse(true);
+  }, [hasVoteInResults]);
 
   useEffect(() => {
     return () => {
-      if (savedToastTimerRef.current) clearTimeout(savedToastTimerRef.current);
       if (suggestSuccessTimerRef.current) clearTimeout(suggestSuccessTimerRef.current);
     };
   }, []);
@@ -338,14 +1094,20 @@ export function PollDetailScreen({
   }, [parsedQuestions, selectedByQuestion, textAnswerByQuestion]);
 
   useEffect(() => {
-    if (!results || parsedQuestions.length === 0) return;
-    const next: Record<string, string[]> = {};
-    for (const q of parsedQuestions) {
-      const inQuestion = q.options.map((o) => o.id);
-      next[q.key] = results.myOptionIds.filter((oid) => inQuestion.includes(oid));
+    if (!results || parsedQuestions.length === 0 || rankingDragActive || editingSavedAnswer) {
+      return;
     }
-    setSelectedByQuestion(next);
-  }, [results, parsedQuestions]);
+    setSelectedByQuestion(selectedByQuestionFromResults(results, parsedQuestions));
+  }, [results, parsedQuestions, editingSavedAnswer, rankingDragActive]);
+
+  useEffect(() => {
+    if (!editingSavedAnswer) return;
+    setRankingDragActive(false);
+    const frame = requestAnimationFrame(() => {
+      scrollViewRef.current?.setNativeProps({ scrollEnabled: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editingSavedAnswer, rankingEditSession]);
 
   useEffect(() => {
     if (!results || parsedQuestions.length === 0 || answersEditable || !userId) return;
@@ -373,21 +1135,32 @@ export function PollDetailScreen({
     }
   }, [variant, routeGroupId, poll?.groupId, poll, id, router]);
 
+  const openGroupOverview = useCallback(() => {
+    if (!poll?.groupId) return;
+    navigateToGroupsTabGroupOverview(router, poll.groupId, {
+      withinGroupsTab: variant === 'groups',
+      groupsTabNav,
+    });
+  }, [poll?.groupId, router, variant, groupsTabNav]);
+
   const dismiss = () => {
-    if (variant === 'groups' && routeGroupId) {
-      if (router.canGoBack()) {
-        router.back();
+    if (variant === 'groups' && routeGroupId && id) {
+      const parent = groupsTabParentHref(routeGroupId, { kind: 'poll', pollId: id });
+      if (parent) {
+        navigateGroupsTabTo(router, parent, routeGroupId, groupsTabNav);
         return;
       }
-      router.replace(`/(tabs)/groups/${routeGroupId}/polls` as Href);
-      return;
     }
-    if (router.canGoBack()) {
-      router.back();
+    if (variant === 'polls') {
+      navigatePollsTabTo(router, ALL_POLLS_HREF, pollsTabNav);
       return;
     }
     if (returnToParsed) {
       router.replace(returnToParsed as Href);
+      return;
+    }
+    if (router.canGoBack()) {
+      router.back();
       return;
     }
     router.replace('/(tabs)/events');
@@ -434,15 +1207,16 @@ export function PollDetailScreen({
   const deadlineLabel = useMemo(() => {
     if (!poll?.deadline) return '';
     try {
-      return new Date(poll.deadline).toLocaleString(undefined, {
+      const formatted = new Date(poll.deadline).toLocaleString(undefined, {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
         hour: 'numeric',
         minute: '2-digit',
       });
+      return `Closes by ${formatted}`;
     } catch {
-      return String(poll.deadline);
+      return `Closes by ${String(poll.deadline)}`;
     }
   }, [poll?.deadline]);
 
@@ -482,7 +1256,7 @@ export function PollDetailScreen({
 
   const sheetBody = (
       <View style={styles.safe}>
-        {variant !== 'groups' ? (
+        {variant === 'modal' ? (
           <View style={modalTopBarStyles.bar}>
             <TouchableOpacity
               onPress={dismiss}
@@ -546,11 +1320,13 @@ export function PollDetailScreen({
           </View>
         ) : null}
 
-        <ScrollView
+        <ScrollViewContainer
           ref={scrollViewRef}
           style={styles.eventScrollView}
           contentContainerStyle={styles.eventScrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
+          {...keyboardAwareScrollProps}
         >
           {!id || !userId ? (
             <Text style={styles.muted}>Missing poll or user.</Text>
@@ -559,25 +1335,16 @@ export function PollDetailScreen({
           ) : isError || !poll ? (
             <Text style={styles.muted}>Could not load this poll.</Text>
           ) : (
-            <View
-              style={styles.eventMainCardWrap}
-              onLayout={(e) => {
-                pollWrapYRef.current = e.nativeEvent.layout.y;
-              }}
-            >
-              <View
-                style={styles.eventMainCard}
-                onLayout={(e) => {
-                  pollCardYRef.current = e.nativeEvent.layout.y;
-                }}
-              >
-                <View style={{ paddingHorizontal: 16, paddingTop: 18 }}>
-                  {variant === 'groups' ? (
+            <>
+            <View style={styles.eventMainCardWrap}>
+              <View style={styles.eventMainCard}>
+                <View style={[styles.pollPad, styles.pollHeaderPad]}>
+                  {variant === 'groups' || variant === 'polls' ? (
                     <>
                       <View style={styles.groupNameRow}>
                         <TouchableOpacity
                           style={[styles.groupChipAboveTitle, styles.groupChipInRow]}
-                          onPress={() => router.push(withReturnTo(`/(tabs)/groups/${poll.groupId}`, pathname))}
+                          onPress={openGroupOverview}
                           activeOpacity={0.7}
                         >
                           <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
@@ -649,7 +1416,7 @@ export function PollDetailScreen({
                     <>
                       <TouchableOpacity
                         style={styles.groupChipAboveTitle}
-                        onPress={() => router.push(withReturnTo(`/(tabs)/groups/${poll.groupId}`, pathname))}
+                        onPress={openGroupOverview}
                         activeOpacity={0.7}
                       >
                         <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
@@ -662,27 +1429,36 @@ export function PollDetailScreen({
                     </>
                   )}
                   {poll.description?.trim() ? (
-                    <View style={[styles.descBox, { marginTop: 10 }]}>
+                    <View style={[styles.descBox, { marginTop: 6 }]}>
                       <Text style={styles.descText}>{poll.description.trim()}</Text>
                     </View>
                   ) : null}
                 </View>
 
                 {poll.coverPhotos && poll.coverPhotos.length > 0 ? (
-                  <View style={{ marginTop: poll.description?.trim() ? 4 : 10 }}>
-                    <View style={{ paddingHorizontal: 16 }}>
-                      <Text style={formSectionTitleStyle}>Photos · {poll.coverPhotos.length}</Text>
+                  <View style={{ marginTop: poll.description?.trim() ? 6 : 10 }}>
+                    <View style={styles.pollPad}>
+                      <Text style={styles.sectionLabel}>Photos · {poll.coverPhotos.length}</Text>
                     </View>
                     <ScrollView
                       horizontal
                       showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 }}
+                      contentContainerStyle={{
+                        gap: 8,
+                        paddingHorizontal: POLL_H_PAD,
+                        paddingTop: 6,
+                        paddingBottom: 8,
+                      }}
                     >
                       {poll.coverPhotos.map((url) => (
                         <ResolvableImage
                           key={url}
                           storedUrl={url}
-                          style={{ width: 88, height: 88, borderRadius: Radius.lg }}
+                          style={{
+                            width: POLL_COVER_PHOTO_SIZE,
+                            height: POLL_COVER_PHOTO_SIZE,
+                            borderRadius: Radius.lg,
+                          }}
                           resizeMode="cover"
                         />
                       ))}
@@ -690,64 +1466,204 @@ export function PollDetailScreen({
                   </View>
                 ) : null}
 
-                <View style={{ paddingHorizontal: 16, marginTop: 14, marginBottom: 4 }}>
-                  <View style={styles.deadlineRow}>
-                    <Ionicons name="calendar-outline" size={20} color={Colors.textSub} style={{ width: 22, marginTop: 1 }} />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={[formSectionTitleStyle, { marginBottom: 4 }]}>Deadline</Text>
-                      <Text style={styles.deadlineValue}>{deadlineLabel}</Text>
-                    </View>
+                <View style={[styles.pollPad, styles.pollMetaBlock]}>
+                  <View style={styles.infoRow}>
+                    <Ionicons name="calendar-outline" size={20} color={Colors.textSub} style={styles.infoRowIcon} />
+                    <Text style={styles.infoText}>{deadlineLabel}</Text>
                   </View>
-                  <View style={styles.createdByRow}>
-                    <Ionicons name="person-outline" size={20} color={Colors.textSub} style={{ width: 22, marginTop: 1 }} />
-                    <Text style={styles.createdByText}>
-                      Created by {((poll as Poll & { createdByName?: string }).createdByName?.trim()) || poll.createdBy}
+                  <View style={styles.infoRow}>
+                    <Ionicons name="person-outline" size={20} color={Colors.textSub} style={styles.infoRowIcon} />
+                    <Text style={styles.infoText} numberOfLines={2}>
+                      Created by{' '}
+                      {((poll as Poll & { createdByName?: string }).createdByName?.trim()) || poll.createdBy}
                     </Text>
                   </View>
                 </View>
+              </View>
+            </View>
 
-                <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
-                  <Text style={formSectionTitleStyle}>Questions</Text>
-                </View>
+                {parsedQuestions.length > 0 ? (
+                  <View style={[styles.pollScrollInset, styles.pollQuestionsHeading]}>
+                    <Text style={styles.sectionLabel}>Questions</Text>
+                  </View>
+                ) : null}
 
                 {parsedQuestions.map((q, qIdx) => {
                   const showTextInput = q.type === 'text' && answersEditable;
                   const showRequiredHighlight = missingRequiredKeys.includes(q.key);
                   const questionMeta: string[] = [];
                   if (q.type === 'multiple') questionMeta.push('Multiple choice');
+                  if (q.type === 'rating') questionMeta.push('Ranking');
                   if (q.anonymousVotes) questionMeta.push('Anonymous');
                   const resultQuestion = results?.questions.find((rq) => rq.questionKey === q.key);
-                  const optionBaseOrder = new Map(q.options.map((o, i) => [o.id, i]));
-                  const optionsForDisplay =
-                    q.type === 'rating' && resultQuestion
-                      ? [...q.options].sort((a, b) => {
-                          const aRes = resultQuestion.options.find((ro) => ro.optionId === a.id);
-                          const bRes = resultQuestion.options.find((ro) => ro.optionId === b.id);
-                          const aHas = !!aRes && (aRes.responseCount ?? 0) > 0;
-                          const bHas = !!bRes && (bRes.responseCount ?? 0) > 0;
-                          if (aHas && bHas) {
-                            const byAvgRank = (aRes!.votes ?? 0) - (bRes!.votes ?? 0); // lower avg rank = better
-                            if (byAvgRank !== 0) return byAvgRank;
-                            const byResponses = (bRes!.responseCount ?? 0) - (aRes!.responseCount ?? 0);
-                            if (byResponses !== 0) return byResponses;
-                          } else if (aHas !== bHas) {
-                            return aHas ? -1 : 1;
+                  const useRankingList = q.type === 'rating';
+                  const useRankingDrag = answersEditable && useRankingList;
+                  const optionsForDisplay = useRankingList
+                    ? rankingOptionsForEdit(q.options, selectedByQuestion[q.key] ?? [])
+                    : q.options;
+                  const questionAnonymousVotes = !!(poll.anonymousVotes || resultQuestion?.anonymousVotes);
+                  const useRankingChartPreview =
+                    answersEditable && q.type === 'rating' && !!userId && !questionAnonymousVotes;
+                  const rankingChartMaxCount =
+                    q.type === 'rating'
+                      ? rankingMaxVoteCountAcrossOptions(
+                          resultQuestion,
+                          3,
+                          userId,
+                          selectedByQuestion[q.key] ?? [],
+                          useRankingChartPreview,
+                        )
+                      : 1;
+                  const showRankingCharts = q.type === 'rating' && !!results;
+                  const rankingPlacementOptions =
+                    q.type === 'rating'
+                      ? rankingPlacementScoresForQuestion(
+                          resultQuestion,
+                          q.options.length,
+                          userId,
+                          selectedByQuestion[q.key] ?? [],
+                          useRankingChartPreview,
+                        )
+                      : undefined;
+                  const useChoiceChartPreview =
+                    answersEditable &&
+                    (q.type === 'single' || q.type === 'multiple') &&
+                    !!userId &&
+                    !questionAnonymousVotes;
+                  const choiceChartMaxCount =
+                    q.type === 'single' || q.type === 'multiple'
+                      ? choiceMaxVoteCountAcrossOptions(
+                          resultQuestion,
+                          userId,
+                          selectedByQuestion[q.key] ?? [],
+                          useChoiceChartPreview,
+                        )
+                      : 1;
+                  const choiceQuestionTotalVotes =
+                    q.type === 'single' || q.type === 'multiple'
+                      ? choiceTotalVotesForQuestion(
+                          resultQuestion,
+                          userId,
+                          selectedByQuestion[q.key] ?? [],
+                          useChoiceChartPreview,
+                        )
+                      : 0;
+                  const useQuestionResponsePreview =
+                    answersEditable && q.type !== 'text' && !!userId && !questionAnonymousVotes;
+                  const questionResponderTotal = results
+                    ? questionResponderCount(
+                        resultQuestion,
+                        q,
+                        userId,
+                        selectedByQuestion[q.key] ?? [],
+                        useQuestionResponsePreview,
+                      )
+                    : null;
+                  const openQuestionRespondersModal = () => {
+                    if (!resultQuestion) return;
+                    setDetailModal({
+                      title: `${q.title} responses`,
+                      rows: questionResponderModalRows(resultQuestion, q),
+                    });
+                  };
+                  const showQuestionRespondersModal = canOpenQuestionRespondersModal(
+                    resultQuestion,
+                    q,
+                    questionAnonymousVotes,
+                  );
+                  const buildPollOptionRowProps = (
+                    opt: { id: string; label: string },
+                  ): Omit<PollVoteOptionRowProps, 'drag' | 'isActive'> => {
+                    const sel = selectedByQuestion[q.key] ?? [];
+                    const selected = sel.includes(opt.id);
+                    const rank = selected ? sel.indexOf(opt.id) + 1 : 0;
+                    const suggestedBy = acceptedSuggestionByQuestionLabel.get(
+                      `${q.key}::${opt.label.trim().toLowerCase()}`,
+                    );
+                    const resultOption = resultQuestion?.options.find((ro) => ro.optionId === opt.id);
+                    return {
+                      opt,
+                      q,
+                      poll,
+                      palette,
+                      selected,
+                      rank,
+                      answersEditable,
+                      results,
+                      resultQuestion,
+                      rankingChartMaxCount,
+                      showRankingCharts,
+                      choiceChartMaxCount,
+                      choiceQuestionTotalVotes,
+                      userId,
+                      useRankingChartPreview,
+                      useChoiceChartPreview,
+                      rankingPlacementOptions,
+                      suggestedBy,
+                      onPress: () => {
+                        if (!answersEditable) return;
+                        setSelectedByQuestion((prev) => {
+                          const before = prev[q.key] ?? [];
+                          if (q.type === 'multiple') {
+                            const next = before.includes(opt.id)
+                              ? before.filter((oid) => oid !== opt.id)
+                              : [...before, opt.id];
+                            return { ...prev, [q.key]: next };
                           }
-                          return (optionBaseOrder.get(a.id) ?? 0) - (optionBaseOrder.get(b.id) ?? 0);
-                        })
-                      : q.options;
+                          if (before.includes(opt.id)) {
+                            return { ...prev, [q.key]: [] };
+                          }
+                          return { ...prev, [q.key]: [opt.id] };
+                        });
+                      },
+                      onOpenRankingDetails: questionAnonymousVotes
+                        ? undefined
+                        : () =>
+                            setDetailModal({
+                              title: opt.label,
+                              rows: (resultOption?.voters ?? [])
+                                .slice()
+                                .sort(
+                                  (a, b) =>
+                                    (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER),
+                                )
+                                .map((v) => ({
+                                  responder: v.userName,
+                                  answer: `#${v.rank ?? '—'}`,
+                                  userId: v.userId,
+                                  anonymous: false,
+                                  avatarSeed: v.avatarSeed,
+                                  thumbnail: v.thumbnail,
+                                })),
+                            }),
+                      onOpenVoteDetails: () =>
+                        setDetailModal({
+                          title: opt.label,
+                          rows: (resultOption?.voters ?? []).map((v) => ({
+                            responder: v.userName,
+                            userId: v.userId,
+                            anonymous: false,
+                            avatarSeed: v.avatarSeed,
+                            thumbnail: v.thumbnail,
+                          })),
+                        }),
+                    };
+                  };
                   return (
                   <View
                     key={q.key}
+                    style={[styles.pollScrollInset, qIdx > 0 && styles.pollSectionGap]}
                     onLayout={(e) => {
-                      questionYInCardRef.current[q.key] = e.nativeEvent.layout.y;
+                      questionYInScrollRef.current[q.key] = e.nativeEvent.layout.y;
                     }}
-                    style={[
-                      styles.pollQBlock,
-                      qIdx > 0 && !showRequiredHighlight && styles.pollQBlockBorder,
-                      showRequiredHighlight && styles.pollQBlockMissing,
-                    ]}
                   >
+                    <View
+                      style={[
+                        styles.pollSectionCard,
+                        showRequiredHighlight && styles.pollQBlockMissing,
+                      ]}
+                    >
+                    <View style={styles.pollSectionPad}>
                     <View style={styles.questionHeader}>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.questionTitle}>
@@ -755,13 +1671,13 @@ export function PollDetailScreen({
                           {q.required ? <Text style={styles.questionRequiredStar}> *</Text> : null}
                         </Text>
                         {questionMeta.length > 0 ? (
-                          <Text style={[styles.questionMetaText, { color: palette.text, opacity: 0.7 }]}>
+                          <Text style={styles.questionMetaText}>
                             {questionMeta.join(' · ')}
                           </Text>
                         ) : null}
                       </View>
                     </View>
-                    <View style={{ gap: 8 }}>
+                    <View style={styles.pollQuestionBody}>
                       {q.type === 'text' ? (
                         <>
                           {showTextInput ? (
@@ -794,251 +1710,40 @@ export function PollDetailScreen({
                               {(textAnswerByQuestion[q.key] ?? '').trim() || '—'}
                             </Text>
                           )}
-                          {results ? (
-                            <TouchableOpacity
-                              style={styles.textResponseBtn}
-                              onPress={() => {
-                                const resultQuestion = results?.questions.find((rq) => rq.questionKey === q.key);
-                                if (!resultQuestion) return;
-                                const rows =
-                                  resultQuestion.textResponses?.map((r) => ({
-                                    responder: r.userName,
-                                    answer: r.answer,
-                                    userId: r.userId,
-                                    anonymous: false,
-                                    avatarSeed: r.avatarSeed,
-                                    thumbnail: r.thumbnail,
-                                  })) ?? [];
-                                setDetailModal({
-                                  title: `${q.title} responses`,
-                                  rows,
-                                });
-                              }}
-                            >
-                              <Text style={styles.textResponseBtnText}>
-                                {results?.questions.find((rq) => rq.questionKey === q.key)?.textResponseCount ?? 0}{' '}
-                                responded
-                              </Text>
-                            </TouchableOpacity>
-                          ) : null}
                         </>
                       ) : null}
-                      {optionsForDisplay.map((opt) => {
-                        const sel = selectedByQuestion[q.key] ?? [];
-                        const selected = sel.includes(opt.id);
-                        const rank = selected ? sel.indexOf(opt.id) + 1 : 0;
-                        const suggestedBy = acceptedSuggestionByQuestionLabel.get(
-                          `${q.key}::${opt.label.trim().toLowerCase()}`,
-                        );
-                        const resultOption = resultQuestion?.options.find((ro) => ro.optionId === opt.id);
-                        const questionAnonymous = !!(poll.anonymousVotes || resultQuestion?.anonymousVotes);
-                        const rankingVoterCount =
-                          q.type === 'rating' ? (resultOption?.responseCount ?? (resultOption?.voters?.length ?? 0)) : 0;
-                        const rankingPlace =
-                          q.type === 'rating'
-                            ? rankingBadgePlace(resultQuestion?.options, opt.id)
-                            : null;
-                        const rankingLabel =
-                          rankingPlace === 1 ? '1st' : rankingPlace === 2 ? '2nd' : rankingPlace === 3 ? '3rd' : '';
-                        const rankingVotersSorted = (resultOption?.voters ?? [])
-                          .slice()
-                          .sort((a, b) => (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER));
-                        const rankingVotersVisible = rankingVotersSorted.slice(0, 5);
-                        const rankingVotersOverflow = Math.max(0, rankingVotersSorted.length - rankingVotersVisible.length);
-                        const openRankingDetails = () => {
-                          if (questionAnonymous) return;
-                          setDetailModal({
-                            title: opt.label,
-                            rows: (resultOption?.voters ?? [])
-                              .slice()
-                              .sort((a, b) => (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER))
-                              .map((v) => ({
-                                responder: v.userName,
-                                answer: `#${v.rank ?? '—'}`,
-                                userId: v.userId,
-                                anonymous: false,
-                                avatarSeed: v.avatarSeed,
-                                thumbnail: v.thumbnail,
-                              })),
-                          });
-                        };
-                        return (
-                          <TouchableOpacity
-                            key={opt.id}
-                            style={[
-                              styles.voteOptionRow,
-                              selected && styles.voteOptionRowSelected,
-                              selected && { borderColor: palette.cal, backgroundColor: palette.row },
-                            ]}
-                            disabled={!answersEditable}
-                            onPress={() => {
-                              if (!answersEditable) return;
-                              setSelectedByQuestion((prev) => {
-                                const before = prev[q.key] ?? [];
-                                if (q.type === 'multiple' || q.type === 'rating') {
-                                  const next = before.includes(opt.id)
-                                    ? before.filter((oid) => oid !== opt.id)
-                                    : [...before, opt.id];
-                                  return { ...prev, [q.key]: next };
-                                }
-                                // Single choice: tapping selected option again clears selection.
-                                if (before.includes(opt.id)) {
-                                  return { ...prev, [q.key]: [] };
-                                }
-                                return { ...prev, [q.key]: [opt.id] };
-                              });
-                            }}
-                            activeOpacity={0.75}
-                          >
-                            {answersEditable ? (
-                              q.type === 'rating' ? (
-                                <View
-                                  style={[
-                                    styles.voteIndicator,
-                                    selected && styles.voteIndicatorSelected,
-                                    selected && { borderColor: palette.cal, backgroundColor: palette.cal },
-                                  ]}
-                                >
-                                  {selected ? <Text style={styles.voteIndicatorRank}>{rank}</Text> : null}
-                                </View>
-                              ) : (
-                                <View
-                                  style={[
-                                    styles.voteRadioOuter,
-                                    selected && styles.voteRadioOuterSelected,
-                                    selected && { borderColor: palette.cal },
-                                  ]}
-                                >
-                                  {selected ? <View style={[styles.voteRadioInner, { backgroundColor: palette.cal }]} /> : null}
-                                </View>
-                              )
-                            ) : null}
-                            <View style={{ flex: 1, minWidth: 0 }}>
-                              <View style={styles.optionTopRow}>
-                                <View style={{ flex: 1, minWidth: 0 }}>
-                                  <Text style={styles.voteOptionText}>
-                                    {opt.label}
-                                    {suggestedBy ? <Text style={styles.suggestedByInlineText}> · by {suggestedBy}</Text> : null}
-                                  </Text>
-                                </View>
-                                {rankingPlace ? (
-                                  <View
-                                    style={[
-                                      styles.rankBadge,
-                                      rankingPlace === 1
-                                        ? styles.rankBadgeGold
-                                        : rankingPlace === 2
-                                          ? styles.rankBadgeSilver
-                                          : styles.rankBadgeBronze,
-                                    ]}
-                                  >
-                                    <Text style={styles.rankBadgeText}>{rankingLabel}</Text>
-                                  </View>
-                                ) : null}
-                              </View>
-                              {results && resultOption ? (
-                                <View style={styles.resultWrap}>
-                                  {q.type === 'rating' ? (
-                                    <>
-                                      <View style={styles.rankingVotesRow}>
-                                        <TouchableOpacity
-                                          style={styles.rankingThumbsWrap}
-                                          disabled={rankingVoterCount === 0 || questionAnonymous}
-                                          onPress={openRankingDetails}
-                                        >
-                                          {rankingVotersVisible.map((v, idx) => (
-                                            <View
-                                              key={`${v.userId}-${v.rank ?? idx}`}
-                                              style={[
-                                                styles.rankingThumb,
-                                                idx > 0 && styles.rankingThumbOverlap,
-                                                { zIndex: rankingVotersVisible.length - idx },
-                                              ]}
-                                            >
-                                              <UserAvatar
-                                                seed={v.userName || v.userId}
-                                                backgroundColor={v.avatarSeed ? [v.avatarSeed] : undefined}
-                                                thumbnail={v.thumbnail}
-                                                size={24}
-                                              />
-                                              <View style={styles.rankingThumbRankBadge}>
-                                                <Text style={styles.rankingThumbRankText}>{v.rank ?? idx + 1}</Text>
-                                              </View>
-                                            </View>
-                                          ))}
-                                          {rankingVotersOverflow > 0 ? (
-                                            <View
-                                              style={[
-                                                styles.rankingThumbOverflow,
-                                                rankingVotersVisible.length > 0 && styles.rankingThumbOverlap,
-                                                { zIndex: 0 },
-                                              ]}
-                                            >
-                                              <Text style={styles.rankingThumbOverflowText}>+{rankingVotersOverflow}</Text>
-                                            </View>
-                                          ) : null}
-                                        </TouchableOpacity>
-                                        {questionAnonymous ? (
-                                          <Text style={styles.resultText}>{rankingVoterCount} votes</Text>
-                                        ) : (
-                                          <TouchableOpacity
-                                            disabled={rankingVoterCount === 0}
-                                            onPress={openRankingDetails}
-                                          >
-                                            <Text
-                                              style={[
-                                                styles.resultText,
-                                                rankingVoterCount > 0 && styles.resultTextLink,
-                                              ]}
-                                            >
-                                              {rankingVoterCount} votes
-                                            </Text>
-                                          </TouchableOpacity>
-                                        )}
-                                      </View>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <View style={styles.resultTrack}>
-                                        <View
-                                          style={[
-                                            styles.resultFill,
-                                            { width: `${resultOption.pct}%`, backgroundColor: palette.label },
-                                          ]}
-                                        />
-                                      </View>
-                                      {questionAnonymous ? (
-                                        <Text style={styles.resultText}>
-                                          {resultOption.votes} votes ({resultOption.pct}%)
-                                        </Text>
-                                      ) : (
-                                        <TouchableOpacity
-                                          onPress={() =>
-                                            setDetailModal({
-                                              title: opt.label,
-                                              rows: (resultOption.voters ?? []).map((v) => ({
-                                                responder: v.userName,
-                                                userId: v.userId,
-                                                anonymous: false,
-                                                avatarSeed: v.avatarSeed,
-                                                thumbnail: v.thumbnail,
-                                              })),
-                                            })
-                                          }
-                                        >
-                                          <Text style={[styles.resultText, styles.resultTextLink]}>
-                                            {resultOption.votes} votes ({resultOption.pct}%)
-                                          </Text>
-                                        </TouchableOpacity>
-                                      )}
-                                    </>
-                                  )}
-                                </View>
-                              ) : null}
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
+                      {useRankingDrag ? (
+                        <PollRankingReorderList
+                          key={`ranking-${q.key}-${rankingEditSession}`}
+                          data={optionsForDisplay}
+                          keyExtractor={(item) => item.id}
+                          onDragActiveChange={setRankingDragActive}
+                          onReorder={(from, to) => {
+                            setSelectedByQuestion((prev) => {
+                              const ordered = rankingOptionsForEdit(q.options, prev[q.key] ?? []);
+                              return {
+                                ...prev,
+                                [q.key]: reorderItems(ordered, from, to).map((o) => o.id),
+                              };
+                            });
+                          }}
+                          renderItem={({ item: opt }) => (
+                            <RankingPollOptionRowShell dragHandleLabel={`Reorder ${opt.label}`}>
+                              <PollVoteOptionRow
+                                {...buildPollOptionRowProps(opt)}
+                                embeddedInReorderShell
+                              />
+                            </RankingPollOptionRowShell>
+                          )}
+                          ItemSeparator={() => <View style={styles.rankingOptionGap} />}
+                        />
+                      ) : (
+                        optionsForDisplay.map((opt) => (
+                          <View key={opt.id}>
+                            <PollVoteOptionRow {...buildPollOptionRowProps(opt)} />
+                          </View>
+                        ))
+                      )}
                       {q.type !== 'text' ? (
                         <TouchableOpacity
                           style={[
@@ -1063,6 +1768,22 @@ export function PollDetailScreen({
                         >
                           <Ionicons name="add-circle-outline" size={18} color={palette.text} />
                           <Text style={[styles.suggestOptionBtnText, { color: palette.text }]}>Suggest option</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {editingSavedAnswer &&
+                      q.type === 'rating' &&
+                      (results?.myOptionIds ?? []).some((oid) => q.options.some((o) => o.id === oid)) ? (
+                        <TouchableOpacity
+                          style={styles.rankingResetBtn}
+                          onPress={() => {
+                            setSelectedByQuestion((prev) => ({ ...prev, [q.key]: [] }));
+                            setMissingRequiredKeys((prev) => prev.filter((key) => key !== q.key));
+                          }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Reset your ranking for ${q.title}`}
+                        >
+                          <Ionicons name="refresh-outline" size={18} color={Colors.textMuted} />
+                          <Text style={styles.rankingResetBtnText}>Reset my ranking</Text>
                         </TouchableOpacity>
                       ) : null}
                       {suggestedSuccessQuestionKey === q.key ? (
@@ -1133,11 +1854,33 @@ export function PollDetailScreen({
                             ))}
                         </View>
                       ) : null}
+                      {questionResponderTotal !== null ? (
+                        showQuestionRespondersModal ? (
+                          <TouchableOpacity
+                            style={styles.questionResponderFooter}
+                            onPress={openQuestionRespondersModal}
+                            accessibilityRole="button"
+                            accessibilityLabel={`View ${questionResponderLabel(questionResponderTotal)}`}
+                          >
+                            <Text style={[styles.questionResponderText, styles.questionResponderTextLink]}>
+                              {questionResponderLabel(questionResponderTotal)}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <Text style={[styles.questionResponderText, styles.questionResponderFooter]}>
+                            {questionResponderLabel(questionResponderTotal)}
+                          </Text>
+                        )
+                      ) : null}
+                    </View>
+                    </View>
                     </View>
                   </View>
                 );
                 })}
 
+            <View style={[styles.pollScrollInset, styles.pollSectionGap]}>
+              <View style={styles.pollSectionCard}>
                 <View style={styles.pollFooterActions}>
                 <TouchableOpacity
                   style={[
@@ -1150,7 +1893,11 @@ export function PollDetailScreen({
                   onPress={async () => {
                     if (isPollClosed) return;
                     if (hasSavedVote && !editingSavedAnswer) {
+                      if (results) {
+                        setSelectedByQuestion(selectedByQuestionFromResults(results, parsedQuestions));
+                      }
                       setEditingSavedAnswer(true);
+                      setRankingEditSession((n) => n + 1);
                       setMissingRequiredKeys([]);
                       return;
                     }
@@ -1166,11 +1913,12 @@ export function PollDetailScreen({
                       const firstKey = missingKeys[0];
                       requestAnimationFrame(() => {
                         requestAnimationFrame(() => {
-                          const yQ = questionYInCardRef.current[firstKey ?? ''];
+                          const yQ = questionYInScrollRef.current[firstKey ?? ''];
                           if (firstKey != null && yQ !== undefined) {
-                            const y =
-                              pollWrapYRef.current + pollCardYRef.current + yQ - 24;
-                            scrollViewRef.current?.scrollTo({ y: Math.max(0, y), animated: true });
+                            scrollViewRef.current?.scrollTo({
+                              y: Math.max(0, yQ - 24),
+                              animated: true,
+                            });
                           }
                         });
                       });
@@ -1178,7 +1926,7 @@ export function PollDetailScreen({
                       return;
                     }
                     setMissingRequiredKeys([]);
-                    const optionIds = Object.values(selectedByQuestion).flat();
+                    const optionIds = parsedQuestions.flatMap((pq) => selectedByQuestion[pq.key] ?? []);
                     const textAnswers = parsedQuestions
                       .filter((pq) => pq.type === 'text')
                       .map((pq) => ({
@@ -1187,11 +1935,14 @@ export function PollDetailScreen({
                       }))
                       .filter((x) => x.answer.length > 0);
                     try {
-                      await submitVoteMutation.mutateAsync({ optionIds, textAnswers });
-                      await refetchResults();
+                      const freshResults = await submitVoteMutation.mutateAsync({ optionIds, textAnswers });
+                      setSelectedByQuestion(selectedByQuestionFromResults(freshResults, parsedQuestions));
+                      setHasLockedResponse(true);
                       setEditingSavedAnswer(false);
+                      setRankingDragActive(false);
                       setMissingRequiredKeys([]);
-                      triggerSavedToast();
+                      await refetchResults();
+                      Toast.show({ type: 'success', text1: 'Saved' });
                     } catch (e: unknown) {
                       const err = e as {
                         body?: { error?: string; message?: string };
@@ -1232,16 +1983,9 @@ export function PollDetailScreen({
                 </View>
               </View>
             </View>
+            </>
           )}
-        </ScrollView>
-
-        {showSavedToast ? (
-          <View pointerEvents="none" style={styles.savedToastWrap}>
-            <View style={styles.savedToast}>
-              <Text style={styles.savedToastText}>Saved</Text>
-            </View>
-          </View>
-        ) : null}
+        </ScrollViewContainer>
 
         <Modal visible={!!detailModal} transparent animationType="fade" onRequestClose={() => setDetailModal(null)}>
           <View style={styles.modalBackdrop}>
@@ -1359,7 +2103,7 @@ export function PollDetailScreen({
       </View>
   );
 
-  if (variant === 'groups') {
+  if (variant === 'groups' || variant === 'polls') {
     return sheetBody;
   }
 
@@ -1367,23 +2111,53 @@ export function PollDetailScreen({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FFFFFF' },
-  eventScrollView: { flex: 1, backgroundColor: '#FFFFFF' },
-  eventScrollContent: { flexGrow: 1, backgroundColor: '#FFFFFF', paddingBottom: 14 },
-  eventMainCardWrap: { marginHorizontal: 16, marginTop: 12, marginBottom: 6 },
-  eventMainCard: {
-    backgroundColor: '#FFFFFF',
+  safe: { flex: 1, backgroundColor: Colors.bg },
+  eventScrollView: { flex: 1, backgroundColor: Colors.bg },
+  eventScrollContent: { flexGrow: 1, backgroundColor: Colors.bg, paddingBottom: 14 },
+  eventMainCardWrap: { marginHorizontal: POLL_SIDE_MARGIN, marginTop: 4, marginBottom: 4 },
+  pollScrollInset: { marginHorizontal: POLL_SIDE_MARGIN, marginBottom: 4 },
+  pollSectionGap: { marginTop: 14 },
+  pollSectionCard: {
+    backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  pollSectionPad: { paddingHorizontal: POLL_H_PAD, paddingVertical: 14 },
+  pollQuestionBody: {
+    gap: 8,
+  },
+  pollPad: { paddingHorizontal: POLL_H_PAD },
+  pollHeaderPad: { paddingTop: 4 },
+  pollMetaBlock: { gap: 6, marginTop: 8, paddingBottom: 14 },
+  pollQuestionsHeading: { marginTop: 14, marginBottom: 10 },
+  sectionLabel: {
+    fontSize: 11,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  infoRowIcon: { width: 22 },
+  infoText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
+    lineHeight: 20,
+  },
+  eventMainCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
     overflow: 'hidden',
   },
   groupNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 10,
-    minHeight: 40,
+    marginBottom: 0,
+    minHeight: 36,
   },
   groupChipInRow: {
     flex: 1,
@@ -1410,8 +2184,8 @@ const styles = StyleSheet.create({
     gap: 6,
     alignSelf: 'flex-start',
     maxWidth: '100%',
-    marginBottom: 10,
-    paddingVertical: 4,
+    marginBottom: 6,
+    paddingVertical: 2,
     paddingRight: 4,
   },
   groupDot: { width: 8, height: 8, borderRadius: 4 },
@@ -1424,11 +2198,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   descBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: Colors.bg,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
-    padding: 12,
+    padding: 10,
   },
   descText: {
     fontSize: 14,
@@ -1436,26 +2210,15 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 22,
   },
-  deadlineRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  deadlineValue: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSub, lineHeight: 20 },
-  createdByRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-  createdByText: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textSub },
-  pollQBlock: { paddingHorizontal: 16, paddingVertical: 16 },
   pollQBlockMissing: {
-    borderRadius: Radius.lg,
     borderWidth: 2,
     borderColor: '#CA8A04',
-    borderTopColor: '#CA8A04',
     backgroundColor: '#FFFBEB',
-  },
-  pollQBlockBorder: {
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
   },
   questionHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   questionTitle: {
     flex: 1,
@@ -1472,23 +2235,49 @@ const styles = StyleSheet.create({
     marginTop: 3,
     fontSize: 12,
     fontFamily: Fonts.regular,
-    color: '#8A94A6',
+    color: Colors.textMuted,
   },
   voteOptionRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   voteOptionRowSelected: {
     borderColor: '#9CA3AF',
-    backgroundColor: '#FFFFFF',
   },
+  voteOptionRowDragging: {
+    zIndex: 2,
+    transform: [{ translateY: -3 }],
+    borderColor: '#9CA3AF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  rankingDragHandle: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+  },
+  rankingOptionGap: {
+    height: 8,
+  },
+  voteOptionRowGold: { borderColor: '#FCD34D' },
+  voteOptionRowGoldFill: { backgroundColor: '#FEF3C7' },
+  voteOptionRowSilver: { borderColor: '#CBD5E1' },
+  voteOptionRowSilverFill: { backgroundColor: '#F1F5F9' },
+  voteOptionRowBronze: { borderColor: '#FDBA74' },
+  voteOptionRowBronzeFill: { backgroundColor: '#FEE2E2' },
   voteRadioOuter: {
     width: 22,
     height: 22,
@@ -1532,6 +2321,11 @@ const styles = StyleSheet.create({
   },
   voteOptionText: { flex: 1, minWidth: 0, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
   optionTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  optionTopRowRanking: {
+    position: 'relative',
+    minHeight: 26,
+    paddingRight: 44,
+  },
   rankBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1540,6 +2334,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderWidth: 1,
+  },
+  rankBadgeRankingSlot: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
   },
   rankBadgeGold: { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' },
   rankBadgeSilver: { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
@@ -1579,14 +2378,17 @@ const styles = StyleSheet.create({
     borderColor: '#CA8A04',
     backgroundColor: '#FFFBEB',
   },
-  textResponseBtn: {
+  questionResponderFooter: {
+    marginTop: 10,
     alignSelf: 'flex-start',
-    paddingVertical: 4,
   },
-  textResponseBtnText: {
+  questionResponderText: {
     fontSize: 12,
-    fontFamily: Fonts.semiBold,
-    color: '#6B7280',
+    fontFamily: Fonts.medium,
+    color: Colors.textMuted,
+  },
+  questionResponderTextLink: {
+    textDecorationLine: 'underline',
   },
   resultWrap: {
     marginTop: 4,
@@ -1594,17 +2396,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  resultTrack: {
-    flex: 1,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: '#E5E7EB',
-    overflow: 'hidden',
-  },
-  resultFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: '#9CA3AF',
+  resultWrapRanking: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 4,
+    marginTop: 6,
   },
   resultText: {
     fontSize: 11,
@@ -1616,75 +2412,72 @@ const styles = StyleSheet.create({
   resultTextLink: {
     textDecorationLine: 'underline',
   },
-  rankingVotesRow: {
+  rankingChartPressable: {
     width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingRight: 2,
   },
-  rankingThumbsWrap: {
+  rankingChart: {
+    width: '100%',
+    gap: 4,
+  },
+  rankingChartRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 26,
+    gap: 6,
+    minHeight: 14,
+  },
+  rankingChartRank: {
+    width: 22,
+    fontSize: 10,
+    fontFamily: Fonts.semiBold,
+    color: '#6B7280',
+    textAlign: 'left',
+  },
+  rankingChartBarArea: {
     flex: 1,
     minWidth: 0,
   },
-  rankingThumb: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
+  rankingChartBarWithCount: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
+    gap: 4,
+    minWidth: 0,
   },
-  rankingThumbOverlap: {
-    marginLeft: -5,
+  rankingChartTrack: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+    minWidth: 2,
   },
-  rankingThumbRankBadge: {
-    position: 'absolute',
-    right: -4,
-    bottom: -4,
-    minWidth: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
-    backgroundColor: '#111827',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 1,
+  rankingChartFillRow: {
+    flexDirection: 'row',
+    height: '100%',
+    width: '100%',
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  rankingThumbRankText: {
-    fontSize: 8,
-    lineHeight: 9,
-    fontFamily: Fonts.bold,
-    color: '#FFFFFF',
+  rankingChartFillSegment: {
+    height: '100%',
+    minWidth: 2,
   },
-  rankingThumbOverflow: {
-    minWidth: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    backgroundColor: '#EEF2F7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 5,
-  },
-  rankingThumbOverflowText: {
+  rankingChartCount: {
     fontSize: 10,
-    fontFamily: Fonts.semiBold,
-    color: '#4B5563',
+    fontFamily: Fonts.medium,
+    color: '#6B7280',
+    flexShrink: 0,
+  },
+  rankingChartVoteTotal: {
+    alignSelf: 'flex-end',
+    minWidth: 0,
   },
   pollFooterActions: {
-    paddingBottom: 13,
+    paddingHorizontal: POLL_H_PAD,
+    paddingTop: 14,
+    paddingBottom: 14,
   },
   submitVoteBtn: {
-    marginHorizontal: 16,
-    marginTop: 18,
+    marginTop: 0,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: '#D5DAE1',
@@ -1698,8 +2491,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.semiBold,
   },
   closePollBtn: {
-    marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 8,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: '#D5DAE1',
@@ -1713,8 +2505,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.semiBold,
   },
   closedByText: {
-    marginHorizontal: 16,
-    marginTop: 10,
+    marginTop: 8,
     marginBottom: 0,
     fontSize: 12,
     color: Colors.textMuted,
@@ -1727,24 +2518,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: Fonts.regular,
     color: Colors.textMuted,
-  },
-  savedToastWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 20,
-    alignItems: 'center',
-  },
-  savedToast: {
-    backgroundColor: 'rgba(75, 85, 99, 0.72)',
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  savedToastText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontFamily: Fonts.semiBold,
   },
   muted: { fontSize: 15, color: Colors.textMuted, fontFamily: Fonts.regular, marginTop: 8, paddingHorizontal: 20 },
   modalBackdrop: {
@@ -1825,6 +2598,18 @@ const styles = StyleSheet.create({
   },
   suggestOptionBtnDisabled: { opacity: 0.45 },
   suggestOptionBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.accent },
+  rankingResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    marginTop: 0,
+  },
+  rankingResetBtnText: {
+    fontSize: 15,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textMuted,
+  },
   suggestSuccessText: {
     marginTop: -2,
     fontSize: 12,

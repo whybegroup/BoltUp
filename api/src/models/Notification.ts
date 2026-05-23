@@ -22,6 +22,10 @@ export interface Notification {
   eventId?: string | null;
   /** Related poll ID (in-app; when dest is poll) */
   pollId?: string | null;
+  /** Related group forum post ID (forum mention notifications) */
+  postId?: string | null;
+  /** Related group forum comment ID (forum mention notifications) */
+  commentId?: string | null;
   /** Whether this notification is navigable/clickable */
   navigable: boolean;
   /** Navigation destination */
@@ -48,6 +52,8 @@ export interface NotificationInput {
   groupId?: string;
   eventId?: string;
   pollId?: string;
+  postId?: string;
+  commentId?: string;
   navigable?: boolean;
   dest?: 'group' | 'event' | 'poll';
   userId?: string;

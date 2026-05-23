@@ -131,6 +131,8 @@ export interface PollQuestionResult {
 export interface PollResults {
   pollId: string;
   myOptionIds: string[];
+  /** Per-option ranks for the requesting user (rating questions). */
+  myOptionRanks: Array<{ optionId: string; rank: number }>;
   questions: PollQuestionResult[];
 }
 

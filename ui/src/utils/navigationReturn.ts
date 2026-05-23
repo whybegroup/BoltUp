@@ -1,4 +1,28 @@
-import type { Href } from 'expo-router';
+import type { Href, Router } from 'expo-router';
+import {
+  ALL_GROUPS_HREF,
+  ALL_POLLS_HREF,
+  navigateGroupsTabTo,
+  navigatePollsTabTo,
+  type GroupsTabNavCallbacks,
+  type PollsTabNavCallbacks,
+} from './tabBreadcrumbNav';
+
+export { ALL_GROUPS_HREF, ALL_POLLS_HREF };
+
+export function navigateToAllGroups(
+  router: Pick<Router, 'dismissTo' | 'replace'>,
+  callbacks?: GroupsTabNavCallbacks
+): void {
+  navigateGroupsTabTo(router, ALL_GROUPS_HREF, null, callbacks);
+}
+
+export function navigateToAllPolls(
+  router: Pick<Router, 'dismissTo' | 'replace'>,
+  callbacks?: PollsTabNavCallbacks
+): void {
+  navigatePollsTabTo(router, ALL_POLLS_HREF, callbacks);
+}
 
 /** First value when a search param may be `string | string[]`. */
 export function firstSearchParam(v: string | string[] | undefined): string | undefined {

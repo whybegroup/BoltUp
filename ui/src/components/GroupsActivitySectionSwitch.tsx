@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
-import { useRouter, type Href } from 'expo-router';
-import { withReturnTo } from '../utils/navigationReturn';
+import { type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import type { BreadcrumbSegment } from './GroupsBreadcrumbTrail';
 import {
   GroupsBreadcrumbDropdownModal,
@@ -34,7 +34,8 @@ const SECTION_ITEMS: BreadcrumbDropdownItem[] = ALL_SECTIONS.map((section) => ({
 }));
 
 type UseGroupsActivitySectionSwitchOptions = {
-  returnPathname?: string;
+  /** When true, the section label is the current page (no navigation). */
+  isOnSectionRoot?: boolean;
 };
 
 export function useGroupsActivitySectionSwitch(
@@ -46,23 +47,25 @@ export function useGroupsActivitySectionSwitch(
   const [visible, setVisible] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
 
-  const navigateToSection = useCallback(
+  const goToSectionRoot = useCallback(
     (section: GroupsActivitySection) => {
-      const href = SECTION_META[section].href(groupId);
-      router.push(
-        options?.returnPathname
-          ? withReturnTo(String(href), String(options.returnPathname))
-          : href
-      );
+      router.replace(SECTION_META[section].href(groupId));
     },
-    [groupId, options?.returnPathname, router]
+    [groupId, router]
+  );
+
+  const switchToSection = useCallback(
+    (section: GroupsActivitySection) => {
+      router.push(SECTION_META[section].href(groupId));
+    },
+    [groupId, router]
   );
 
   const segment = useMemo((): BreadcrumbSegment => {
     const meta = SECTION_META[current];
     return {
       label: meta.label,
-      onPress: () => navigateToSection(current),
+      ...(options?.isOnSectionRoot ? {} : { onPress: () => goToSectionRoot(current) }),
       showSwitchChevron: true,
       switchChevronOpen: visible,
       onSwitchChevronPress: (a) => {
@@ -70,7 +73,7 @@ export function useGroupsActivitySectionSwitch(
         setVisible((open) => !open);
       },
     };
-  }, [current, navigateToSection, visible]);
+  }, [current, goToSectionRoot, options?.isOnSectionRoot, visible]);
 
   const modal = (
     <GroupsBreadcrumbDropdownModal
@@ -79,7 +82,11 @@ export function useGroupsActivitySectionSwitch(
       anchor={anchor}
       items={SECTION_ITEMS}
       selectedId={current}
-      onSelect={(id) => navigateToSection(id as GroupsActivitySection)}
+      onSelect={(id) => {
+        const section = id as GroupsActivitySection;
+        if (section === current && options?.isOnSectionRoot) return;
+        switchToSection(section);
+      }}
       menuWidth={MENU_WIDTH}
     />
   );

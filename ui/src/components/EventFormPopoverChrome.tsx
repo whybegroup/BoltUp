@@ -2,7 +2,9 @@ import { type ReactNode, useMemo } from 'react';
 import { View, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadows } from '../constants/theme';
+import { useGuardedPress } from '../hooks/useGuardedPress';
 import { AppToastMount } from './AppToastMount';
+import { KeyboardFormRoot } from './KeyboardSafeScrollView';
 
 const POPOVER_MAX_W = 560;
 
@@ -15,6 +17,7 @@ type Props = { children: ReactNode; onClose: () => void };
 export function EventFormPopoverChrome({ children, onClose }: Props) {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const guardedClose = useGuardedPress(onClose);
 
   const rootStyle = useMemo(
     () => [
@@ -47,9 +50,9 @@ export function EventFormPopoverChrome({ children, onClose }: Props) {
 
   return (
     <View style={rootStyle}>
-      <Pressable style={styles.scrim} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />
+      <Pressable style={styles.scrim} onPress={guardedClose} accessibilityRole="button" accessibilityLabel="Close" />
       <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={sheetStyle}>
-        {children}
+        <KeyboardFormRoot style={{ flex: 1 }}>{children}</KeyboardFormRoot>
       </SafeAreaView>
       <AppToastMount />
     </View>

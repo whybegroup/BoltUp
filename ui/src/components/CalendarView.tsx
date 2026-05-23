@@ -1,8 +1,18 @@
-import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef, type ComponentRef } from 'react';
+import {
+  useState,
+  useMemo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type ComponentRef,
+  type ReactElement,
+} from 'react';
 import {
   View,
   Text,
   ScrollView,
+  type RefreshControlProps,
   StyleSheet,
   Modal,
   Pressable,
@@ -31,10 +41,13 @@ import { CalendarEventMark } from './CalendarEventMark';
 import { isSameDay, isToday } from '../utils/helpers';
 import type { EventDetailed, GroupScoped } from '@moijia/client';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
+import { useUsers } from '../hooks/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EventRow } from './EventRow';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** Light overlay on month/year selected day cells so event dots stay vivid. */
+const CALENDAR_DAY_SELECTED_BG = 'rgba(0, 0, 0, 0.1)';
 
 import type { CalendarScopeMode } from '../utils/eventsScreenPrefs';
 
@@ -61,6 +74,7 @@ interface CalendarViewProps {
   onCalendarYearMonthStripCommit?: (payload: { year: number; x: number }) => void;
   /** RSVP filter from events screen; can't-go events show only when `notGoing` is included. */
   filterRsvp?: string[];
+  refreshControl?: ReactElement<RefreshControlProps>;
 }
 
 const YEAR_STRIP_PAD_H = 12;
@@ -70,18 +84,15 @@ function yearStripContentWidth(cardSize: number): number {
   return YEAR_STRIP_PAD_H * 2 + 12 * cardSize + 12 * YEAR_STRIP_CARD_MARGIN;
 }
 
-function yearStripScrollToCenterMonth(monthIndex: number, cardSize: number, viewportW: number): number {
-  const contentW = yearStripContentWidth(cardSize);
-  const cardLeft = YEAR_STRIP_PAD_H + monthIndex * (cardSize + YEAR_STRIP_CARD_MARGIN);
-  const raw = cardLeft + cardSize / 2 - viewportW / 2;
-  const maxScroll = Math.max(0, contentW - viewportW);
-  return Math.max(0, Math.min(maxScroll, Math.round(raw)));
+function yearStripClampScrollX(x: number, cardSize: number, viewportW: number): number {
+  const maxScroll = Math.max(0, yearStripContentWidth(cardSize) - viewportW);
+  return Math.max(0, Math.min(maxScroll, Math.round(x)));
 }
 
-function yearStripClampScroll(x: number, cardSize: number, viewportW: number): number {
-  const contentW = yearStripContentWidth(cardSize);
-  const maxScroll = Math.max(0, contentW - viewportW);
-  return Math.max(0, Math.min(maxScroll, Math.round(x)));
+function yearStripScrollToCenterMonth(monthIndex: number, cardSize: number, viewportW: number): number {
+  const cardLeft = YEAR_STRIP_PAD_H + monthIndex * (cardSize + YEAR_STRIP_CARD_MARGIN);
+  const raw = cardLeft + cardSize / 2 - viewportW / 2;
+  return yearStripClampScrollX(raw, cardSize, viewportW);
 }
 
 const HOUR_HEIGHT = 40;
@@ -221,18 +232,6 @@ function clampDayInMonth(year: number, month: number, preferredDom: number): Dat
   return new Date(year, month, dom);
 }
 
-/** Events with any overlap on this calendar month, sorted by start. */
-function eventsOverlappingCalendarMonth(y: number, mo: number, list: EventDetailed[]): EventDetailed[] {
-  const monthStart = new Date(y, mo, 1, 0, 0, 0, 0).getTime();
-  const monthEnd = new Date(y, mo + 1, 0, 23, 59, 59, 999).getTime();
-  const out = list.filter((ev) => {
-    const s = new Date(ev.start).getTime();
-    const e = new Date(ev.end).getTime();
-    return e >= monthStart && s <= monthEnd;
-  });
-  return out.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
-}
-
 type TimedSeg = { ev: EventDetailed; top: number; height: number };
 
 function timedSegmentsOverlap(a: TimedSeg, b: TimedSeg): boolean {
@@ -333,8 +332,10 @@ export function CalendarView({
   calendarYearMonthStrip,
   onCalendarYearMonthStripCommit,
   filterRsvp = [],
+  refreshControl,
 }: CalendarViewProps) {
   const { userId: meId } = useCurrentUserContext();
+  const { data: allUsers = [] } = useUsers();
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [internalFocus, setInternalFocus] = useState(() => new Date());
@@ -414,9 +415,8 @@ export function CalendarView({
   const yearStripViewportWRef = useRef(0);
   const [yearStripViewportW, setYearStripViewportW] = useState(0);
   const latestYearStripXRef = useRef(0);
-  const yearStripSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** After we auto-center once for a calendar year (no saved strip), ignore until `year` changes. */
-  const appliedDefaultYearStripForYearRef = useRef<number | null>(null);
+  /** After initial strip scroll is applied for a calendar year, do not scrollTo again (avoids fighting user scroll). */
+  const initializedYearStripForYearRef = useRef<number | null>(null);
   const stripScrollYearRef = useRef(0);
   const bodyScrollMapRef = useRef(calendarBodyScrollY);
   bodyScrollMapRef.current = calendarBodyScrollY;
@@ -458,28 +458,8 @@ export function CalendarView({
     if (y != null) onCalendarBodyScrollYCommit(mode, Math.max(0, Math.round(y)));
   }, [onCalendarBodyScrollYCommit]);
 
-  const scheduleYearStripScrollPersist = useCallback(
-    (stripYear: number, x: number) => {
-      if (!onCalendarYearMonthStripCommit) return;
-      latestYearStripXRef.current = x;
-      if (yearStripSaveTimerRef.current) clearTimeout(yearStripSaveTimerRef.current);
-      yearStripSaveTimerRef.current = setTimeout(() => {
-        yearStripSaveTimerRef.current = null;
-        onCalendarYearMonthStripCommit({
-          year: stripYear,
-          x: Math.max(0, Math.round(x)),
-        });
-      }, 280);
-    },
-    [onCalendarYearMonthStripCommit]
-  );
-
   const flushYearStripScrollPersist = useCallback(() => {
     if (!onCalendarYearMonthStripCommit) return;
-    if (yearStripSaveTimerRef.current) {
-      clearTimeout(yearStripSaveTimerRef.current);
-      yearStripSaveTimerRef.current = null;
-    }
     onCalendarYearMonthStripCommit({
       year: stripScrollYearRef.current,
       x: Math.max(0, Math.round(latestYearStripXRef.current)),
@@ -491,10 +471,6 @@ export function CalendarView({
       if (bodyScrollSaveTimerRef.current) {
         clearTimeout(bodyScrollSaveTimerRef.current);
         bodyScrollSaveTimerRef.current = null;
-      }
-      if (yearStripSaveTimerRef.current) {
-        clearTimeout(yearStripSaveTimerRef.current);
-        yearStripSaveTimerRef.current = null;
       }
       if (onCalendarBodyScrollYCommit) {
         const mode = scopeModeRef.current;
@@ -559,11 +535,9 @@ export function CalendarView({
   const onYearMonthStripScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (scopeMode !== 'year') return;
-      const x = e.nativeEvent.contentOffset.x;
-      latestYearStripXRef.current = x;
-      scheduleYearStripScrollPersist(year, x);
+      latestYearStripXRef.current = e.nativeEvent.contentOffset.x;
     },
-    [scopeMode, year, scheduleYearStripScrollPersist]
+    [scopeMode]
   );
 
   const grid = useMemo(() => getMonthGrid(year, month), [year, month]);
@@ -615,7 +589,7 @@ export function CalendarView({
 
   useEffect(() => {
     if (scopeMode !== 'year') {
-      appliedDefaultYearStripForYearRef.current = null;
+      initializedYearStripForYearRef.current = null;
     }
   }, [scopeMode]);
 
@@ -627,10 +601,6 @@ export function CalendarView({
       const x = yearStripScrollToCenterMonth(monthIdx, yearMonthCardSize, vw);
       yearMonthStripScrollRef.current?.scrollTo({ x, animated });
       latestYearStripXRef.current = x;
-      if (yearStripSaveTimerRef.current) {
-        clearTimeout(yearStripSaveTimerRef.current);
-        yearStripSaveTimerRef.current = null;
-      }
       onCalendarYearMonthStripCommit?.({ year: calendarYear, x });
     },
     [yearMonthCardSize, yearStripViewportW, onCalendarYearMonthStripCommit]
@@ -638,39 +608,29 @@ export function CalendarView({
 
   useLayoutEffect(() => {
     if (scopeMode !== 'year' || !calendarScrollPrefsReady || yearStripViewportW < 8) return;
-    const vw = yearStripViewportW;
-    const cardSize = yearMonthCardSize;
-    const saved = calendarYearMonthStrip;
+    if (initializedYearStripForYearRef.current === year) return;
     const stripRef = yearMonthStripScrollRef.current;
     if (!stripRef) return;
 
-    if (saved?.year === year) {
-      appliedDefaultYearStripForYearRef.current = year;
-      const x = yearStripClampScroll(saved.x, cardSize, vw);
-      stripRef.scrollTo({ x, animated: false });
-      latestYearStripXRef.current = x;
-      return;
-    }
+    initializedYearStripForYearRef.current = year;
+    const vw = yearStripViewportW;
+    const cardSize = yearMonthCardSize;
+    const rawX =
+      latestYearStripXRef.current > 0
+        ? latestYearStripXRef.current
+        : (calendarYearMonthStrip?.x ?? 0);
+    if (rawX <= 0) return;
 
-    if (appliedDefaultYearStripForYearRef.current === year) {
-      return;
-    }
-    appliedDefaultYearStripForYearRef.current = year;
-    const today = new Date();
-    const centerMo = year === today.getFullYear() ? today.getMonth() : month;
-    const x = yearStripScrollToCenterMonth(centerMo, cardSize, vw);
+    const x = yearStripClampScrollX(rawX, cardSize, vw);
     stripRef.scrollTo({ x, animated: false });
     latestYearStripXRef.current = x;
-    onCalendarYearMonthStripCommit?.({ year, x });
   }, [
     scopeMode,
     year,
-    month,
     calendarScrollPrefsReady,
     calendarYearMonthStrip,
     yearMonthCardSize,
     yearStripViewportW,
-    onCalendarYearMonthStripCommit,
   ]);
 
   const goToToday = useCallback(() => {
@@ -708,11 +668,6 @@ export function CalendarView({
   const monthSelectedDayEvents = useMemo(
     () => eventsOverlappingCalendarDay(focusDate, calendarEvents),
     [focusDate, calendarEvents]
-  );
-
-  const yearSelectedMonthEvents = useMemo(
-    () => eventsOverlappingCalendarMonth(year, month, calendarEvents),
-    [year, month, calendarEvents]
   );
 
   const prevNav = () => {
@@ -1211,6 +1166,7 @@ export function CalendarView({
               onScrollEndDrag={flushBodyScrollPersist}
               onMomentumScrollEnd={flushBodyScrollPersist}
               scrollEventThrottle={64}
+              refreshControl={refreshControl}
             >
               <View style={styles.weekTimelineWithFrozenGutter}>
                 <View style={[styles.weekFrozenGutter, { width: TIME_GUTTER_W }]}>
@@ -1266,6 +1222,7 @@ export function CalendarView({
           onScrollEndDrag={flushBodyScrollPersist}
           onMomentumScrollEnd={flushBodyScrollPersist}
           scrollEventThrottle={64}
+          refreshControl={refreshControl}
         >
           {renderMonthNavigation()}
           <View style={styles.weekdayRowStickyWrap}>
@@ -1306,7 +1263,7 @@ export function CalendarView({
                             style={[
                               styles.monthCellInner,
                               selected && styles.cellSelected,
-                              today && !selected && styles.cellToday,
+                              today && styles.cellToday,
                             ]}
                             onPress={() => setFocusDate(cell)}
                             activeOpacity={0.7}
@@ -1314,8 +1271,7 @@ export function CalendarView({
                             <Text
                               style={[
                                 styles.cellText,
-                                selected && styles.cellTextSelected,
-                                today && !selected && styles.cellTextToday,
+                                today && styles.cellTextToday,
                               ]}
                             >
                               {cell.getDate()}
@@ -1335,13 +1291,12 @@ export function CalendarView({
                                       visual={visual}
                                       accentColor={p.dot}
                                       patternId={`month-${eventOccurrenceKey(ev)}`}
-                                      selected={selected}
                                       variant="month"
                                     />
                                   );
                                 })}
                                 {dayEvents.length > 2 && (
-                                  <Text style={[styles.dotMore, selected && styles.dotMoreSelected]}>
+                                  <Text style={styles.dotMore}>
                                     +{dayEvents.length - 2}
                                   </Text>
                                 )}
@@ -1384,7 +1339,7 @@ export function CalendarView({
                         onGroupPress={onSelectGroup}
                         isLast={i === monthSelectedDayEvents.length - 1}
                         meId={meId}
-                        users={[]}
+                        users={allUsers}
                       />
                     </View>
                   );
@@ -1405,6 +1360,7 @@ export function CalendarView({
           onScrollEndDrag={flushBodyScrollPersist}
           onMomentumScrollEnd={flushBodyScrollPersist}
           scrollEventThrottle={64}
+          refreshControl={refreshControl}
         >
           {renderMonthNavigation()}
           <ScrollView
@@ -1481,7 +1437,7 @@ export function CalendarView({
                                 styles.yearMiniCell,
                                 yearCellBox,
                                 selected && styles.yearMiniCellSelected,
-                                today && !selected && styles.yearMiniCellToday,
+                                today && styles.yearMiniCellToday,
                               ]}
                               onPress={() => setFocusDate(cell)}
                               activeOpacity={0.7}
@@ -1490,8 +1446,7 @@ export function CalendarView({
                                 style={[
                                   styles.yearMiniCellText,
                                   { fontSize: yearDayNumSize },
-                                  selected && styles.yearMiniCellTextSelected,
-                                  today && !selected && styles.yearMiniCellTextToday,
+                                  today && styles.yearMiniCellTextToday,
                                 ]}
                               >
                                 {cell.getDate()}
@@ -1511,18 +1466,12 @@ export function CalendarView({
                                         visual={visual}
                                         accentColor={p.dot}
                                         patternId={`year-${eventOccurrenceKey(ev)}`}
-                                        selected={selected}
                                         variant="year"
                                       />
                                     );
                                   })}
                                   {dayEvents.length > 2 ? (
-                                    <Text
-                                      style={[
-                                        styles.yearMiniDotMore,
-                                        selected && styles.yearMiniDotMoreSelected,
-                                      ]}
-                                    >
+                                    <Text style={styles.yearMiniDotMore}>
                                       +{dayEvents.length - 2}
                                     </Text>
                                   ) : null}
@@ -1541,13 +1490,17 @@ export function CalendarView({
 
           <View style={styles.yearMonthEventsSection}>
             <Text style={styles.monthDayEventsSectionTitle}>
-              {new Date(year, month, 1).toLocaleString('default', { month: 'long', year: 'numeric' })}
+              {focusDate.toLocaleDateString('default', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+              })}
             </Text>
-            {yearSelectedMonthEvents.length === 0 ? (
-              <Text style={styles.monthDayEventsEmpty}>No events this month</Text>
+            {monthSelectedDayEvents.length === 0 ? (
+              <Text style={styles.monthDayEventsEmpty}>No events this day</Text>
             ) : (
               <View style={styles.monthDayEventsList}>
-                {yearSelectedMonthEvents.map((ev, i) => {
+                {monthSelectedDayEvents.map((ev, i) => {
                   const group = groupsMap[ev.groupId];
                   const userColorHex =
                     groupColors[ev.groupId] ||
@@ -1560,9 +1513,9 @@ export function CalendarView({
                         groupColorHex={userColorHex}
                         onPress={() => onSelectEvent(ev)}
                         onGroupPress={onSelectGroup}
-                        isLast={i === yearSelectedMonthEvents.length - 1}
+                        isLast={i === monthSelectedDayEvents.length - 1}
                         meId={meId}
-                        users={[]}
+                        users={allUsers}
                       />
                     </View>
                   );
@@ -1967,14 +1920,13 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   cellSelected: {
-    backgroundColor: Colors.accent,
+    backgroundColor: CALENDAR_DAY_SELECTED_BG,
   },
   cellToday: {
     borderWidth: 1,
     borderColor: Colors.todayRed,
   },
   cellText: { fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
-  cellTextSelected: { color: Colors.accentFg },
   cellTextToday: { color: Colors.todayRed },
   dotWrap: {
     position: 'absolute',
@@ -1990,9 +1942,6 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     marginLeft: 1,
     lineHeight: 10,
-  },
-  dotMoreSelected: {
-    color: Colors.accentFg,
   },
   monthDayEventsSection: {
     paddingHorizontal: 12,
@@ -2098,7 +2047,7 @@ const styles = StyleSheet.create({
     margin: 0.5,
   },
   yearMiniCellSelected: {
-    backgroundColor: Colors.accent,
+    backgroundColor: CALENDAR_DAY_SELECTED_BG,
   },
   yearMiniCellToday: {
     borderWidth: 1,
@@ -2107,9 +2056,6 @@ const styles = StyleSheet.create({
   yearMiniCellText: {
     fontFamily: Fonts.medium,
     color: Colors.text,
-  },
-  yearMiniCellTextSelected: {
-    color: Colors.accentFg,
   },
   yearMiniCellTextToday: {
     color: Colors.todayRed,
@@ -2128,8 +2074,5 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.semiBold,
     color: Colors.textMuted,
     lineHeight: 8,
-  },
-  yearMiniDotMoreSelected: {
-    color: Colors.accentFg,
   },
 });

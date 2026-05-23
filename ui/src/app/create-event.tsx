@@ -10,9 +10,9 @@ import {
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
   TextInput,
+  ScrollView,
   StyleSheet,
   Alert,
   Platform,
@@ -22,7 +22,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
+import { useLocalSearchParams, type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, formatLocalDateInput } from '../utils/helpers';
 import {
@@ -33,6 +34,7 @@ import {
   isValidEventFormTimeRange,
 } from '../utils/datetimeUtc';
 import { NavBar, Field, Toggle, formSectionTitleStyle } from '../components/ui';
+import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
 import { RecurrenceField } from '../components/RecurrenceField';
 import { buildRecurrenceRule, defaultRecurrenceFormState, type RecurrenceFormState } from '../utils/recurrence';
@@ -394,7 +396,7 @@ export default function CreateEventScreen() {
       };
       
       await createEventMutation.mutateAsync(newEvent);
-      router.replace(withReturnTo(`/event/${newEvent.id}`, createReturnTo));
+      router.replace(`/(tabs)/events/${newEvent.id}` as Href);
     } catch {
       Alert.alert('Error', 'Failed to create event');
     }
@@ -767,7 +769,7 @@ export default function CreateEventScreen() {
           </TouchableOpacity>
         }
       />
-      <ScrollView
+      <KeyboardSafeScrollView
         ref={scrollRef}
         contentContainerStyle={{ padding: 20, paddingBottom: 100, width: '100%', alignSelf: 'stretch' }}
         showsVerticalScrollIndicator={false}
@@ -1100,7 +1102,7 @@ export default function CreateEventScreen() {
             </Text>
           )}
         </TouchableOpacity>
-      </ScrollView>
+      </KeyboardSafeScrollView>
 
       {Platform.OS === 'android' && showStartDatePicker && (
         <DateTimePicker

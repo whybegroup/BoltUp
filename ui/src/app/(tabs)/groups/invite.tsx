@@ -3,10 +3,13 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Linkin
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { useAppRouter as useRouter } from '../../../hooks/useAppRouter';
 import { Colors, Fonts, Radius } from '../../../constants/theme';
 import { NavBar } from '../../../components/ui';
+import { KeyboardSafeScrollView } from '../../../components/KeyboardSafeScrollView';
 import { useGroup } from '../../../hooks/api';
+import { usePullToRefresh } from '../../../hooks/usePullToRefresh';
 import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 
 export default function GroupInviteScreen() {
@@ -15,17 +18,14 @@ export default function GroupInviteScreen() {
   const { userId: currentUserId } = useCurrentUserContext();
   
   const groupId = Array.isArray(id) ? id[0] : id;
-
-  if (!groupId) {
-    return null;
-  }
-
-  const { data: group } = useGroup(groupId, currentUserId || '');
-
-  const [copied,    setCopied]    = useState(false);
+  const [copied, setCopied] = useState(false);
   const [newMember, setNewMember] = useState('');
+  const { data: group, refetch: refetchGroup } = useGroup(groupId ?? '', currentUserId || '', {
+    enabled: !!groupId,
+  });
+  const { refreshControl } = usePullToRefresh(refetchGroup);
 
-  if (!group) {
+  if (!groupId || !group) {
     return null;
   }
 
@@ -75,7 +75,10 @@ export default function GroupInviteScreen() {
     <SafeAreaView style={styles.safe}>
       <NavBar title="Invite People" onClose={handleBack} />
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+      <KeyboardSafeScrollView
+        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+        refreshControl={refreshControl}
+      >
 
         {/* Invite code */}
         <View style={styles.codeCard}>
@@ -147,7 +150,7 @@ export default function GroupInviteScreen() {
             </View>
           </View>
         )}
-      </ScrollView>
+      </KeyboardSafeScrollView>
     </SafeAreaView>
   );
 }

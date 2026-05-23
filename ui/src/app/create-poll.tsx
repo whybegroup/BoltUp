@@ -22,13 +22,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
+import { useLocalSearchParams, type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import Toast from 'react-native-toast-message';
 import { PollOptionInputKind, type Poll, type PollInput } from '@moijia/client';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, formatLocalDateInput } from '../utils/helpers';
 import { localWallDateTimeToUtcIso } from '../utils/datetimeUtc';
 import { NavBar, Field, Toggle, formSectionTitleStyle } from '../components/ui';
+import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
 import { useGroups, useCreatePoll, useAllGroupMemberColors, usePoll, useUpdatePoll } from '../hooks/api';
 import { uid } from '../utils/api-helpers';
@@ -603,7 +605,7 @@ export default function CreatePollScreen() {
             </TouchableOpacity>
           }
         />
-        <ScrollView
+        <KeyboardSafeScrollView
           contentContainerStyle={{ padding: 20, paddingBottom: 100, width: '100%', alignSelf: 'stretch' }}
           showsVerticalScrollIndicator={false}
         >
@@ -945,7 +947,7 @@ export default function CreatePollScreen() {
               </Text>
             )}
           </TouchableOpacity>
-        </ScrollView>
+        </KeyboardSafeScrollView>
         {Platform.OS === 'ios' && showDeadlineDatePicker ? (
           <Modal transparent animationType="fade" statusBarTranslucent visible>
             <View style={styles.iosPickerModalRoot}>

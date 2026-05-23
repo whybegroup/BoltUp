@@ -12,7 +12,6 @@ export function useGroupPosts(groupId: string, userId: string) {
     queryKey: queryKeys.groups.posts(groupId, userId),
     queryFn: () => GroupsService.getGroupPosts(groupId, userId),
     enabled: !!groupId && !!userId,
-    refetchInterval: 3000,
   });
 }
 
@@ -39,11 +38,19 @@ export function useUpdateGroupPost(groupId: string, userId: string) {
       postId,
       title,
       body,
+      mentionedUserIds,
     }: {
       postId: string;
       title: string;
       body: string;
-    }) => GroupsService.updateGroupPost(postId, { userId, title, body }),
+      mentionedUserIds?: string[];
+    }) =>
+      GroupsService.updateGroupPost(postId, {
+        userId,
+        title,
+        body,
+        ...(mentionedUserIds?.length ? { mentionedUserIds } : {}),
+      }),
     onSuccess: () => invalidateGroupPostQueries(queryClient, groupId, userId),
   });
 }
@@ -90,12 +97,19 @@ export function useUpdateGroupPostComment(groupId: string, userId: string) {
       commentId,
       body,
       parentCommentId,
+      mentionedUserIds,
     }: {
       commentId: string;
       body: string;
       parentCommentId: string | null;
+      mentionedUserIds?: string[];
     }) =>
-      GroupsService.updateGroupPostComment(commentId, { userId, body, parentCommentId }),
+      GroupsService.updateGroupPostComment(commentId, {
+        userId,
+        body,
+        parentCommentId,
+        ...(mentionedUserIds?.length ? { mentionedUserIds } : {}),
+      }),
     onSuccess: () => invalidateGroupPostQueries(queryClient, groupId, userId),
   });
 }

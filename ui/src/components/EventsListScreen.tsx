@@ -10,40 +10,37 @@ import {
   Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter, usePathname, type Href } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
-import { Colors, Fonts, Layout, Radius } from '../../constants/theme';
+import { usePathname, type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { Colors, Fonts, Radius } from '../constants/theme';
 import {
   getGroupColor,
   getDefaultGroupThemeFromName,
   formatFilterDatetimeTwelveHour,
-} from '../../utils/helpers';
-import { ListView } from '../../components/ListView';
-import { NotificationsPanelModal } from '../../components/NotificationsPanelModal';
-import { CalendarView } from '../../components/CalendarView';
-import { Pill } from '../../components/ui';
+} from '../utils/helpers';
+import { ListView } from './ListView';
+import { CalendarView } from './CalendarView';
+import { Pill } from './ui';
 import Svg, { Path } from 'react-native-svg';
 import {
   useEvents,
   useGroups,
   useNotifications,
   useAllGroupMemberColors,
-} from '../../hooks/api';
-import { queryKeys } from '../../config/queryClient';
-import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
-import { EventsCalendarGlyph } from '../../components/TabScreenIcons';
-import { CreateOrJoinButton } from '../../components/CreateOrJoinButton';
+} from '../hooks/api';
+import { useCurrentUserContext } from '../contexts/CurrentUserContext';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { useEventScopeNav } from './eventsScope/EventScopeNavContext';
 import {
   loadEventsScreenPrefs,
   saveEventsScreenPrefs,
   parseCalendarFocusIso,
   type EventsScreenPersistedV1,
   type CalendarScopeMode,
-} from '../../utils/eventsScreenPrefs';
+} from '../utils/eventsScreenPrefs';
 import { type EventDetailed } from '@moijia/client';
-import { withReturnTo } from '../../utils/navigationReturn';
+import { withReturnTo } from '../utils/navigationReturn';
 
 function formatLocalDateTime(d: Date): string {
   const y = d.getFullYear();
@@ -90,26 +87,28 @@ function mergeFilterDraftTimePart(base: Date, picked: Date): Date {
   return n;
 }
 
-export default function EventsScreen() {
+export function EventsListScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const queryClient = useQueryClient();
+  const { viewMode, setViewMode } = useEventScopeNav();
   const { userId: currentUserId } = useCurrentUserContext();
-  
-  const { data: events = [] } = useEvents({ userId: currentUserId ?? '', groupId: undefined });
-  const { data: allGroups = [] } = useGroups(currentUserId ?? '');
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
-  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
-  const groups = allGroups.filter(g => g.membershipStatus === 'member' || g.membershipStatus === 'admin');
 
-  // Manual polling for notifications every 5 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.notifications.user(currentUserId) });
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [queryClient]);
+  const { data: events = [], refetch: refetchEvents } = useEvents({
+    userId: currentUserId ?? '',
+    groupId: undefined,
+  });
+  const { data: allGroups = [], refetch: refetchGroups } = useGroups(currentUserId ?? '');
+  const { refetch: refetchNotifications } = useNotifications(currentUserId || '');
+  const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(
+    currentUserId || ''
+  );
+  const { refreshControl } = usePullToRefresh([
+    refetchEvents,
+    refetchGroups,
+    refetchNotifications,
+    refetchGroupColors,
+  ]);
+  const groups = allGroups.filter(g => g.membershipStatus === 'member' || g.membershipStatus === 'admin');
   
   // Filter state
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
@@ -176,9 +175,6 @@ export default function EventsScreen() {
     if (Number.isNaN(dt.getTime())) return null;
     return dt;
   };
-  const [showNotifs, setShowNotifs] = useState(false);
-
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
   const [calendarScopeMode, setCalendarScopeMode] = useState<CalendarScopeMode>('week');
   const [calendarFocusDate, setCalendarFocusDate] = useState(() => new Date());
   const [calendarBodyScrollY, setCalendarBodyScrollY] = useState<
@@ -188,8 +184,6 @@ export default function EventsScreen() {
     { year: number; x: number } | undefined
   >(undefined);
   const [prefsReady, setPrefsReady] = useState(false);
-  const unread = notifs.filter(n => !n.read).length;
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -217,7 +211,7 @@ export default function EventsScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setViewMode]);
 
   useEffect(() => {
     if (!prefsReady) return;
@@ -362,81 +356,7 @@ export default function EventsScreen() {
   const hasFilters = !!(selectedGroupIds.length || filterRsvp.length || filterNeeds);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTitleRow}>
-          <EventsCalendarGlyph size={22} color={Colors.text} />
-          <Text style={styles.pageTitle}>Events</Text>
-        </View>
-
-        {/* Actions */}
-        <View style={styles.actions}>
-          {/* View toggle */}
-          <View style={styles.viewToggle}>
-            <TouchableOpacity
-              style={[
-                styles.viewBtn,
-                styles.viewToggleSegLeft,
-                viewMode === 'list' && styles.viewBtnActive,
-              ]}
-              onPress={() => setViewMode('list')}
-              activeOpacity={0.7}
-            >
-              <Svg
-                width={18}
-                height={18}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={viewMode === 'list' ? Colors.text : Colors.textMuted}
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <Path d="M4 7h16M4 12h16M4 17h16" />
-              </Svg>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.viewBtn,
-                styles.viewToggleSegRight,
-                viewMode === 'calendar' && styles.viewBtnActive,
-              ]}
-              onPress={() => setViewMode('calendar')}
-              activeOpacity={0.7}
-            >
-              <Svg
-                width={18}
-                height={18}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={viewMode === 'calendar' ? Colors.text : Colors.textMuted}
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <Path d="M8 2v4M16 2v4M3 10h18" />
-                <Path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" strokeLinejoin="round" />
-              </Svg>
-            </TouchableOpacity>
-          </View>
-
-          <CreateOrJoinButton userId={currentUserId} eventEligibleGroupCount={groups.length} />
-
-          {/* Bell */}
-          <TouchableOpacity
-            onPress={() => setShowNotifs(p => !p)}
-            style={[styles.iconBtn, showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg }]}
-          >
-            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <Path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-            </Svg>
-            {unread > 0 && <View style={styles.bellDot} />}
-          </TouchableOpacity>
-        </View>
-      </View>
-
+    <View style={styles.safe}>
       {/* Filters container */}
       <View style={styles.filtersContainer}>
         {/* Group filter pills */}
@@ -673,22 +593,29 @@ export default function EventsScreen() {
       <View style={styles.eventsContent}>
         {viewMode === 'list' ? (
           filtered.length === 0 ? (
-            <View style={styles.emptyState}>
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.emptyState}
+              refreshControl={refreshControl}
+            >
               <Ionicons name="calendar-outline" size={56} color={Colors.textMuted} style={styles.emptyGlyph} />
               <Text style={styles.emptyTitle}>No events</Text>
               <Text style={styles.emptyDesc}>
                 {hasFilters ? 'Try adjusting your filters' : 'Create an event to get started'}
               </Text>
-            </View>
+            </ScrollView>
           ) : (
             <ListView
               events={filtered}
               groups={groups}
               groupColors={groupColors}
+              refreshControl={refreshControl}
               onSelect={(ev) =>
-                router.push(withReturnTo(`/event/${(ev as EventDetailed).id}`, pathname))
+                router.push(`/(tabs)/events/${(ev as EventDetailed).id}` as Href)
               }
-              onSelectGroup={groupId => router.push(withReturnTo(`/(tabs)/groups/${groupId}`, pathname))}
+              onSelectGroup={(groupId) =>
+                router.push(withReturnTo(`/(tabs)/groups/${groupId}`, pathname))
+              }
             />
           )
         ) : (
@@ -697,10 +624,13 @@ export default function EventsScreen() {
             filterRsvp={filterRsvp}
             groups={groups}
             groupColors={groupColors}
+            refreshControl={refreshControl}
             onSelectEvent={(ev) =>
-              router.push(withReturnTo(`/event/${(ev as EventDetailed).id}`, pathname))
+              router.push(`/(tabs)/events/${(ev as EventDetailed).id}` as Href)
             }
-            onSelectGroup={groupId => router.push(withReturnTo(`/(tabs)/groups/${groupId}`, pathname))}
+            onSelectGroup={(groupId) =>
+              router.push(withReturnTo(`/(tabs)/groups/${groupId}`, pathname))
+            }
             calendarFocusDate={calendarFocusDate}
             onCalendarFocusDateChange={setCalendarFocusDate}
             calendarScopeMode={calendarScopeMode}
@@ -916,27 +846,13 @@ export default function EventsScreen() {
         </View>
       </Modal>
 
-      <NotificationsPanelModal
-        visible={showNotifs}
-        onClose={() => setShowNotifs(false)}
-        userId={currentUserId || ''}
-        notifications={notifs}
-        isLoading={notifsLoading}
-        groups={groups.map((g) => ({ id: g.id, name: g.name }))}
-        groupColors={groupColors}
-      />
-
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe:        { flex: 1, backgroundColor: Colors.bg },
-  header:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: Layout.tabHeaderMinHeight, paddingHorizontal: 20, paddingVertical: 16, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pageTitle:   { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text },
   filtersContainer: { backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  actions:     { flexDirection: 'row', alignItems: 'center', gap: 8 },
   viewToggle:  {
     flexDirection: 'row',
     alignItems: 'stretch',

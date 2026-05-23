@@ -2,7 +2,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import { appToastConfig } from '../config/appToastConfig';
 
-const EXTRA_BOTTOM = 20;
+/** Gap below the status bar / notch. */
+const TOP_GAP = 12;
 
 /**
  * Mount once in root layout and again inside modal chrome so `Toast.show` uses the
@@ -10,13 +11,13 @@ const EXTRA_BOTTOM = 20;
  */
 export function AppToastMount() {
   const insets = useSafeAreaInsets();
-  const bottomOffset = Math.max(insets.bottom, 12) + EXTRA_BOTTOM;
+  const topOffset = Math.max(insets.top, 8) + TOP_GAP;
 
   return (
     <Toast
       config={appToastConfig}
-      position="bottom"
-      bottomOffset={bottomOffset}
+      position="top"
+      topOffset={topOffset}
     />
   );
 }

@@ -6,13 +6,11 @@ export function useNotifications(userId?: string) {
   return useQuery({
     queryKey: userId ? queryKeys.notifications.user(userId) : queryKeys.notifications.all,
     queryFn: () => NotificationsService.getNotifications(userId),
-    staleTime: 0, // Always consider data stale
-    gcTime: 0, // Don't cache
-    refetchInterval: 3000, // Poll every 3 seconds
+    staleTime: 0,
+    gcTime: 0,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     refetchOnReconnect: true,
-    refetchIntervalInBackground: false,
   });
 }
 

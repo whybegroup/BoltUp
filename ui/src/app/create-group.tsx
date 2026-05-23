@@ -12,12 +12,15 @@ import {
   Platform,
   Modal,
 } from 'react-native';
-import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
+import { useLocalSearchParams, type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { useGuardedPress } from '../hooks/useGuardedPress';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../utils/helpers';
 import { NavBar, formSectionTitleStyle, Avatar, Toggle } from '../components/ui';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
+import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { useCreateGroup } from '../hooks/api/useGroups';
 import { useAuth } from '../contexts/AuthContext';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
@@ -159,7 +162,9 @@ export default function CreateGroupScreen() {
     ]);
   }, [createFormDirty, handleBack]);
 
-  const handleCreate = async () => {
+  const guardedRequestClose = useGuardedPress(requestClose);
+
+  const handleCreate = useGuardedPress(async () => {
     if (!valid || !user) return;
     const actorId = (currentUserId ?? user.uid ?? '').trim();
     if (!actorId) {
@@ -202,7 +207,7 @@ export default function CreateGroupScreen() {
       }
       Alert.alert('Error', message);
     }
-  };
+  }, { disabled: !valid || createGroup.isPending || !user });
 
   const coverPhotosForDisplay = draftCoverPhotos;
   const themeName = draftName.trim() || 'Group';
@@ -278,10 +283,10 @@ export default function CreateGroupScreen() {
 
   return (
     <>
-      <EventFormPopoverChrome onClose={requestClose}>
+      <EventFormPopoverChrome onClose={guardedRequestClose}>
         <View style={styles.safe}>
           <NavBar
-            onClose={requestClose}
+            onClose={guardedRequestClose}
             right={
               <View style={styles.navEditActions}>
                 <TouchableOpacity
@@ -314,7 +319,7 @@ export default function CreateGroupScreen() {
             }
           />
 
-          <ScrollView
+          <KeyboardSafeScrollView
             style={styles.groupScrollView}
             contentContainerStyle={styles.groupScrollContent}
             showsVerticalScrollIndicator={false}
@@ -402,7 +407,7 @@ export default function CreateGroupScreen() {
             </View>
 
             <View style={{ height: 24 }} />
-          </ScrollView>
+          </KeyboardSafeScrollView>
         </View>
       </EventFormPopoverChrome>
 

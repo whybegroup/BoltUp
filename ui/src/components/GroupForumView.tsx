@@ -15,21 +15,20 @@ import {
   Dimensions,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, type Href } from 'expo-router';
+import { type Href } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import { COMMENT_REACTION_EMOJIS } from '../constants/commentReactionEmojis';
 import { DEFAULT_COMMENT_QUICK_REACTIONS_LIST } from '../utils/commentQuickReactionsPrefs';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import { useCommentQuickReactions } from '../hooks/useCommentQuickReactions';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import {
   useGroup,
-  useGroups,
-  useNotifications,
-  useAllGroupMemberColors,
   useGroupPosts,
   useUsers,
   useCreateGroupPost,
@@ -41,11 +40,6 @@ import {
   useUpdateGroupPostComment,
   useDeleteGroupPostComment,
 } from '../hooks/api';
-import { GroupsTopHeader } from './GroupsTopHeader';
-import { GroupsBreadcrumbTrail, type BreadcrumbSegment } from './GroupsBreadcrumbTrail';
-import { useGroupsActivitySectionSwitch } from './GroupsActivitySectionSwitch';
-import { useGroupsBreadcrumbGroupSwitch } from './groupsBreadcrumbDropdown';
-import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { EmojiBar } from './EmojiBar';
 import { UserAvatar } from './UserAvatar';
 import {
@@ -56,7 +50,14 @@ import {
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { AddImageButton } from './AddImageButton';
-import { type GroupPost, type GroupPostComment } from '@moijia/client';
+import { type GroupPost, type GroupPostComment, type GroupScoped } from '@moijia/client';
+import { CommentMentionInput } from './CommentMentionInput';
+import { MentionText } from './MentionText';
+import {
+  computeMentionUserIdsForPost,
+  type MentionMemberRow,
+} from '../utils/mentionUtils';
+import { createScrollAboveKeyboardOnFocus } from '../utils/scrollInputAboveKeyboard';
 import {
   pickAndUploadCoverPhoto,
   takeAndUploadCoverPhoto,
@@ -81,8 +82,10 @@ import {
 
 export type GroupForumViewProps = {
   groupId: string;
-  orderedSwitcherGroups?: { id: string; name: string }[];
-  onSwitchGroup?: (groupId: string) => void;
+  /** Deep-link from mention notification — scroll to this post. */
+  focusPostId?: string;
+  /** When set with focusPostId, expand comments and highlight this comment. */
+  focusCommentId?: string;
 };
 
 type ForumPostImageLightboxState = {
@@ -261,15 +264,37 @@ function postEditDiffersFromPublished(
   return merged !== original;
 }
 
-export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGroup }: GroupForumViewProps) {
+export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupForumViewProps) {
   const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
   const scrollRef = useRef<ScrollView | null>(null);
   const scrollViewportYRef = useRef(0);
   const scrollOffsetYRef = useRef(0);
+  const newPostComposerRef = useRef<View>(null);
+  const editPostComposerRef = useRef<View>(null);
+  const scrollNewPostComposerIntoView = useMemo(
+    () =>
+      createScrollAboveKeyboardOnFocus({
+        scrollRef,
+        scrollOffsetYRef,
+        targetRef: newPostComposerRef,
+      }),
+    []
+  );
+  const scrollEditPostComposerIntoView = useMemo(
+    () =>
+      createScrollAboveKeyboardOnFocus({
+        scrollRef,
+        scrollOffsetYRef,
+        targetRef: editPostComposerRef,
+      }),
+    []
+  );
   const postTopByIdRef = useRef<Record<string, number>>({});
   /** After hiding the top composer, scroll once the edited post has laid out at its new offset. */
   const pendingScrollToEditPostIdRef = useRef<string | null>(null);
+  /** Scroll to post from mention notification deep link. */
+  const pendingScrollToFocusPostIdRef = useRef<string | null>(null);
   /** Persisted edit drafts per post id (survives reloads). */
   const postEditsRef = useRef<ForumGroupDraftV1['postEdits']>({});
   const editingPostIdRef = useRef<string | null>(null);
@@ -277,7 +302,6 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
   /** Bumped whenever `postEditsRef` changes so draft badges can recompute (refs don’t rerender). */
   const [draftBadgeTick, setDraftBadgeTick] = useState(0);
   const bumpDraftBadgeTick = useCallback(() => setDraftBadgeTick((n) => n + 1), []);
-  const [showNotifs, setShowNotifs] = useState(false);
   /** Inline edit draft when `editingPostId` is set. */
   const [postBody, setPostBody] = useState('');
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -347,12 +371,13 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
   /** Draft reply parent while editing; `null` = top-level comment. */
   const [commentEditParentId, setCommentEditParentId] = useState<string | null>(null);
 
-  const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
-  const { data: allGroupsForChrome = [] } = useGroups(currentUserId ?? '', true);
-  const { data: allUsers = [] } = useUsers();
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
-  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
-  const { data: posts = [], isLoading: postsLoading } = useGroupPosts(groupId, currentUserId ?? '');
+  const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
+  const { data: allUsers = [], refetch: refetchUsers } = useUsers();
+  const { data: posts = [], isLoading: postsLoading, refetch: refetchPosts } = useGroupPosts(
+    groupId,
+    currentUserId ?? ''
+  );
+  const { refreshControl } = usePullToRefresh([refetchGroup, refetchUsers, refetchPosts]);
   const createPostMutation = useCreateGroupPost(groupId, currentUserId ?? '');
   const updatePostMutation = useUpdateGroupPost(groupId, currentUserId ?? '');
   const deletePostMutation = useDeleteGroupPost(groupId, currentUserId ?? '');
@@ -363,41 +388,6 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
   const deleteCommentMutation = useDeleteGroupPostComment(groupId, currentUserId ?? '');
   const { data: commentQuickReactions = [...DEFAULT_COMMENT_QUICK_REACTIONS_LIST] } =
     useCommentQuickReactions(currentUserId);
-
-  const { chevronProps: groupChevronProps, modal: groupSwitchModal } = useGroupsBreadcrumbGroupSwitch(
-    group ? { id: groupId, name: group.name } : null,
-    orderedSwitcherGroups,
-    onSwitchGroup
-  );
-
-  const goToOverview = useCallback(() => {
-    router.replace('/(tabs)/groups');
-  }, [router]);
-
-  const { segment: activitySectionSegment, modal: activitySectionSwitchModal } =
-    useGroupsActivitySectionSwitch(groupId, 'posts');
-
-  const breadcrumbSegments: BreadcrumbSegment[] = useMemo(() => {
-    if (!group) return [{ label: 'All Groups', onPress: goToOverview }];
-    return [
-      { label: 'All Groups', onPress: goToOverview },
-      {
-        label: group.name,
-        onPress: () => router.push(`/(tabs)/groups/${groupId}` as Href),
-        ...groupChevronProps,
-      },
-      activitySectionSegment,
-    ];
-  }, [group, goToOverview, groupId, router, activitySectionSegment, groupChevronProps]);
-
-  const eventEligibleGroupCount = useMemo(
-    () =>
-      allGroupsForChrome.filter(
-        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
-      ).length,
-    [allGroupsForChrome]
-  );
-  const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
 
   useEffect(() => {
     if (isError || (group && group.membershipStatus === 'none')) {
@@ -410,6 +400,14 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
       router.replace(`/(tabs)/groups/${groupId}` as Href);
     }
   }, [group?.membershipStatus, groupId, router]);
+
+  useEffect(() => {
+    if (!focusPostId) return;
+    pendingScrollToFocusPostIdRef.current = focusPostId;
+    if (focusCommentId) {
+      setExpandedCommentsByPost((prev) => ({ ...prev, [focusPostId]: true }));
+    }
+  }, [focusPostId, focusCommentId]);
 
   useEffect(() => {
     editingPostIdRef.current = editingPostId;
@@ -887,6 +885,26 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
   );
 
   const usersById = useMemo(() => new Map(allUsers.map((u) => [u.id, u])), [allUsers]);
+
+  const mentionMemberRows: MentionMemberRow[] = useMemo(() => {
+    const g = group as GroupScoped | undefined;
+    const ids = g?.memberIds;
+    if (!ids?.length) return [];
+    return ids.map((uid) => {
+      const u = usersById.get(uid);
+      return {
+        userId: uid,
+        displayName: u?.displayName || u?.name || 'Member',
+        name: u?.name || '',
+      };
+    });
+  }, [group, usersById]);
+
+  const mentionMembersForInput = useMemo(
+    () => mentionMemberRows.map((m) => ({ id: m.userId, displayName: m.displayName, name: m.name })),
+    [mentionMemberRows]
+  );
+
   const getUserDisplayName = useCallback(
     (userId: string) => {
       const user = usersById.get(userId);
@@ -1041,11 +1059,13 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
         .map((line) => line.trim())
         .find(Boolean)
         ?.slice(0, 80) || 'Post';
+    const mids = computeMentionUserIdsForPost(newPostBody, mentionMemberRows, currentUserId);
     await createPostMutation.mutateAsync({
       id: forumId('post'),
       userId: currentUserId,
       title,
       body,
+      ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
     });
     setNewPostBody('');
     setNewPostPhotoUrls([]);
@@ -1060,6 +1080,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
     createPostMutation,
     currentUserId,
     groupId,
+    mentionMemberRows,
     newPostBody,
     newPostPhotoUrls,
     newPostFileAttachments,
@@ -1078,7 +1099,13 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
         ?.slice(0, 80) || 'Post';
     try {
       const pid = editingPostId;
-      await updatePostMutation.mutateAsync({ postId: pid, title, body });
+      const mids = computeMentionUserIdsForPost(postBody, mentionMemberRows, currentUserId);
+      await updatePostMutation.mutateAsync({
+        postId: pid,
+        title,
+        body,
+        ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
+      });
       delete postEditsRef.current[pid];
       bumpDraftBadgeTick();
       setEditingPostId(null);
@@ -1110,6 +1137,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
     currentUserId,
     editingPostId,
     groupId,
+    mentionMemberRows,
     newPostBody,
     newPostPhotoUrls,
     newPostFileAttachments,
@@ -1273,6 +1301,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
         }
         const body = merged.trim();
         if (!body) return;
+        const mids = computeMentionUserIdsForPost(raw, mentionMemberRows, currentUserId);
         await createCommentMutation.mutateAsync({
           postId,
           input: {
@@ -1280,6 +1309,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
             userId: currentUserId,
             body,
             parentCommentId: replyTargetByPost[postId] ?? undefined,
+            ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
           },
         });
         setDraftComments((prev) => ({ ...prev, [postId]: '' }));
@@ -1298,6 +1328,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
       draftCommentPendingFilesByPost,
       draftCommentPhotoDraftsByPost,
       draftComments,
+      mentionMemberRows,
       replyTargetByPost,
       uploadingCommentPhotoPostId,
     ]
@@ -1389,10 +1420,12 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
       return;
     }
     try {
+      const mids = computeMentionUserIdsForPost(commentEditText, mentionMemberRows, currentUserId);
       await updateCommentMutation.mutateAsync({
         commentId: commentEdit.commentId,
         body,
         parentCommentId: commentEditParentId,
+        ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
       });
       cancelEditComment();
     } catch {
@@ -1404,6 +1437,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
     commentEdit,
     commentEditText,
     commentEditParentId,
+    mentionMemberRows,
     updateCommentMutation,
     cancelEditComment,
   ]);
@@ -1519,6 +1553,10 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
     const onChangeText = isNew ? handleNewPostChangeText : handleEditPostChangeText;
     const submitBusy = isNew ? createPostMutation.isPending : updatePostMutation.isPending;
     const canSubmit = body.trim().length > 0 || photos.length > 0 || fileAttachments.length > 0;
+    const postComposerRef = isNew ? newPostComposerRef : editPostComposerRef;
+    const scrollPostComposerIntoView = isNew
+      ? scrollNewPostComposerIntoView
+      : scrollEditPostComposerIntoView;
 
     return (
       <>
@@ -1556,17 +1594,23 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
             </View>
           </View>
         ) : null}
-        <TextInput
-          value={body}
-          onChangeText={onChangeText}
-          selection={selection}
-          onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
-          placeholder="Write your post - use markdown for advanced formatting"
-          placeholderTextColor={Colors.textMuted}
-          style={styles.bodyInput}
-          multiline
-          textAlignVertical="top"
-        />
+        <View ref={postComposerRef} collapsable={false}>
+          <CommentMentionInput
+            value={body}
+            onChangeText={onChangeText}
+            onFocus={scrollPostComposerIntoView}
+            members={mentionMembersForInput}
+            currentUserId={currentUserId}
+            selection={selection}
+            onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
+            placeholder="Write your post - use markdown for advanced formatting"
+            placeholderTextColor={Colors.textMuted}
+            style={styles.bodyInput}
+            multiline
+            textAlignVertical="top"
+            wrapperStyle={styles.postMentionInputWrap}
+          />
+        </View>
         {photos.length > 0 ? (
           <ScrollView
             horizontal
@@ -1667,19 +1711,8 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
   if (!group) return null;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <GroupsTopHeader
-        userId={currentUserId}
-        eventEligibleGroupCount={eventEligibleGroupCount}
-        showNotifs={showNotifs}
-        onToggleNotifs={() => setShowNotifs((p) => !p)}
-        unreadCount={unreadNotifCount}
-      />
-      <GroupsBreadcrumbTrail segments={breadcrumbSegments} />
-      {activitySectionSwitchModal}
-      {groupSwitchModal}
-
-      <ScrollView
+    <View style={styles.page}>
+      <KeyboardSafeScrollView
         ref={(node) => {
           scrollRef.current = node;
           if (!node) return;
@@ -1696,6 +1729,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
           scrollOffsetYRef.current = e.nativeEvent.contentOffset.y;
         }}
         scrollEventThrottle={16}
+        refreshControl={refreshControl}
       >
         <View style={styles.card}>
           <View style={styles.cardPad}>{forumComposerFields('new')}</View>
@@ -1726,6 +1760,12 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
                 postTopByIdRef.current[post.id] = top;
                 if (pendingScrollToEditPostIdRef.current === post.id) {
                   pendingScrollToEditPostIdRef.current = null;
+                  requestAnimationFrame(() => {
+                    scrollRef.current?.scrollTo({ y: Math.max(0, top - 12), animated: true });
+                  });
+                }
+                if (pendingScrollToFocusPostIdRef.current === post.id) {
+                  pendingScrollToFocusPostIdRef.current = null;
                   requestAnimationFrame(() => {
                     scrollRef.current?.scrollTo({ y: Math.max(0, top - 12), animated: true });
                   });
@@ -1956,6 +1996,8 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
                 {expandedCommentsByPost[post.id] ? (
                   <ThreadedCommentsSection
                     comments={mapGroupCommentsToThread(post.comments)}
+                    mentionMembers={mentionMembersForInput}
+                    focusCommentId={focusPostId === post.id ? focusCommentId : undefined}
                     ancestorTopPx={postTopByIdRef.current[post.id] ?? 0}
                     scrollRef={scrollRef}
                     scrollViewportYRef={scrollViewportYRef}
@@ -2059,7 +2101,7 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
             </View>
           ))
         )}
-      </ScrollView>
+      </KeyboardSafeScrollView>
 
       {postMenuTarget && postMenuPopoverLayout ? (
         <Modal
@@ -2113,8 +2155,6 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
           </View>
         </Modal>
       ) : null}
-
-      {groupSwitchModal}
 
       {reactionQuickPickerTarget && currentUserId ? (
         <Modal
@@ -2338,21 +2378,12 @@ export function GroupForumView({ groupId, orderedSwitcherGroups = [], onSwitchGr
         </Modal>
       ) : null}
 
-      <NotificationsPanelModal
-        visible={showNotifs}
-        onClose={() => setShowNotifs(false)}
-        userId={currentUserId || ''}
-        notifications={notifs}
-        isLoading={notifsLoading}
-        groups={allGroupsForChrome.map((g) => ({ id: g.id, name: g.name }))}
-        groupColors={groupColors}
-      />
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bg },
+  page: { flex: 1, backgroundColor: Colors.bg },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 110 },
   sectionLabel: {
@@ -3162,6 +3193,8 @@ const styles = StyleSheet.create({
   },
   commentMeta: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 4 },
   commentBody: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.text, lineHeight: 20 },
+  postMentionInputWrap: { alignSelf: 'stretch', width: '100%' },
+  mentionInBody: { color: Colors.accent, fontFamily: Fonts.semiBold },
 });
 
 type ForumPostMarkdownBodyProps = {
@@ -3188,6 +3221,17 @@ const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
           {children}
         </View>
       ),
+      text: (node: any, _children: any, _parent: any, mdStyles: any, inheritedStyles: Record<string, unknown> = {}) => {
+        const content = typeof node.content === 'string' ? node.content : '';
+        return (
+          <MentionText
+            key={node.key}
+            text={content}
+            style={[inheritedStyles, mdStyles.text]}
+            mentionStyle={styles.mentionInBody}
+          />
+        );
+      },
       image: (node: any, _children: any, _parent: any, _mdStyles: any) => {
         const rawSrc = node.attributes?.src;
         const src = typeof rawSrc === 'string' ? rawSrc.trim() : '';

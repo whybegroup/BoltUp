@@ -6,21 +6,19 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  RefreshControl,
   Modal,
   Pressable,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, usePathname } from 'expo-router';
+import { usePathname } from 'expo-router';
+import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import type { Poll } from '@moijia/client';
-import { Colors, Fonts, Layout, Radius } from '../constants/theme';
+import { Colors, Fonts, Radius } from '../constants/theme';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import {
   useAllGroupMemberColors,
   useGroups,
-  useNotifications,
   usePolls,
 } from '../hooks/api';
 import {
@@ -28,11 +26,9 @@ import {
   getGroupColor,
   formatFilterDatetimeTwelveHour,
 } from '../utils/helpers';
-import { withReturnTo } from '../utils/navigationReturn';
 import { loadPollsScreenPrefs, savePollsScreenPrefs } from '../utils/pollsScreenPrefs';
-import { CreateOrJoinButton } from './CreateOrJoinButton';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { Pill } from './ui';
-import { NotificationsPanelModal } from './NotificationsPanelModal';
 import { PollRow, getDeadlineUrgency } from './PollRow';
 import Svg, { Path } from 'react-native-svg';
 
@@ -107,23 +103,12 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
   const pathname = usePathname();
   const { userId: currentUserId } = useCurrentUserContext();
   const isGroupEmbedded = !!(embedded && lockedGroupId);
-  const { data: polls = [], refetch: refetchPolls } = usePolls(
-    currentUserId ?? '',
-    isGroupEmbedded ? { refetchIntervalMs: 3000 } : undefined
+  const { data: polls = [], refetch: refetchPolls } = usePolls(currentUserId ?? '');
+  const { data: allGroups = [], refetch: refetchGroups } = useGroups(currentUserId ?? '');
+  const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(
+    currentUserId ?? ''
   );
-  const [pullRefreshing, setPullRefreshing] = useState(false);
-  const onPollsPullRefresh = useCallback(async () => {
-    setPullRefreshing(true);
-    try {
-      await refetchPolls();
-    } finally {
-      setPullRefreshing(false);
-    }
-  }, [refetchPolls]);
-  const { data: allGroups = [] } = useGroups(currentUserId ?? '');
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
-  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId ?? '');
-  const [showNotifs, setShowNotifs] = useState(false);
+  const { refreshControl } = usePullToRefresh([refetchPolls, refetchGroups, refetchGroupColors]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>(() =>
     lockedGroupId ? [lockedGroupId] : []
   );
@@ -319,10 +304,6 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
   }, []);
   const listNow = useMemo(() => new Date(), [nowTick]);
 
-  const eventEligibleGroupCount = groups.filter(
-    (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin'
-  ).length;
-  const unread = notifs.filter((n) => !n.read).length;
   const hasFilters = !!(
     (!lockedGroupId && selectedGroupIds.length > 0) ||
     startMode !== 'now' ||
@@ -331,40 +312,6 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
 
   const inner = (
     <>
-      {!embedded ? (
-        <View style={styles.header}>
-          <View style={styles.headerTitleRow}>
-            <Ionicons name="bar-chart-outline" size={22} color={Colors.text} />
-            <Text style={styles.title}>Polls</Text>
-          </View>
-          <View style={styles.headerActions}>
-            <CreateOrJoinButton userId={currentUserId} eventEligibleGroupCount={eventEligibleGroupCount} />
-            <TouchableOpacity
-              onPress={() => setShowNotifs((p) => !p)}
-              style={[
-                styles.iconBtn,
-                showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg },
-              ]}
-            >
-              <Svg
-                width={16}
-                height={16}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={Colors.text}
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </Svg>
-              {unread > 0 && <View style={styles.bellDot} />}
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
-
       <View style={styles.filtersContainer}>
         {!lockedGroupId ? (
           <ScrollView
@@ -568,16 +515,7 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
       <ScrollView
         style={styles.pollsScroll}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 100 }}
-        refreshControl={
-          isGroupEmbedded ? (
-            <RefreshControl
-              refreshing={pullRefreshing}
-              onRefresh={onPollsPullRefresh}
-              tintColor={Colors.textSub}
-              colors={[Colors.textSub]}
-            />
-          ) : undefined
-        }
+        refreshControl={refreshControl}
       >
         {sortedPolls.length === 0 ? (
           <View style={styles.emptyState}>
@@ -598,11 +536,15 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
                   showGroup={!lockedGroupId}
                   urgency={getDeadlineUrgency(poll, listNow)}
                   onPress={() =>
-                      router.push(
-                        withReturnTo(`/(tabs)/groups/${poll.groupId}/polls/${poll.id}`, pathname)
-                      )
-                    }
-                  onGroupPress={(gid) => router.push(withReturnTo(`/(tabs)/groups/${gid}`, pathname))}
+                    router.push(
+                      (embedded
+                        ? `/(tabs)/groups/${poll.groupId}/polls/${poll.id}`
+                        : `/(tabs)/polls/${poll.id}`) as import('expo-router').Href
+                    )
+                  }
+                  onGroupPress={(gid) =>
+                    router.push(`/(tabs)/groups/${gid}` as import('expo-router').Href)
+                  }
                   isLast={i === sortedPolls.length - 1}
                 />
               </View>
@@ -812,27 +754,10 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
         </View>
       </Modal>
 
-      {!embedded ? (
-        <NotificationsPanelModal
-          visible={showNotifs}
-          onClose={() => setShowNotifs(false)}
-          userId={currentUserId || ''}
-          notifications={notifs}
-          isLoading={notifsLoading}
-          groups={groups.map((g) => ({ id: g.id, name: g.name }))}
-          groupColors={groupColors}
-        />
-      ) : null}
     </>
   );
 
-  return embedded ? (
-    <View style={[styles.safe, styles.embeddedRoot]}>{inner}</View>
-  ) : (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      {inner}
-    </SafeAreaView>
-  );
+  return <View style={[styles.safe, embedded && styles.embeddedRoot]}>{inner}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -846,41 +771,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     overflow: 'hidden',
     marginBottom: 0.5,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: Layout.tabHeaderMinHeight,
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  title: { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
-  iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellDot: {
-    position: 'absolute',
-    top: 1,
-    right: 1,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.notGoing,
-    borderWidth: 2,
-    borderColor: Colors.surface,
   },
   filtersContainer: {
     borderBottomWidth: 1,

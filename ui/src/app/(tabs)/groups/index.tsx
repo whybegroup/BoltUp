@@ -14,28 +14,28 @@ import {
   Alert,
   Platform,
   Pressable,
+  ScrollView,
 } from 'react-native';
+import { Gesture } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, usePathname } from 'expo-router';
-import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
-import { withReturnTo } from '../../../utils/navigationReturn';
+import { useAppRouter as useRouter } from '../../../hooks/useAppRouter';
+import { runOnJS } from 'react-native-reanimated';
+import ReorderableList, {
+  reorderItems,
+  useIsActive,
+  useReorderableDrag,
+  type ReorderableListRenderItemInfo,
+} from 'react-native-reorderable-list';
 import { Colors, Fonts, Radius, Shadows } from '../../../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../../../utils/helpers';
-import {
-  useEvents,
-  useAllGroupMemberColors,
-  useNotifications,
-  useRecoverGroup,
-  useUpdateGroupOrder,
-} from '../../../hooks/api';
+import { useEvents, useAllGroupMemberColors, useRecoverGroup, useUpdateGroupOrder } from '../../../hooks/api';
 import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 import { GroupAvatar } from '../../../components/GroupAvatar';
-import { NotificationsPanelModal } from '../../../components/NotificationsPanelModal';
-import { GroupsTopHeader } from '../../../components/GroupsTopHeader';
-import { GroupsBreadcrumbTrail } from '../../../components/GroupsBreadcrumbTrail';
 import { useListGroups } from '../../../hooks/useListGroups';
+import { usePullToRefresh } from '../../../hooks/usePullToRefresh';
 import type { GroupScoped } from '@moijia/client';
+
+const groupsListPanGesture = Gesture.Pan().activateAfterLongPress(520);
 
 function DragHandle({
   drag,
@@ -77,27 +77,102 @@ function GroupRowBody({
   );
 }
 
-function ListCell({ children, style, ...rest }: { children?: ReactNode; style?: object }) {
+type ActiveGroupRowProps = {
+  group: GroupScoped;
+  groupColors: Record<string, string>;
+  events: Array<{ groupId: string; start: string }>;
+  now: Date;
+  upcomingWeekEnd: Date;
+  currentUserId: string | undefined;
+  onOpenGroup: (groupId: string) => void;
+};
+
+function ActiveGroupRow({
+  group: g,
+  groupColors,
+  events,
+  now,
+  upcomingWeekEnd,
+  currentUserId,
+  onOpenGroup,
+}: ActiveGroupRowProps) {
+  const drag = useReorderableDrag();
+  const isActive = useIsActive();
+  const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
+  const p = getGroupColor(userColorHex);
+  const announcementTrim = (g.announcement ?? '').trim();
+  const evCount = events.filter((e) => {
+    const start = new Date(e.start);
+    return e.groupId === g.id && start >= now && start <= upcomingWeekEnd;
+  }).length;
+
   return (
-    <View style={style} {...rest}>
-      {children}
+    <View
+      style={[styles.groupItemCard, isActive && styles.groupItemCardDragging, isActive && Shadows.sm]}
+    >
+      <View style={styles.row}>
+        <DragHandle drag={drag} disabled={isActive} label={`Reorder ${g.name}`} />
+        <GroupRowBody onPress={() => onOpenGroup(g.id)} disabled={isActive}>
+          <View style={[styles.groupIconOuter, { backgroundColor: p.cal }]}>
+            <View style={styles.groupIconInner}>
+              <GroupAvatar seed={g.avatarSeed} thumbnail={g.thumbnail} name={g.name} size={44} />
+            </View>
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.groupName}>{g.name}</Text>
+            <Text style={styles.groupMeta}>
+              {g.memberCount} members
+              {evCount > 0 ? ` · ${evCount} upcoming events` : ''}
+            </Text>
+            {announcementTrim ? (
+              <View style={styles.groupAnnouncementRow}>
+                <Ionicons name="megaphone-outline" size={14} color={Colors.maybe} style={{ flexShrink: 0 }} />
+                <Text style={styles.groupAnnouncementText} numberOfLines={1} ellipsizeMode="tail">
+                  {announcementTrim}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {g.membershipStatus === 'pending' && (
+              <View style={[styles.adminBadge, { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }]}>
+                <Text style={[styles.adminBadgeText, { color: '#B45309' }]}>Pending</Text>
+              </View>
+            )}
+            {g.ownerId === currentUserId && (
+              <View style={[styles.adminBadge, { backgroundColor: '#FEF9C3', borderColor: '#EAB308' }]}>
+                <Text style={[styles.adminBadgeText, { color: '#854D0E' }]}>Owner</Text>
+              </View>
+            )}
+            {g.membershipStatus === 'admin' && g.ownerId !== currentUserId && (
+              <View style={styles.adminBadge}>
+                <Text style={styles.adminBadgeText}>Admin</Text>
+              </View>
+            )}
+            <Text style={{ color: Colors.textMuted, fontSize: 18 }}>›</Text>
+          </View>
+        </GroupRowBody>
+      </View>
     </View>
   );
 }
 
 export default function GroupsScreen() {
   const router = useRouter();
-  const pathname = usePathname();
   const { userId: currentUserId } = useCurrentUserContext();
-  const [showNotifs, setShowNotifs] = useState(false);
   const isDraggingRef = useRef(false);
 
-  const { listGroups, data: allGroups = [] } = useListGroups(currentUserId ?? '', true);
+  const { listGroups, refetch: refetchGroups } = useListGroups(currentUserId ?? '', true);
   const recoverGroup = useRecoverGroup(currentUserId ?? '');
   const updateGroupOrder = useUpdateGroupOrder(currentUserId ?? '');
-  const { data: events = [] } = useEvents({ userId: currentUserId ?? '', groupId: undefined });
-  const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
-  const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');
+  const { data: events = [], refetch: refetchEvents } = useEvents({
+    userId: currentUserId ?? '',
+    groupId: undefined,
+  });
+  const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(
+    currentUserId || ''
+  );
+  const { refreshControl } = usePullToRefresh([refetchGroups, refetchEvents, refetchGroupColors]);
 
   const activeGroups = useMemo(() => listGroups.filter((g) => !g.deletedAt), [listGroups]);
   const deletedGroups = useMemo(() => listGroups.filter((g) => g.deletedAt), [listGroups]);
@@ -108,9 +183,19 @@ export default function GroupsScreen() {
     setOrderedActiveGroups(activeGroups);
   }, [activeGroups]);
 
-  const eventEligibleGroupCount = activeGroups.filter(
-    (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin'
-  ).length;
+  const setDragging = useCallback((dragging: boolean) => {
+    isDraggingRef.current = dragging;
+  }, []);
+
+  const handleDragStart = useCallback(() => {
+    'worklet';
+    runOnJS(setDragging)(true);
+  }, [setDragging]);
+
+  const handleDragEnd = useCallback(() => {
+    'worklet';
+    runOnJS(setDragging)(false);
+  }, [setDragging]);
 
   const handleRecover = async (groupId: string) => {
     try {
@@ -122,87 +207,42 @@ export default function GroupsScreen() {
     }
   };
 
-  const onDragBegin = useCallback(() => {
-    isDraggingRef.current = true;
-  }, []);
-
-  const onDragEnd = useCallback(
-    ({ data }: { data: GroupScoped[] }) => {
-      isDraggingRef.current = false;
-      setOrderedActiveGroups(data);
-      if (!currentUserId || data.length < 2) return;
-      updateGroupOrder.mutate(data.map((g) => g.id));
+  const handleReorder = useCallback(
+    ({ from, to }: { from: number; to: number }) => {
+      setOrderedActiveGroups((prev) => {
+        const data = reorderItems(prev, from, to);
+        if (currentUserId && data.length >= 2) {
+          updateGroupOrder.mutate(data.map((g) => g.id));
+        }
+        return data;
+      });
     },
     [currentUserId, updateGroupOrder]
   );
 
-  const unread = notifs.filter((n) => !n.read).length;
   const now = new Date();
   const upcomingWeekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  const renderActiveGroupRow = useCallback(
-    ({ item: g, drag, isActive }: RenderItemParams<GroupScoped>) => {
-      const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
-      const p = getGroupColor(userColorHex);
-      const announcementTrim = (g.announcement ?? '').trim();
-      const evCount = events.filter((e) => {
-        const start = new Date(e.start);
-        return e.groupId === g.id && start >= now && start <= upcomingWeekEnd;
-      }).length;
-      return (
-        <View
-          style={[styles.groupItemCard, isActive && styles.groupItemCardDragging, isActive && Shadows.sm]}
-        >
-          <View style={styles.row}>
-            <DragHandle drag={drag} disabled={isActive} label={`Reorder ${g.name}`} />
-            <GroupRowBody
-              onPress={() => router.push(withReturnTo(`/(tabs)/groups/${g.id}`, pathname))}
-              disabled={isActive}
-            >
-              <View style={[styles.groupIconOuter, { backgroundColor: p.cal }]}>
-                <View style={styles.groupIconInner}>
-                  <GroupAvatar seed={g.avatarSeed} thumbnail={g.thumbnail} name={g.name} size={44} />
-                </View>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.groupName}>{g.name}</Text>
-                <Text style={styles.groupMeta}>
-                  {g.memberCount} members
-                  {evCount > 0 ? ` · ${evCount} upcoming events` : ''}
-                </Text>
-                {announcementTrim ? (
-                  <View style={styles.groupAnnouncementRow}>
-                    <Ionicons name="megaphone-outline" size={14} color={Colors.maybe} style={{ flexShrink: 0 }} />
-                    <Text style={styles.groupAnnouncementText} numberOfLines={1} ellipsizeMode="tail">
-                      {announcementTrim}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                {g.membershipStatus === 'pending' && (
-                  <View style={[styles.adminBadge, { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' }]}>
-                    <Text style={[styles.adminBadgeText, { color: '#B45309' }]}>Pending</Text>
-                  </View>
-                )}
-                {g.ownerId === currentUserId && (
-                  <View style={[styles.adminBadge, { backgroundColor: '#FEF9C3', borderColor: '#EAB308' }]}>
-                    <Text style={[styles.adminBadgeText, { color: '#854D0E' }]}>Owner</Text>
-                  </View>
-                )}
-                {g.membershipStatus === 'admin' && g.ownerId !== currentUserId && (
-                  <View style={styles.adminBadge}>
-                    <Text style={styles.adminBadgeText}>Admin</Text>
-                  </View>
-                )}
-                <Text style={{ color: Colors.textMuted, fontSize: 18 }}>›</Text>
-              </View>
-            </GroupRowBody>
-          </View>
-        </View>
-      );
+  const openGroup = useCallback(
+    (groupId: string) => {
+      router.push(`/(tabs)/groups/${groupId}` as import('expo-router').Href);
     },
-    [groupColors, events, now, upcomingWeekEnd, currentUserId, router, pathname]
+    [router]
+  );
+
+  const renderActiveGroupRow = useCallback(
+    ({ item: g }: ReorderableListRenderItemInfo<GroupScoped>) => (
+      <ActiveGroupRow
+        group={g}
+        groupColors={groupColors}
+        events={events}
+        now={now}
+        upcomingWeekEnd={upcomingWeekEnd}
+        currentUserId={currentUserId}
+        onOpenGroup={openGroup}
+      />
+    ),
+    [groupColors, events, now, upcomingWeekEnd, currentUserId, openGroup]
   );
 
   const deletedSection =
@@ -215,7 +255,7 @@ export default function GroupsScreen() {
             return (
               <TouchableOpacity
                 key={g.id}
-                onPress={() => router.push(withReturnTo(`/(tabs)/groups/${g.id}`, pathname))}
+                onPress={() => openGroup(g.id)}
                 style={[styles.groupItemCard, styles.deletedRow]}
                 activeOpacity={0.7}
               >
@@ -255,57 +295,49 @@ export default function GroupsScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <GroupsTopHeader
-        userId={currentUserId}
-        eventEligibleGroupCount={eventEligibleGroupCount}
-        showNotifs={showNotifs}
-        onToggleNotifs={() => setShowNotifs((p) => !p)}
-        unreadCount={unread}
-      />
-
-      <GroupsBreadcrumbTrail segments={[{ label: 'All Groups' }]} />
-
+    <View style={styles.page}>
       {listGroups.length === 0 ? (
-        <View style={styles.myEmpty}>
+        <ScrollView
+          style={styles.listContainer}
+          contentContainerStyle={styles.myEmpty}
+          refreshControl={refreshControl}
+        >
           <Ionicons name="people-outline" size={48} color={Colors.textMuted} style={styles.emptyGlyph} />
           <Text style={styles.emptyTitle}>No groups yet</Text>
           <Text style={styles.emptyDesc}>Create a group or join with an invite code.</Text>
-        </View>
+        </ScrollView>
       ) : orderedActiveGroups.length > 0 ? (
-        <DraggableFlatList
+        <ReorderableList
           data={orderedActiveGroups}
           keyExtractor={(g) => g.id}
           renderItem={renderActiveGroupRow}
-          onDragBegin={onDragBegin}
-          onDragEnd={onDragEnd}
-          activationDistance={10}
-          // List cell must be a View on web — default renderer uses <button> and breaks nested controls
-          CellRendererComponent={ListCell as never}
-          containerStyle={styles.listContainer}
+          onReorder={handleReorder}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          shouldUpdateActiveItem
+          panGesture={groupsListPanGesture}
+          cellAnimations={{ opacity: 1, transform: [] }}
+          style={styles.listContainer}
           contentContainerStyle={styles.listContent}
           ItemSeparatorComponent={() => <View style={styles.groupItemGap} />}
           ListFooterComponent={listFooter}
+          refreshControl={refreshControl}
         />
       ) : (
-        <View style={styles.listContent}>{listFooter}</View>
+        <ScrollView
+          style={styles.listContainer}
+          contentContainerStyle={styles.listContent}
+          refreshControl={refreshControl}
+        >
+          {listFooter}
+        </ScrollView>
       )}
-
-      <NotificationsPanelModal
-        visible={showNotifs}
-        onClose={() => setShowNotifs(false)}
-        userId={currentUserId || ''}
-        notifications={notifs}
-        isLoading={notifsLoading}
-        groups={allGroups.map((g) => ({ id: g.id, name: g.name }))}
-        groupColors={groupColors}
-      />
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bg },
+  page: { flex: 1, backgroundColor: Colors.bg },
   listContainer: { flex: 1 },
   listContent: { paddingHorizontal: 16, flexGrow: 1 },
   listBottomPad: { height: 100 },

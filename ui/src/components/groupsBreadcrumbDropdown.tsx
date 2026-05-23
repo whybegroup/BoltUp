@@ -5,6 +5,7 @@ import {
   Text,
   StyleSheet,
   Modal,
+  Pressable,
   TouchableOpacity,
   ScrollView,
   Dimensions,
@@ -70,6 +71,12 @@ export const groupsBreadcrumbDropdownStyles = StyleSheet.create({
   rowSelected: {
     backgroundColor: Colors.bg,
   },
+  rowPressed: {
+    backgroundColor: '#E4E4E7',
+  },
+  rowPressedSelected: {
+    backgroundColor: Colors.borderStrong,
+  },
   rowText: { flex: 1, fontSize: 15, fontFamily: Fonts.medium, color: Colors.text },
   rowTextSelected: { fontFamily: Fonts.regular, color: Colors.textMuted },
 });
@@ -115,18 +122,22 @@ export function GroupsBreadcrumbDropdownModal({
               const prevSelected = idx > 0 && items[idx - 1].id === selectedId;
               const showBorderTop = idx > 0 && !isSelected && !prevSelected;
               return (
-                <TouchableOpacity
+                <Pressable
                   key={item.id}
                   onPress={() => {
                     onClose();
                     onSelect(item.id);
                   }}
-                  style={[
+                  style={({ pressed }) => [
                     groupsBreadcrumbDropdownStyles.row,
                     showBorderTop && groupsBreadcrumbDropdownStyles.rowBorderTop,
                     isSelected && groupsBreadcrumbDropdownStyles.rowSelected,
+                    pressed &&
+                      (isSelected
+                        ? groupsBreadcrumbDropdownStyles.rowPressedSelected
+                        : groupsBreadcrumbDropdownStyles.rowPressed),
                   ]}
-                  activeOpacity={isSelected ? 0.85 : 0.7}
+                  android_ripple={{ color: 'rgba(24, 24, 27, 0.14)' }}
                   accessibilityRole="button"
                   accessibilityLabel={item.label}
                   accessibilityState={{ selected: isSelected }}
@@ -143,7 +154,7 @@ export function GroupsBreadcrumbDropdownModal({
                   {!isSelected ? (
                     <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
                   ) : null}
-                </TouchableOpacity>
+                </Pressable>
               );
             })}
           </ScrollView>

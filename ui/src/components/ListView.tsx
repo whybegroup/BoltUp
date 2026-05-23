@@ -1,5 +1,13 @@
-import { Fragment, useMemo } from 'react';
-import { View, Text, StyleSheet, FlatList, type StyleProp, type ViewStyle } from 'react-native';
+import { Fragment, useMemo, type ReactElement } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  type RefreshControlProps,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { Colors, Fonts } from '../constants/theme';
 import { dayShort, fmtDateShort } from '../utils/helpers';
 import { EventRow } from './EventRow';
@@ -18,6 +26,7 @@ interface ListViewProps {
   variant?: 'scroll' | 'embedded';
   /** Applied to the scroll variant’s FlatList (e.g. `{ flex: 1 }` in a modal). */
   listContainerStyle?: StyleProp<ViewStyle>;
+  refreshControl?: ReactElement<RefreshControlProps>;
 }
 
 type Row =
@@ -61,6 +70,7 @@ export function ListView({
   showGroup = true,
   variant = 'scroll',
   listContainerStyle,
+  refreshControl,
 }: ListViewProps) {
   const { data: allUsers = [] } = useUsers();
   const { userId: meId } = useCurrentUserContext();
@@ -158,6 +168,7 @@ export function ListView({
       showsVerticalScrollIndicator={false}
       maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
       ListFooterComponent={<View style={{ height: 100 }} />}
+      refreshControl={refreshControl}
     />
   );
 }

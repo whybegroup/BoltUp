@@ -1,9 +1,11 @@
 import React from 'react';
+import { useGuardedPress } from '../hooks/useGuardedPress';
 import {
   View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle,
-  ScrollView, Modal, TextInput, KeyboardAvoidingView, Platform,
+  Modal, TextInput, Platform, Pressable,
   type TextStyle,
 } from 'react-native';
+import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadows, Fonts } from '../constants/theme';
@@ -76,11 +78,14 @@ interface PillProps {
   inactiveBorderColor?: string;
 }
 export function Pill({ label, leading, selected, onPress, onLongPress, activeColor, activeBg, activeText, inactiveBorderColor }: PillProps) {
+  const guardedPress = useGuardedPress(() => {
+    onPress?.();
+  }, { disabled: !onPress });
   const fg = selected ? (activeText || Colors.accentFg) : Colors.textSub;
   const ff = selected ? Fonts.semiBold : Fonts.regular;
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={onPress ? guardedPress : undefined}
       onLongPress={onLongPress}
       style={[
         styles.pill,
@@ -112,6 +117,9 @@ interface BtnProps {
   small?: boolean;
 }
 export function Btn({ label, onPress, variant = 'primary', disabled, full, small }: BtnProps) {
+  const guardedPress = useGuardedPress(() => {
+    onPress?.();
+  }, { disabled: disabled || !onPress });
   const bg = disabled ? Colors.border :
     variant === 'primary' ? Colors.accent :
     variant === 'danger'  ? Colors.notGoingBg :
@@ -125,7 +133,7 @@ export function Btn({ label, onPress, variant = 'primary', disabled, full, small
 
   return (
     <TouchableOpacity
-      onPress={disabled ? undefined : onPress}
+      onPress={disabled || !onPress ? undefined : guardedPress}
       style={[styles.btn, { backgroundColor: bg, borderColor: border, width: full ? '100%' : undefined, paddingHorizontal: small ? 12 : 20, paddingVertical: small ? 7 : 10 }]}
       activeOpacity={disabled ? 1 : 0.7}
     >
@@ -159,13 +167,17 @@ interface NavBarProps {
   centerTitle?: boolean;
 }
 export function NavBar({ title = '', onClose, right, centerTitle }: NavBarProps) {
+  const guardedClose = useGuardedPress(() => {
+    onClose?.();
+  }, { disabled: !onClose });
+
   if (centerTitle) {
     return (
       <View style={modalTopBarStyles.bar}>
         <View style={styles.navBarSide}>
           {onClose ? (
             <TouchableOpacity
-              onPress={onClose}
+              onPress={guardedClose}
               style={modalTopBarStyles.closeButton}
               accessibilityRole="button"
               accessibilityLabel="Close"
@@ -192,7 +204,7 @@ export function NavBar({ title = '', onClose, right, centerTitle }: NavBarProps)
     <View style={modalTopBarStyles.bar}>
       {onClose ? (
         <TouchableOpacity
-          onPress={onClose}
+          onPress={guardedClose}
           style={modalTopBarStyles.closeButton}
           accessibilityRole="button"
           accessibilityLabel="Close"
@@ -240,34 +252,20 @@ export function Sheet({
       : styles.sheetOverlay;
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
-      >
-        <TouchableOpacity
-          style={overlayStyle}
-          onPress={onClose}
-          activeOpacity={1}
+      <KeyboardFormRoot style={overlayStyle}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />
+        <View
+          style={[
+            isDark ? styles.sheetContainerDark : styles.sheetContainer,
+            { paddingBottom: insets.bottom + 16 },
+          ]}
         >
-          <TouchableOpacity
-            activeOpacity={1}
-            style={[
-              isDark ? styles.sheetContainerDark : styles.sheetContainer,
-              { paddingBottom: insets.bottom + 16 },
-            ]}
-          >
-            <View style={isDark ? styles.sheetHandleDark : styles.sheetHandle} />
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-            >
-              {children}
-            </ScrollView>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
+          <View style={isDark ? styles.sheetHandleDark : styles.sheetHandle} />
+          <KeyboardSafeScrollView showsVerticalScrollIndicator={false}>
+            {children}
+          </KeyboardSafeScrollView>
+        </View>
+      </KeyboardFormRoot>
     </Modal>
   );
 }
