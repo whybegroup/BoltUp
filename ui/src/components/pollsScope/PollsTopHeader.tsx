@@ -2,19 +2,14 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
 import { Colors, Fonts, Layout } from '../../constants/theme';
-import { CreateOrJoinButton } from '../CreateOrJoinButton';
 
 export type PollsTopHeaderProps = {
-  userId?: string;
-  eventEligibleGroupCount: number;
   showNotifs: boolean;
   onToggleNotifs: () => void;
   unreadCount: number;
 };
 
 export function PollsTopHeader({
-  userId,
-  eventEligibleGroupCount,
   showNotifs,
   onToggleNotifs,
   unreadCount,
@@ -28,7 +23,6 @@ export function PollsTopHeader({
         </Text>
       </View>
       <View style={styles.headerActions}>
-        <CreateOrJoinButton userId={userId} eventEligibleGroupCount={eventEligibleGroupCount} />
         <TouchableOpacity
           onPress={onToggleNotifs}
           style={[styles.iconBtn, showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg }]}

@@ -320,6 +320,8 @@ CREATE TABLE "notifications" (
     "groupId" TEXT,
     "eventId" TEXT,
     "pollId" TEXT,
+    "postId" TEXT,
+    "commentId" TEXT,
     "navigable" BOOLEAN NOT NULL DEFAULT false,
     "dest" TEXT,
     "userId" TEXT,

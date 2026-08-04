@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  Modal,
 } from 'react-native';
 import { useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
@@ -28,9 +27,10 @@ import { GroupAvatar } from '../components/GroupAvatar';
 import { AvatarPickerModal } from '../components/AvatarPickerModal';
 import type { PendingAvatarFile } from '../services/pickAndUploadImage';
 import { uploadPendingAvatarFile } from '../services/pickAndUploadImage';
-import { ResolvableImage } from '../components/ResolvableImage';
 import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 import { AddImageButton } from '../components/AddImageButton';
+import { ImageLightboxModal } from '../components/ImageLightboxModal';
+import { ResolvableImage } from '../components/ResolvableImage';
 import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
 import { ApiError } from '@moijia/client';
 
@@ -411,80 +411,24 @@ export default function CreateGroupScreen() {
         </View>
       </EventFormPopoverChrome>
 
-      {groupPhotoLightbox !== null && (
-        <Modal
-          visible
-          transparent
-          animationType="fade"
-          onRequestClose={() => setGroupPhotoLightbox(null)}
-        >
-          <View style={styles.groupPhotoLightbox}>
-            <View style={styles.groupPhotoLightboxHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Avatar name={displayNameForChrome} size={28} />
-                <View>
-                  <Text style={styles.groupPhotoLightboxName}>{displayNameForChrome}</Text>
-                  <Text style={styles.groupPhotoLightboxSub}>
-                    {groupPhotoLightbox.urls.length > 1
-                      ? `Cover photos · ${groupPhotoLightbox.index + 1} of ${groupPhotoLightbox.urls.length}`
-                      : 'Cover photo'}
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setGroupPhotoLightbox(null)}
-                style={styles.groupPhotoLightboxClose}
-              >
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
-            </View>
-            {groupPhotoLightbox.urls.length > 1 ? (
-              <>
-                <TouchableOpacity
-                  accessibilityLabel="Previous photo"
-                  onPress={() =>
-                    setGroupPhotoLightbox((prev) =>
-                      prev && prev.index > 0 ? { ...prev, index: prev.index - 1 } : prev,
-                    )
-                  }
-                  disabled={groupPhotoLightbox.index <= 0}
-                  style={[
-                    styles.groupPhotoLightboxNavBtn,
-                    styles.groupPhotoLightboxNavPrev,
-                    groupPhotoLightbox.index <= 0 && styles.groupPhotoLightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-back" size={28} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  accessibilityLabel="Next photo"
-                  onPress={() =>
-                    setGroupPhotoLightbox((prev) =>
-                      prev && prev.index < prev.urls.length - 1
-                        ? { ...prev, index: prev.index + 1 }
-                        : prev,
-                    )
-                  }
-                  disabled={groupPhotoLightbox.index >= groupPhotoLightbox.urls.length - 1}
-                  style={[
-                    styles.groupPhotoLightboxNavBtn,
-                    styles.groupPhotoLightboxNavNext,
-                    groupPhotoLightbox.index >= groupPhotoLightbox.urls.length - 1 &&
-                      styles.groupPhotoLightboxNavBtnDisabled,
-                  ]}
-                >
-                  <Ionicons name="chevron-forward" size={28} color="#fff" />
-                </TouchableOpacity>
-              </>
-            ) : null}
-            <ResolvableImage
-              storedUrl={groupPhotoLightbox.urls[groupPhotoLightbox.index] ?? ''}
-              style={styles.groupPhotoLightboxImg}
-              resizeMode="contain"
-            />
-          </View>
-        </Modal>
-      )}
+      <ImageLightboxModal
+        visible={groupPhotoLightbox !== null}
+        urls={groupPhotoLightbox?.urls ?? []}
+        index={groupPhotoLightbox?.index ?? 0}
+        onChangeIndex={(nextIndex) =>
+          setGroupPhotoLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
+        }
+        onClose={() => setGroupPhotoLightbox(null)}
+        headerAvatar={<Avatar name={displayNameForChrome} size={28} />}
+        title={displayNameForChrome}
+        subtitle={
+          groupPhotoLightbox
+            ? groupPhotoLightbox.urls.length > 1
+              ? `Cover photos · ${groupPhotoLightbox.index + 1} of ${groupPhotoLightbox.urls.length}`
+              : 'Cover photo'
+            : undefined
+        }
+      />
 
       <AvatarPickerModal
         variant="group"
@@ -609,47 +553,4 @@ const styles = StyleSheet.create({
   },
   draftBarBtnPrimaryDisabled: { opacity: 0.45 },
   draftBarBtnPrimaryText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
-  groupPhotoLightbox: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.93)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  groupPhotoLightboxHeader: {
-    position: 'absolute',
-    top: 60,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-  },
-  groupPhotoLightboxName: { fontSize: 13, fontFamily: Fonts.semiBold, color: '#fff' },
-  groupPhotoLightboxSub: {
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
-    fontFamily: Fonts.regular,
-  },
-  groupPhotoLightboxClose: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: Radius.lg,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-  },
-  groupPhotoLightboxImg: { width: '100%', height: '70%' },
-  groupPhotoLightboxNavBtn: {
-    position: 'absolute',
-    top: '42%',
-    zIndex: 2,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderRadius: Radius.full,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  groupPhotoLightboxNavBtnDisabled: { opacity: 0.28 },
-  groupPhotoLightboxNavPrev: { left: 10 },
-  groupPhotoLightboxNavNext: { right: 10 },
 });

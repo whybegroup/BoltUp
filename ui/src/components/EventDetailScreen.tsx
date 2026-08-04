@@ -36,7 +36,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { EventFormPopoverChrome } from './EventFormPopoverChrome';
 import { modalTopBarStyles } from './modalTopBarStyles';
-import { usePathname, type Href } from 'expo-router';
+import { usePathname, useNavigation, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { COMMENT_REACTION_EMOJIS } from '../constants/commentReactionEmojis';
@@ -392,6 +392,7 @@ export function EventDetailScreen({
   }, []);
 
   const router = useRouter();
+  const navigation = useNavigation();
   const pathname = usePathname();
   const returnToHref = useMemo(
     () => parseReturnToParam(returnToParam ?? undefined),
@@ -654,6 +655,16 @@ export function EventDetailScreen({
   const [detailSeriesUpdateScope, setDetailSeriesUpdateScope] = useState<SeriesUpdateScope>(
     EventUpdate.seriesUpdateScope.THIS_OCCURRENCE
   );
+  /** Explicit edit mode (default view is read-only for everyone, including the host). */
+  const [editingEvent, setEditingEvent] = useState(false);
+  /** After “Keep changes” while leaving: run once the save succeeds. */
+  const pendingAfterSuccessfulSaveRef = useRef<(() => void) | null>(null);
+  const onDetailSavePressRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    setEditingEvent(false);
+    pendingAfterSuccessfulSaveRef.current = null;
+  }, [eventId]);
 
   const openLocationInMaps = useCallback(async (rawQuery: string) => {
     const query = rawQuery.trim();
@@ -829,7 +840,7 @@ export function EventDetailScreen({
   );
 
   const detailsDirty = useMemo(() => {
-    if (!ev || !currentUserId || !group) return false;
+    if (!ev || !currentUserId || !group || !editingEvent) return false;
     if (ev.createdBy !== currentUserId) return false;
     const t = (ev.title ?? '').trim();
     const d = (ev.description ?? '').trim();
@@ -850,6 +861,7 @@ export function EventDetailScreen({
     ev,
     group,
     currentUserId,
+    editingEvent,
     draftTitle,
     draftDesc,
     draftLocation,
@@ -1224,26 +1236,65 @@ export function EventDetailScreen({
   const isInProgress =
     evStart.getTime() <= Date.now() && Date.now() < evEnd.getTime();
   /** Title and start fields locked while the event is running; after it ends, only description + photos stay editable. */
-  const canEditTitle = canEdit && !isPast && !isInProgress;
-  const canEditStartFields = canEdit && !isPast && !isInProgress;
-  const canEditLive = canEdit && !isPast;
-  /** Host may edit description and cover photos even after the event has ended. */
-  const canEditDescriptionAndPhotos = canEdit;
+  const canEditTitle = canEdit && editingEvent && !isPast && !isInProgress;
+  const canEditStartFields = canEdit && editingEvent && !isPast && !isInProgress;
+  const canEditLive = canEdit && editingEvent && !isPast;
+  /** Host may edit description and cover photos even after the event has ended (while in edit mode). */
+  const canEditDescriptionAndPhotos = canEdit && editingEvent;
+  function clearPendingAfterSuccessfulSave() {
+    pendingAfterSuccessfulSaveRef.current = null;
+  }
+  function runPendingAfterSuccessfulSave() {
+    const after = pendingAfterSuccessfulSaveRef.current;
+    pendingAfterSuccessfulSaveRef.current = null;
+    after?.();
+  }
+  /** Keep changes / Discard / Cancel when leaving edit with unsaved drafts. */
+  function confirmUnsavedEventEdits(onDiscard: () => void, onAfterKeepChanges?: () => void) {
+    if (!detailsDirty) {
+      onDiscard();
+      return;
+    }
+    Alert.alert(
+      'Unsaved changes',
+      'You have unsaved changes. Keep them, discard them, or cancel to stay.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => {
+            clearPendingAfterSuccessfulSave();
+            onDiscard();
+          },
+        },
+        {
+          text: 'Keep changes',
+          onPress: () => {
+            pendingAfterSuccessfulSaveRef.current = onAfterKeepChanges ?? null;
+            onDetailSavePressRef.current();
+          },
+        },
+      ]
+    );
+  }
   function requestClose() {
-    const hasUnsavedDetailChanges = canEdit && detailsDirty;
-    if (!hasUnsavedDetailChanges) {
+    const finish = () => {
+      clearPendingAfterSuccessfulSave();
+      setEditingEvent(false);
       dismiss();
+    };
+    if (!(canEdit && editingEvent && detailsDirty)) {
+      finish();
       return;
     }
-    const message = 'Discard your changes?';
-    if (Platform.OS === 'web') {
-      if (window.confirm(message)) dismiss();
-      return;
-    }
-    Alert.alert('Discard changes?', message, [
-      { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: dismiss },
-    ]);
+    confirmUnsavedEventEdits(
+      () => {
+        resetDetailsDrafts();
+        finish();
+      },
+      () => dismiss()
+    );
   }
   const canDeleteEvent =
     ev.createdBy === currentUserId ||
@@ -1251,6 +1302,7 @@ export function EventDetailScreen({
     (group.adminIds ?? []).includes(currentUserId);
   /** Host and group admins/owners may delete past occurrences (API matches). */
   const canDeleteEventLive = canDeleteEvent;
+
   /** RSVP row follows saved event flag, not the Settings draft (organizers were losing Maybe while editing). */
   const showMaybeRsvp = !!displayEv.allowMaybe;
   const rsvpDeadlineRaw = displayEv.rsvpDeadline as string | null | undefined;
@@ -1327,9 +1379,19 @@ export function EventDetailScreen({
     }
   };
 
+  const requestExitEventEdit = () => {
+    confirmUnsavedEventEdits(() => {
+      resetDetailsDrafts();
+      setEditingEvent(false);
+    });
+  };
+
   const executeDetailSave = async (seriesScope?: SeriesUpdateScope) => {
     if (isPast) {
-      if (!currentUserId) return;
+      if (!currentUserId) {
+        clearPendingAfterSuccessfulSave();
+        return;
+      }
       try {
         await updateEventMutation.mutateAsync({
           description: draftDesc.trim(),
@@ -1337,7 +1399,10 @@ export function EventDetailScreen({
         });
         Toast.show({ type: 'success', text1: 'Changes saved' });
         setShowDetailSaveScopeModal(false);
+        setEditingEvent(false);
+        runPendingAfterSuccessfulSave();
       } catch (e: any) {
+        clearPendingAfterSuccessfulSave();
         const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to save changes';
         if (Platform.OS === 'web') window.alert(msg);
         else Alert.alert('Error', msg);
@@ -1346,16 +1411,21 @@ export function EventDetailScreen({
     }
     const title = draftTitle.trim();
     if (!title) {
+      clearPendingAfterSuccessfulSave();
       if (Platform.OS === 'web') window.alert('Event title is required');
       else Alert.alert('Error', 'Event title is required');
       return;
     }
     if (!detailTimeRangeValid) {
+      clearPendingAfterSuccessfulSave();
       if (Platform.OS === 'web') window.alert('End must be after start');
       else Alert.alert('Error', 'End must be after start');
       return;
     }
-    if (!currentUserId || !ev.start || !ev.end) return;
+    if (!currentUserId || !ev.start || !ev.end) {
+      clearPendingAfterSuccessfulSave();
+      return;
+    }
     const inSeries = !!(ev as EventDetailed).recurrenceSeriesId?.trim();
     const minTrim = draftMinAttendees.trim();
     const maxTrim = draftMaxAttendees.trim();
@@ -1366,6 +1436,7 @@ export function EventDetailScreen({
     } else {
       const n = parseInt(minTrim, 10);
       if (Number.isNaN(n) || n < 0) {
+        clearPendingAfterSuccessfulSave();
         if (Platform.OS === 'web') window.alert('Min attendees must be a non-negative number');
         else Alert.alert('Error', 'Min attendees must be a non-negative number');
         return;
@@ -1377,6 +1448,7 @@ export function EventDetailScreen({
     } else {
       const n = parseInt(maxTrim, 10);
       if (Number.isNaN(n) || n < 0) {
+        clearPendingAfterSuccessfulSave();
         if (Platform.OS === 'web') window.alert('Max attendees must be a non-negative number');
         else Alert.alert('Error', 'Max attendees must be a non-negative number');
         return;
@@ -1384,6 +1456,7 @@ export function EventDetailScreen({
       maxAttendees = n;
     }
     if (minAttendees != null && maxAttendees != null && maxAttendees < minAttendees) {
+      clearPendingAfterSuccessfulSave();
       if (Platform.OS === 'web') window.alert('Max attendees must be at least the minimum');
       else Alert.alert('Error', 'Max attendees must be at least the minimum');
       return;
@@ -1405,6 +1478,7 @@ export function EventDetailScreen({
       let rsvpDeadlineOut: string | null = null;
       if (draftRsvpDeadlineEnabled) {
         if (!draftRsvpDeadlineDate.trim()) {
+          clearPendingAfterSuccessfulSave();
           if (Platform.OS === 'web') window.alert('Choose a date for the RSVP deadline');
           else Alert.alert('Error', 'Choose a date for the RSVP deadline');
           return;
@@ -1413,6 +1487,7 @@ export function EventDetailScreen({
           ? localWallDateEndOfDayToUtcIso(draftRsvpDeadlineDate)
           : localWallDateTimeToUtcIso(draftRsvpDeadlineDate, draftRsvpDeadlineTime);
         if (new Date(rsvpDeadlineOut).getTime() > new Date(endIso).getTime()) {
+          clearPendingAfterSuccessfulSave();
           if (Platform.OS === 'web') window.alert('RSVP deadline must be on or before the event end');
           else Alert.alert('Error', 'RSVP deadline must be on or before the event end');
           return;
@@ -1420,6 +1495,7 @@ export function EventDetailScreen({
       }
       const newStartMs = new Date(startIso).getTime();
       if (newStartMs < Date.now() && newStartMs !== savedStartMs) {
+        clearPendingAfterSuccessfulSave();
         const msg = 'New events cannot be scheduled in the past.';
         if (Platform.OS === 'web') {
           window.alert(msg);
@@ -1448,7 +1524,10 @@ export function EventDetailScreen({
       });
       Toast.show({ type: 'success', text1: 'Changes saved' });
       setShowDetailSaveScopeModal(false);
+      setEditingEvent(false);
+      runPendingAfterSuccessfulSave();
     } catch (e: any) {
+      clearPendingAfterSuccessfulSave();
       const msg = e?.body?.error ?? e?.response?.data?.error ?? e?.message ?? 'Failed to save changes';
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Error', msg);
@@ -1457,21 +1536,29 @@ export function EventDetailScreen({
 
   const onDetailSavePress = () => {
     if (isPast) {
-      if (!currentUserId) return;
+      if (!currentUserId) {
+        clearPendingAfterSuccessfulSave();
+        return;
+      }
       void executeDetailSave();
       return;
     }
     if (!draftTitle.trim()) {
+      clearPendingAfterSuccessfulSave();
       if (Platform.OS === 'web') window.alert('Event title is required');
       else Alert.alert('Error', 'Event title is required');
       return;
     }
     if (!detailTimeRangeValid) {
+      clearPendingAfterSuccessfulSave();
       if (Platform.OS === 'web') window.alert('End must be after start');
       else Alert.alert('Error', 'End must be after start');
       return;
     }
-    if (!currentUserId) return;
+    if (!currentUserId) {
+      clearPendingAfterSuccessfulSave();
+      return;
+    }
     const inSeries = !!(ev as EventDetailed).recurrenceSeriesId?.trim();
     if (inSeries && (timeFieldsDirty || rsvpDeadlineDirty)) {
       setDetailSeriesUpdateScope(EventUpdate.seriesUpdateScope.THIS_OCCURRENCE);
@@ -1480,6 +1567,7 @@ export function EventDetailScreen({
     }
     void executeDetailSave();
   };
+  onDetailSavePressRef.current = onDetailSavePress;
 
   const detailTimeFieldsComplete =
     !!draftStartDate?.trim() &&
@@ -1527,7 +1615,8 @@ export function EventDetailScreen({
   const coverPhotosForDisplay = canEditDescriptionAndPhotos
     ? localCoverPhotos
     : (displayEv.coverPhotos ?? []);
-  const showEventPhotosSection = true;
+  const showEventPhotosSection =
+    coverPhotosForDisplay.length > 0 || canEditDescriptionAndPhotos;
 
   const persistCoverPhotos = async (next: string[]) => {
     if (!currentUserId) return;
@@ -1749,41 +1838,75 @@ export function EventDetailScreen({
         <TouchableOpacity
           onPress={() => setShowDeleteConfirm(true)}
           style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Delete event"
         >
           <Ionicons name="trash-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
       ) : null}
-      {canEdit && detailsDirty ? (
-        <View style={styles.navEditActions}>
+      {canEdit ? (
+        <>
+          {editingEvent && detailsDirty ? (
+            <>
+              <TouchableOpacity
+                onPress={resetDetailsDrafts}
+                disabled={updateEventMutation.isPending}
+                style={[
+                  isPageVariant ? styles.pageEventIconBtn : modalTopBarStyles.trailingIconTap,
+                  updateEventMutation.isPending && { opacity: 0.45 },
+                  !isPageVariant && { marginRight: 8 },
+                ]}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Reset event changes"
+              >
+                <Ionicons name="refresh-outline" size={20} color={Colors.textSub} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onDetailSavePress}
+                disabled={
+                  updateEventMutation.isPending ||
+                  (!isPast && (!draftTitle.trim() || !detailTimeRangeValid))
+                }
+                style={[
+                  isPageVariant ? styles.pageEventIconBtn : modalTopBarStyles.trailingIconTap,
+                  (updateEventMutation.isPending ||
+                    (!isPast && (!draftTitle.trim() || !detailTimeRangeValid))) && { opacity: 0.45 },
+                  !isPageVariant && { marginRight: 8 },
+                ]}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Save event changes"
+              >
+                {updateEventMutation.isPending ? (
+                  <ActivityIndicator size="small" color={Colors.textSub} />
+                ) : (
+                  <Ionicons name="save-outline" size={22} color={Colors.textSub} />
+                )}
+              </TouchableOpacity>
+            </>
+          ) : null}
           <TouchableOpacity
-            onPress={resetDetailsDrafts}
-            disabled={updateEventMutation.isPending}
-            style={[styles.draftBarBtnSecondary, updateEventMutation.isPending && { opacity: 0.45 }]}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.draftBarBtnSecondaryText}>Reset</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={onDetailSavePress}
-            disabled={
-              updateEventMutation.isPending ||
-              (!isPast && (!draftTitle.trim() || !detailTimeRangeValid))
+            onPress={
+              editingEvent
+                ? requestExitEventEdit
+                : () => {
+                    resetDetailsDrafts();
+                    setEditingEvent(true);
+                  }
             }
-            style={[
-              styles.draftBarBtnPrimary,
-              (updateEventMutation.isPending ||
-                (!isPast && (!draftTitle.trim() || !detailTimeRangeValid))) &&
-                styles.draftBarBtnPrimaryDisabled,
-            ]}
-            activeOpacity={0.8}
+            style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={editingEvent ? 'Stop editing event' : 'Edit event'}
           >
-            {updateEventMutation.isPending ? (
-              <ActivityIndicator size="small" color={Colors.accentFg} />
-            ) : (
-              <Text style={styles.draftBarBtnPrimaryText}>Save</Text>
-            )}
+            <Ionicons
+              name={editingEvent ? 'close' : 'create-outline'}
+              size={20}
+              color={Colors.textSub}
+            />
           </TouchableOpacity>
-        </View>
+        </>
       ) : null}
     </>
   );
@@ -1851,22 +1974,6 @@ export function EventDetailScreen({
               {isPast ? (
                 <View style={[styles.bannerInner, styles.bannerGray]}>
                   <Text style={styles.bannerGrayText}>This event has ended</Text>
-                </View>
-              ) : null}
-              {needsMore ? (
-                <View style={[styles.bannerInner, styles.bannerAmber, styles.bannerAmberRow]}>
-                  <Ionicons name="warning-outline" size={16} color="#92400E" />
-                  <Text style={styles.bannerAmberText}>
-                    <Text style={{ fontFamily: Fonts.bold }}>{minN - going.length} more needed</Text>
-                  </Text>
-                </View>
-              ) : null}
-              {showLowSpots ? (
-                <View style={[styles.bannerInner, styles.bannerAmber, styles.bannerAmberRow]}>
-                  <Ionicons name="warning-outline" size={16} color="#92400E" />
-                  <Text style={styles.bannerAmberText}>
-                    <Text style={{ fontFamily: Fonts.bold }}>{spotsLeft}</Text> spot{spotsLeft === 1 ? '' : 's'} left
-                  </Text>
                 </View>
               ) : null}
               {imWaitlisted ? (
@@ -2334,13 +2441,6 @@ export function EventDetailScreen({
                     ) : null}
                   </View>
                 </InfoRowSlot>
-              ) : (displayEv.minAttendees || 0) > 0 || (displayEv.maxAttendees || 0) > 0 ? (
-                <InfoRow ionicon="people-outline">
-                  {(displayEv.minAttendees || 0) > 0 && `Min ${displayEv.minAttendees}`}
-                  {(displayEv.minAttendees || 0) > 0 && (displayEv.maxAttendees || 0) > 0 && ' · '}
-                  {(displayEv.maxAttendees || 0) > 0 && `Max ${displayEv.maxAttendees}`}
-                  {(displayEv.maxAttendees || 0) > 0 && displayEv.enableWaitlist && ' · Waitlist enabled'}
-                </InfoRow>
               ) : null}
               <InfoRow ionicon="person-outline">Created by {getUserSafe(ev.createdBy).displayName}</InfoRow>
             </View>
@@ -2512,6 +2612,26 @@ export function EventDetailScreen({
         {/* RSVP + attendance summary */}
         <View style={[styles.eventScrollInset, styles.eventSectionGap]}>
           <Text style={styles.eventSectionLabel}>{rsvpSectionLabel}</Text>
+          {(needsMore || showLowSpots) && (
+            <View style={{ gap: 3, marginBottom: 10 }}>
+              {needsMore ? (
+                <View style={[styles.bannerInner, styles.bannerAmber, styles.bannerAmberRow]}>
+                  <Ionicons name="warning-outline" size={16} color="#92400E" />
+                  <Text style={styles.bannerAmberText}>
+                    <Text style={{ fontFamily: Fonts.bold }}>{minN - going.length} more people needed</Text>
+                  </Text>
+                </View>
+              ) : null}
+              {showLowSpots ? (
+                <View style={[styles.bannerInner, styles.bannerAmber, styles.bannerAmberRow]}>
+                  <Ionicons name="warning-outline" size={16} color="#92400E" />
+                  <Text style={styles.bannerAmberText}>
+                    <Text style={{ fontFamily: Fonts.bold }}>{spotsLeft} spot{spotsLeft === 1 ? '' : 's'} left</Text>
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          )}
           <View style={styles.eventMainCard}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
               <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
@@ -2966,7 +3086,11 @@ export function EventDetailScreen({
         visible={showDetailSaveScopeModal}
         transparent
         animationType="fade"
-        onRequestClose={() => !updateEventMutation.isPending && setShowDetailSaveScopeModal(false)}
+        onRequestClose={() => {
+          if (updateEventMutation.isPending) return;
+          clearPendingAfterSuccessfulSave();
+          setShowDetailSaveScopeModal(false);
+        }}
       >
         <View style={styles.deleteOverlay}>
           <View style={[styles.deleteBox, styles.detailSaveScopeModalBox]}>
@@ -3003,7 +3127,10 @@ export function EventDetailScreen({
             </View>
             <View style={[styles.detailSaveScopeModalActions, { marginTop: 18 }]}>
               <TouchableOpacity
-                onPress={() => setShowDetailSaveScopeModal(false)}
+                onPress={() => {
+                  clearPendingAfterSuccessfulSave();
+                  setShowDetailSaveScopeModal(false);
+                }}
                 style={[styles.deleteCancelBtn, { flex: 1 }]}
                 disabled={updateEventMutation.isPending}
               >
@@ -4049,11 +4176,11 @@ const styles = StyleSheet.create({
   },
   /** Matches UserAvatarStack size={24}; fixed slot inside fixed-height attendRow. */
   attendRowAvatarSlot: {
-    width: 24,
     height: 24,
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  attendText:       { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
+  attendText:       { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular, flex: 1, minWidth: 0 },
   commentRow:       { flexDirection: 'row', gap: 12, paddingVertical: 14, paddingHorizontal: 16, position: 'relative', overflow: 'hidden' },
   commentRowHighlightOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -29,21 +29,12 @@ export function EventScopeChrome({ eventId }: EventScopeChromeProps) {
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
   const [showNotifs, setShowNotifs] = useState(false);
 
-  const eventEligibleGroupCount = useMemo(
-    () =>
-      allGroupsForChrome.filter(
-        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
-      ).length,
-    [allGroupsForChrome]
-  );
   const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
 
   return (
     <>
       <View style={[styles.chrome, { paddingTop: insets.top }]}>
         <EventsTopHeader
-          userId={currentUserId}
-          eventEligibleGroupCount={eventEligibleGroupCount}
           showNotifs={showNotifs}
           onToggleNotifs={() => setShowNotifs((p) => !p)}
           unreadCount={unreadNotifCount}

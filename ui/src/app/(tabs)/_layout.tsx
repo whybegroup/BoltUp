@@ -93,6 +93,18 @@ export default function TabLayout() {
       }}
     >
       <Tabs.Screen
+        name="groups"
+        options={{
+          title: 'Groups',
+          tabBarIcon: ({ focused }) => (
+            <TabBarGlyph
+              focused={focused}
+              iconNode={<GroupsPeopleGlyph size={20} color={focused ? Colors.text : Colors.textMuted} />}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="events"
         options={{
           title: 'Events',
@@ -118,18 +130,6 @@ export default function TabLayout() {
                   color={focused ? Colors.text : Colors.textMuted}
                 />
               }
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="groups"
-        options={{
-          title: 'Groups',
-          tabBarIcon: ({ focused }) => (
-            <TabBarGlyph
-              focused={focused}
-              iconNode={<GroupsPeopleGlyph size={20} color={focused ? Colors.text : Colors.textMuted} />}
             />
           ),
         }}

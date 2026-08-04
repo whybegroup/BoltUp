@@ -2,11 +2,8 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { Colors, Fonts, Layout } from '../../constants/theme';
 import { EventsCalendarGlyph } from '../TabScreenIcons';
-import { CreateOrJoinButton } from '../CreateOrJoinButton';
 
 export type EventsTopHeaderProps = {
-  userId?: string;
-  eventEligibleGroupCount: number;
   showNotifs: boolean;
   onToggleNotifs: () => void;
   unreadCount: number;
@@ -15,8 +12,6 @@ export type EventsTopHeaderProps = {
 };
 
 export function EventsTopHeader({
-  userId,
-  eventEligibleGroupCount,
   showNotifs,
   onToggleNotifs,
   unreadCount,
@@ -74,7 +69,6 @@ export function EventsTopHeader({
             </Svg>
           </TouchableOpacity>
         </View>
-        <CreateOrJoinButton userId={userId} eventEligibleGroupCount={eventEligibleGroupCount} />
         <TouchableOpacity
           onPress={onToggleNotifs}
           style={[styles.iconBtn, showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg }]}

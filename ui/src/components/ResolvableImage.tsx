@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Platform,
   StyleSheet,
   View,
   type ImageResizeMode,
@@ -10,6 +11,10 @@ import {
 } from 'react-native';
 import { Colors } from '../constants/theme';
 import { isDirectRenderableImageUrl, resolveImageViewUrls } from '../services/resolveImageViewUrls';
+import {
+  ensureCachedImageFileUri,
+  peekCachedImageFileUri,
+} from '../services/imageDiskCache';
 
 type Props = {
   storedUrl: string;
@@ -32,68 +37,125 @@ const StableUriImage = memo(function StableUriImage({
   resizeMode: ImageResizeMode;
   onError?: () => void;
 }) {
-  const source = useMemo(() => ({ uri }), [uri]);
+  const source = useMemo(
+    () => ({
+      uri,
+      // Prefer HTTP cache when still using remote URLs (iOS).
+      ...(Platform.OS === 'ios' && !uri.startsWith('file:')
+        ? ({ cache: 'force-cache' } as const)
+        : null),
+    }),
+    [uri]
+  );
   return <Image source={source} style={style} resizeMode={resizeMode} onError={onError} />;
 });
 
+function useDisplayUri(
+  storedUrl: string,
+  remoteViewUrl: string | null
+): string | null {
+  const [displayUri, setDisplayUri] = useState<string | null>(() => {
+    if (!storedUrl?.trim()) return null;
+    if (isDirectRenderableImageUrl(storedUrl)) return storedUrl;
+    return peekCachedImageFileUri(storedUrl);
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const source = storedUrl?.trim();
+    if (!source) {
+      setDisplayUri(null);
+      return;
+    }
+    if (isDirectRenderableImageUrl(source)) {
+      setDisplayUri(source);
+      return;
+    }
+
+    const peek = peekCachedImageFileUri(source);
+    if (peek) {
+      setDisplayUri(peek);
+      return;
+    }
+
+    if (!remoteViewUrl?.trim()) {
+      setDisplayUri(null);
+      return;
+    }
+
+    // Show remote immediately, then swap to disk cache when ready.
+    setDisplayUri(remoteViewUrl);
+    void ensureCachedImageFileUri(source, remoteViewUrl).then((fileUri) => {
+      if (!cancelled && fileUri) setDisplayUri(fileUri);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [storedUrl, remoteViewUrl]);
+
+  return displayUri;
+}
+
 export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap, onError }: Props) {
-  const [singleUri, setSingleUri] = useState<string | null>(() =>
-    storedUrl?.trim() && isDirectRenderableImageUrl(storedUrl) ? storedUrl : null,
+  const [singleRemote, setSingleRemote] = useState<string | null>(() =>
+    storedUrl?.trim() && isDirectRenderableImageUrl(storedUrl) ? storedUrl : null
   );
 
   useEffect(() => {
     if (urlMap) return;
     if (!storedUrl?.trim()) {
-      setSingleUri(null);
+      setSingleRemote(null);
       return;
     }
     if (isDirectRenderableImageUrl(storedUrl)) {
-      setSingleUri(storedUrl);
+      setSingleRemote(storedUrl);
       return;
     }
     let cancelled = false;
     resolveImageViewUrls([storedUrl]).then((m) => {
-      if (!cancelled) setSingleUri(m.get(storedUrl) ?? storedUrl);
+      if (!cancelled) setSingleRemote(m.get(storedUrl) ?? storedUrl);
     });
     return () => {
       cancelled = true;
     };
   }, [storedUrl, urlMap]);
 
+  const remoteFromMap =
+    urlMap && storedUrl?.trim()
+      ? urlMap.has(storedUrl)
+        ? (urlMap.get(storedUrl) as string)
+        : undefined
+      : undefined;
+  const remoteViewUrl = urlMap ? (remoteFromMap ?? null) : singleRemote;
+  const displayUri = useDisplayUri(storedUrl, remoteViewUrl);
+
   if (!storedUrl?.trim()) {
     return null;
   }
 
-  if (isDirectRenderableImageUrl(storedUrl)) {
-    return (
-      <StableUriImage uri={storedUrl} style={style} resizeMode={resizeMode} onError={onError} />
-    );
-  }
-
-  if (urlMap) {
-    const uri = urlMap.get(storedUrl);
-    if (uri === undefined) {
-      return (
-        <View style={[style, styles.ph]}>
-          <ActivityIndicator size="small" color={Colors.textMuted} />
-        </View>
-      );
-    }
-    if (!uri.trim()) {
-      return null;
-    }
-    return <StableUriImage uri={uri} style={style} resizeMode={resizeMode} onError={onError} />;
-  }
-
-  if (!singleUri?.trim()) {
+  if (urlMap && remoteFromMap === undefined) {
     return (
       <View style={[style, styles.ph]}>
         <ActivityIndicator size="small" color={Colors.textMuted} />
       </View>
     );
   }
+
+  if (urlMap && remoteFromMap !== undefined && !remoteFromMap.trim()) {
+    return null;
+  }
+
+  if (!displayUri?.trim()) {
+    return (
+      <View style={[style, styles.ph]}>
+        <ActivityIndicator size="small" color={Colors.textMuted} />
+      </View>
+    );
+  }
+
   return (
-    <StableUriImage uri={singleUri} style={style} resizeMode={resizeMode} onError={onError} />
+    <StableUriImage uri={displayUri} style={style} resizeMode={resizeMode} onError={onError} />
   );
 }
 

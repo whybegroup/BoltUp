@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Stack, usePathname } from 'expo-router';
 import { Colors } from '../../../constants/theme';
@@ -7,12 +7,24 @@ import { PollsTabNavBridge } from '../../../components/pollsScope/PollsTabNavBri
 import { PollScopeNavProvider, usePollScopeNav } from '../../../components/pollsScope/PollScopeNavContext';
 import { pollIdFromPollsTabPathname } from '../../../components/pollsScope/pollIdFromPathname';
 import { usePollsTabParentNavigation } from '../../../components/pollsScope/usePollsTabParentNavigation';
+import { CreateOrJoinButton } from '../../../components/CreateOrJoinButton';
+import { useGroups } from '../../../hooks/api';
+import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 
 function PollsTabLayoutInner() {
   const pathname = usePathname();
   const pathnamePollId = pollIdFromPollsTabPathname(pathname);
   const { optimisticAllPolls, setOptimisticAllPolls } = usePollScopeNav();
   const chromePollId = optimisticAllPolls ? null : pathnamePollId;
+  const { userId: currentUserId } = useCurrentUserContext();
+  const { data: allGroups = [] } = useGroups(currentUserId ?? '', true);
+  const eventEligibleGroupCount = useMemo(
+    () =>
+      allGroups.filter(
+        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
+      ).length,
+    [allGroups]
+  );
 
   usePollsTabParentNavigation();
 
@@ -35,6 +47,11 @@ function PollsTabLayoutInner() {
           }}
         />
       </View>
+      <CreateOrJoinButton
+        userId={currentUserId}
+        eventEligibleGroupCount={eventEligibleGroupCount}
+        mode="poll"
+      />
     </View>
   );
 }

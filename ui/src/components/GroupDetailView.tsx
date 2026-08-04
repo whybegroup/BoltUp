@@ -12,11 +12,11 @@ import {
   Platform,
   Dimensions,
 } from 'react-native';
-import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollView';
+import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import * as Clipboard from 'expo-clipboard';
 import { usePathname, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../utils/helpers';
 import { formSectionTitleStyle, Avatar } from './ui';
@@ -60,6 +60,121 @@ function descriptionExceedsTwoLines(raw: string): boolean {
   if (s.split(/\r?\n/).length > 2) return true;
   if (s.length > 200) return true;
   return false;
+}
+
+type AnnouncementModalBodyProps = {
+  groupName: string;
+  announcement: string;
+  draftAnnouncement: string;
+  setDraftAnnouncement: (v: string) => void;
+  editingAnnouncement: boolean;
+  canEditAnnouncement: boolean;
+  updatePending: boolean;
+  onClose: () => void;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: () => void;
+};
+
+/** Header stays pinned; only the body scrolls / yields to the keyboard. */
+function AnnouncementModalBody({
+  groupName,
+  announcement,
+  draftAnnouncement,
+  setDraftAnnouncement,
+  editingAnnouncement,
+  canEditAnnouncement,
+  updatePending,
+  onClose,
+  onStartEdit,
+  onCancelEdit,
+  onSave,
+}: AnnouncementModalBodyProps) {
+  return (
+    <SafeAreaView style={styles.announcementModalRoot} edges={['top', 'left', 'right', 'bottom']}>
+      <View style={styles.membersModalHeader}>
+        <Text
+          style={[styles.membersModalTitle, { flex: 1, marginRight: 8 }]}
+          numberOfLines={2}
+          ellipsizeMode="tail"
+          accessibilityRole="header"
+        >
+          {`Announcement @ ${groupName}`}
+        </Text>
+        <View style={styles.announcementModalHeaderActions}>
+          {canEditAnnouncement && !editingAnnouncement ? (
+            <TouchableOpacity
+              onPress={onStartEdit}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Edit announcement"
+            >
+              <Text style={styles.announcementModalEditHeader}>Edit</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.membersModalClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close announcement"
+          >
+            <Ionicons name="close" size={26} color={Colors.textSub} />
+          </TouchableOpacity>
+        </View>
+      </View>
+      <KeyboardSafeScrollView
+        style={styles.membersModalScroll}
+        contentContainerStyle={styles.announcementModalScrollContent}
+        bounces={false}
+      >
+          <View style={styles.membersModalCardWrap}>
+            {editingAnnouncement ? (
+              <>
+                <View style={styles.announcementInputWrapper}>
+                  <TextInput
+                    value={draftAnnouncement}
+                    onChangeText={setDraftAnnouncement}
+                    placeholder="Announcement for all members…"
+                    placeholderTextColor={Colors.textMuted}
+                    style={styles.announcementInput}
+                    multiline
+                    scrollEnabled
+                    textAlignVertical="top"
+                    underlineColorAndroid="transparent"
+                  />
+                </View>
+                <View style={styles.announcementEditActions}>
+                  <TouchableOpacity
+                    onPress={onCancelEdit}
+                    disabled={updatePending}
+                    style={[styles.announcementEditActionBtn, styles.announcementEditActionBtnSecondary]}
+                  >
+                    <Text style={styles.announcementEditActionBtnTextSecondary}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={onSave}
+                    disabled={updatePending}
+                    style={[styles.announcementEditActionBtn, styles.announcementEditActionBtnPrimary]}
+                  >
+                    {updatePending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.announcementEditActionBtnTextPrimary}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : announcement ? (
+              <Text style={styles.announcementModalBodyText} selectable>
+                {announcement}
+              </Text>
+            ) : (
+              <Text style={styles.announcementModalEmptyText}>Nothing to see here ...</Text>
+            )}
+          </View>
+      </KeyboardSafeScrollView>
+    </SafeAreaView>
+  );
 }
 
 export type GroupDetailViewProps = {
@@ -716,7 +831,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                           {updateGroup.isPending ? (
                             <ActivityIndicator size="small" color={Colors.textSub} />
                           ) : (
-                            <Ionicons name="checkmark" size={20} color={Colors.text} />
+                            <Ionicons name="save-outline" size={20} color={Colors.textSub} />
                           )}
                         </TouchableOpacity>
                       </>
@@ -1171,92 +1286,25 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
 
       {showAnnouncementReadModal ? (
         <Modal visible animationType="slide" onRequestClose={closeAnnouncementModal}>
-          <SafeAreaView style={styles.membersModalWrap} edges={['top', 'left', 'right', 'bottom']}>
-            <KeyboardFormRoot style={styles.announcementModalKeyboard}>
-              <View style={styles.membersModalHeader}>
-                <Text
-                  style={[styles.membersModalTitle, { flex: 1, marginRight: 8 }]}
-                  numberOfLines={2}
-                  ellipsizeMode="tail"
-                  accessibilityRole="header"
-                >
-                  {`Announcement @ ${group.name}`}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  {canEditAnnouncement && !editingAnnouncement ? (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setDraftAnnouncement(group.announcement ?? '');
-                        setEditingAnnouncement(true);
-                      }}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityRole="button"
-                      accessibilityLabel="Edit announcement"
-                    >
-                      <Text style={styles.announcementModalEditHeader}>Edit</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  <TouchableOpacity
-                    onPress={closeAnnouncementModal}
-                    style={styles.membersModalClose}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close announcement"
-                  >
-                    <Ionicons name="close" size={26} color={Colors.textSub} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <KeyboardSafeScrollView style={styles.membersModalScroll}>
-                <View style={styles.membersModalCardWrap}>
-                  {editingAnnouncement ? (
-                    <>
-                      <View style={styles.announcementInputWrapper}>
-                        <TextInput
-                          value={draftAnnouncement}
-                          onChangeText={setDraftAnnouncement}
-                          placeholder="Announcement for all members…"
-                          placeholderTextColor={Colors.textMuted}
-                          style={styles.announcementInput}
-                          multiline
-                          scrollEnabled
-                          textAlignVertical="top"
-                          underlineColorAndroid="transparent"
-                        />
-                      </View>
-                      <View style={styles.announcementEditActions}>
-                        <TouchableOpacity
-                          onPress={cancelAnnouncementEdit}
-                          disabled={updateGroup.isPending}
-                          style={[styles.announcementEditActionBtn, styles.announcementEditActionBtnSecondary]}
-                        >
-                          <Text style={styles.announcementEditActionBtnTextSecondary}>Cancel</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => void saveAnnouncement()}
-                          disabled={updateGroup.isPending}
-                          style={[styles.announcementEditActionBtn, styles.announcementEditActionBtnPrimary]}
-                        >
-                          {updateGroup.isPending ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                          ) : (
-                            <Text style={styles.announcementEditActionBtnTextPrimary}>Save</Text>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    </>
-                  ) : (group.announcement ?? '').trim() ? (
-                    <Text style={styles.announcementModalBodyText} selectable>
-                      {(group.announcement ?? '').trim()}
-                    </Text>
-                  ) : (
-                    <Text style={styles.announcementModalEmptyText}>
-                      Nothing to see here ...
-                    </Text>
-                  )}
-                </View>
-              </KeyboardSafeScrollView>
-            </KeyboardFormRoot>
-          </SafeAreaView>
+          {/* Modal has its own window; provider keeps top inset reliable. */}
+          <SafeAreaProvider>
+            <AnnouncementModalBody
+              groupName={group.name}
+              announcement={(group.announcement ?? '').trim()}
+              draftAnnouncement={draftAnnouncement}
+              setDraftAnnouncement={setDraftAnnouncement}
+              editingAnnouncement={editingAnnouncement}
+              canEditAnnouncement={canEditAnnouncement}
+              updatePending={updateGroup.isPending}
+              onClose={closeAnnouncementModal}
+              onStartEdit={() => {
+                setDraftAnnouncement(group.announcement ?? '');
+                setEditingAnnouncement(true);
+              }}
+              onCancelEdit={cancelAnnouncementEdit}
+              onSave={() => void saveAnnouncement()}
+            />
+          </SafeAreaProvider>
         </Modal>
       ) : null}
 
@@ -1516,6 +1564,20 @@ const styles = StyleSheet.create({
   membersPreviewAvatarOverlap: { marginLeft: -9 },
   membersPreviewCount: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
   membersModalWrap: { flex: 1, backgroundColor: Colors.bg },
+  announcementModalRoot: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+    overflow: 'hidden',
+  },
+  announcementModalHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  announcementModalScrollContent: {
+    flexGrow: 1,
+    paddingBottom: 24,
+  },
   membersModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1525,6 +1587,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
     backgroundColor: Colors.surface,
+    flexShrink: 0,
+    zIndex: 2,
   },
   membersModalTitle: { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text, flexShrink: 1 },
   membersModalClose: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
@@ -1535,7 +1599,6 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 2,
   },
-  announcementModalKeyboard: { flex: 1 },
   announcementModalEditHeader: {
     fontSize: 16,
     fontFamily: Fonts.semiBold,

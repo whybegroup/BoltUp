@@ -3,21 +3,16 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { Colors, Fonts, Layout } from '../constants/theme';
 import { GroupsPeopleGlyph } from './TabScreenIcons';
-import { CreateOrJoinButton } from './CreateOrJoinButton';
 
 export type GroupsTopHeaderProps = {
-  userId?: string;
-  eventEligibleGroupCount: number;
   showNotifs: boolean;
   onToggleNotifs: () => void;
   unreadCount: number;
-  /** Inserted after create/join, before the bell (e.g. draft Save/Reset on group detail). */
+  /** Inserted after title actions, before the bell (e.g. draft Save/Reset on group detail). */
   trailingActions?: ReactNode;
 };
 
 export function GroupsTopHeader({
-  userId,
-  eventEligibleGroupCount,
   showNotifs,
   onToggleNotifs,
   unreadCount,
@@ -32,7 +27,6 @@ export function GroupsTopHeader({
         </Text>
       </View>
       <View style={styles.headerActions}>
-        <CreateOrJoinButton userId={userId} eventEligibleGroupCount={eventEligibleGroupCount} />
         {trailingActions}
         <TouchableOpacity
           onPress={onToggleNotifs}

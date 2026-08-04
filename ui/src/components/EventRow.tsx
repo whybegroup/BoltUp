@@ -158,7 +158,7 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
           <View style={styles.needsTextWrap}>
             <Ionicons name="warning-outline" size={14} color="#92400E" style={styles.pillIcon} />
             <Text style={styles.needsText}>
-              {minN - going.length} more needed
+              {minN - going.length} more people needed
             </Text>
           </View>
         )}

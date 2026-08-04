@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Stack, usePathname } from 'expo-router';
 import { Colors } from '../../../constants/theme';
@@ -7,12 +7,24 @@ import { GroupsTabNavBridge } from '../../../components/groupScope/GroupsTabNavB
 import { GroupScopeNavProvider, useGroupScopeNav } from '../../../components/groupScope/GroupScopeNavContext';
 import { groupIdFromPathname } from '../../../components/groupScope/groupIdFromPathname';
 import { useGroupsTabParentNavigation } from '../../../components/groupScope/useGroupsTabParentNavigation';
+import { CreateOrJoinButton } from '../../../components/CreateOrJoinButton';
+import { useGroups } from '../../../hooks/api';
+import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 
 function GroupsTabLayoutInner() {
   const pathname = usePathname();
   const pathnameGroupId = groupIdFromPathname(pathname);
   const { optimisticAllGroups, setOptimisticAllGroups } = useGroupScopeNav();
   const chromeGroupId = optimisticAllGroups ? null : pathnameGroupId;
+  const { userId: currentUserId } = useCurrentUserContext();
+  const { data: allGroups = [] } = useGroups(currentUserId ?? '', true);
+  const eventEligibleGroupCount = useMemo(
+    () =>
+      allGroups.filter(
+        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
+      ).length,
+    [allGroups]
+  );
 
   useGroupsTabParentNavigation({ enabled: !pathnameGroupId });
 
@@ -35,6 +47,13 @@ function GroupsTabLayoutInner() {
           }}
         />
       </View>
+      {!chromeGroupId ? (
+        <CreateOrJoinButton
+          userId={currentUserId}
+          eventEligibleGroupCount={eventEligibleGroupCount}
+          mode="group"
+        />
+      ) : null}
     </View>
   );
 }

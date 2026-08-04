@@ -317,6 +317,8 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const [newPostPhotoUrls, setNewPostPhotoUrls] = useState<string[]>([]);
   const [composerFileAttachments, setComposerFileAttachments] = useState<ForumPostFileAttachment[]>([]);
   const [newPostFileAttachments, setNewPostFileAttachments] = useState<ForumPostFileAttachment[]>([]);
+  /** Remount TextInput after clear so grown multiline height resets to minHeight. */
+  const [newPostInputKey, setNewPostInputKey] = useState(0);
   const [composerSelection, setComposerSelection] = useState<{ start: number; end: number }>({
     start: 0,
     end: 0,
@@ -967,6 +969,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     setNewPostPhotoUrls([]);
     setNewPostFileAttachments([]);
     setNewPostSelection({ start: 0, end: 0 });
+    setNewPostInputKey((k) => k + 1);
     void (async () => {
       if (!currentUserId || !forumDraftsReady) return;
       const postEdits = { ...postEditsRef.current };
@@ -1071,6 +1074,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     setNewPostPhotoUrls([]);
     setNewPostFileAttachments([]);
     setNewPostSelection({ start: 0, end: 0 });
+    setNewPostInputKey((k) => k + 1);
     void (async () => {
       if (!currentUserId) return;
       const postEdits = { ...postEditsRef.current };
@@ -1596,6 +1600,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         ) : null}
         <View ref={postComposerRef} collapsable={false}>
           <CommentMentionInput
+            key={isNew ? `new-post-${newPostInputKey}` : `edit-post-${editingPostId ?? 'none'}`}
             value={body}
             onChangeText={onChangeText}
             onFocus={scrollPostComposerIntoView}
@@ -2440,7 +2445,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.medium,
   },
   bodyInput: {
-    minHeight: 140,
+    minHeight: 72,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
     borderRadius: Radius.lg,

@@ -27,13 +27,17 @@ const webInputNoFocusRing = {
   outlineStyle: 'none',
 } as unknown as TextStyle;
 
+export type CreateOrJoinMode = 'event' | 'poll' | 'group';
+
 type Props = {
   userId: string | undefined;
   /** Groups where the user can host events (member or admin), same rule as Events tab */
   eventEligibleGroupCount: number;
+  /** Limits Add to the current tab’s action (event / poll / group+join). */
+  mode: CreateOrJoinMode;
 };
 
-export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
+export function CreateOrJoinButton({ userId, eventEligibleGroupCount, mode }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const joinByCode = useJoinByInviteCode();
@@ -51,30 +55,42 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
     });
   };
 
-  const onNewEvent = useGuardedPress(() => {
+  const goNewEvent = () => {
     closeMenu();
     if (eventEligibleGroupCount === 0) {
       setNoGroupFor('event');
       return;
     }
     router.push(withReturnTo('/create-event', pathname));
-  });
+  };
 
-  const onNewGroup = useGuardedPress(() => {
+  const goNewGroup = () => {
     closeMenu();
     router.push(withReturnTo('/create-group', pathname));
-  });
+  };
 
-  const onNewPoll = useGuardedPress(() => {
+  const goNewPoll = () => {
     closeMenu();
     if (eventEligibleGroupCount === 0) {
       setNoGroupFor('poll');
       return;
     }
     router.push(withReturnTo('/create-poll', pathname));
-  });
+  };
 
-  const openMenu = useGuardedPress(() => setMenuOpen(true));
+  const onNewGroup = useGuardedPress(goNewGroup);
+
+  const onAddPress = useGuardedPress(() => {
+    if (mode === 'event') {
+      goNewEvent();
+      return;
+    }
+    if (mode === 'poll') {
+      goNewPoll();
+      return;
+    }
+    setMenuOpen(true);
+  });
 
   const onJoinSubmit = useGuardedPress(() => {
     if (!userId?.trim() || !inviteCode.trim()) return;
@@ -100,86 +116,78 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
 
   return (
     <>
-      <TouchableOpacity onPress={openMenu} style={styles.trigger}>
-        <Text style={styles.triggerText}>+ Add</Text>
+      <TouchableOpacity
+        onPress={onAddPress}
+        style={[styles.fab, menuOpen && styles.fabActive]}
+        accessibilityLabel="Add"
+        accessibilityRole="button"
+        activeOpacity={0.85}
+      >
+        <Ionicons name="add" size={32} color={Colors.text} />
       </TouchableOpacity>
 
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
-        <KeyboardFormRoot style={styles.menuRoot}>
-          <Pressable style={styles.menuBackdropFill} onPress={closeMenu} />
-          <View style={styles.menuCardOuter}>
-            <View style={styles.menuCard}>
-              <View style={styles.menuHeader}>
-                <Text style={styles.menuTitle}>Create or join</Text>
-                <TouchableOpacity onPress={closeMenu} style={styles.menuClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                  <Ionicons name="close" size={22} color={Colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-              <KeyboardSafeScrollView
-                ref={menuScrollRef}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.menuScroll}
-              >
-                <TouchableOpacity style={styles.menuRow} onPress={onNewEvent} activeOpacity={0.7}>
-                  <View style={styles.menuRowIcon}>
-                    <Ionicons name="calendar-outline" size={22} color={Colors.text} />
-                  </View>
-                  <View style={styles.menuRowText}>
-                    <Text style={styles.menuRowTitle}>New event</Text>
-                    <Text style={styles.menuRowSubtitle}>Schedule something for your groups</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.menuRow} onPress={onNewPoll} activeOpacity={0.7}>
-                  <View style={styles.menuRowIcon}>
-                    <Ionicons name="bar-chart-outline" size={22} color={Colors.text} />
-                  </View>
-                  <View style={styles.menuRowText}>
-                    <Text style={styles.menuRowTitle}>New poll</Text>
-                    <Text style={styles.menuRowSubtitle}>Create a poll for your groups</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.menuRow} onPress={onNewGroup} activeOpacity={0.7}>
-                  <View style={styles.menuRowIcon}>
-                    <Ionicons name="people-outline" size={22} color={Colors.text} />
-                  </View>
-                  <View style={styles.menuRowText}>
-                    <Text style={styles.menuRowTitle}>New group</Text>
-                    <Text style={styles.menuRowSubtitle}>Start a group others can join</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-                </TouchableOpacity>
-
-                <View style={styles.menuDivider} />
-
-                <Text style={styles.inviteHeading}>Join with invite code</Text>
-                <Text style={styles.inviteDesc}>Got an invite link or code? Enter it here.</Text>
-                <View style={styles.inviteRow}>
-                  <TextInput
-                    value={inviteCode}
-                    onChangeText={setInviteCode}
-                    onFocus={scrollInviteIntoView}
-                    placeholder="Enter invite code"
-                    placeholderTextColor={Colors.textMuted}
-                    style={[styles.inviteInput, Platform.OS === 'web' && webInputNoFocusRing]}
-                    autoCapitalize="characters"
-                  />
+      {mode === 'group' ? (
+        <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
+          <KeyboardFormRoot style={styles.menuRoot}>
+            <Pressable style={styles.menuBackdropFill} onPress={closeMenu} />
+            <View style={styles.menuCardOuter}>
+              <View style={styles.menuCard}>
+                <View style={styles.menuHeader}>
+                  <Text style={styles.menuTitle}>Create or join</Text>
                   <TouchableOpacity
-                    onPress={onJoinSubmit}
-                    style={[styles.inviteJoinBtn, { opacity: inviteCode.trim() && userId ? 1 : 0.4 }]}
-                    disabled={!inviteCode.trim() || !userId || joinByCode.isPending}
+                    onPress={closeMenu}
+                    style={styles.menuClose}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   >
-                    <Text style={styles.inviteJoinBtnText}>{joinByCode.isPending ? 'Joining…' : 'Join'}</Text>
+                    <Ionicons name="close" size={22} color={Colors.textMuted} />
                   </TouchableOpacity>
                 </View>
-              </KeyboardSafeScrollView>
+                <KeyboardSafeScrollView
+                  ref={menuScrollRef}
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.menuScroll}
+                >
+                  <TouchableOpacity style={styles.menuRow} onPress={onNewGroup} activeOpacity={0.7}>
+                    <View style={styles.menuRowIcon}>
+                      <Ionicons name="people-outline" size={22} color={Colors.text} />
+                    </View>
+                    <View style={styles.menuRowText}>
+                      <Text style={styles.menuRowTitle}>New group</Text>
+                      <Text style={styles.menuRowSubtitle}>Start a group others can join</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                  </TouchableOpacity>
+
+                  <View style={styles.menuDivider} />
+
+                  <Text style={styles.inviteHeading}>Join with invite code</Text>
+                  <Text style={styles.inviteDesc}>Got an invite link or code? Enter it here.</Text>
+                  <View style={styles.inviteRow}>
+                    <TextInput
+                      value={inviteCode}
+                      onChangeText={setInviteCode}
+                      onFocus={scrollInviteIntoView}
+                      placeholder="Enter invite code"
+                      placeholderTextColor={Colors.textMuted}
+                      style={[styles.inviteInput, Platform.OS === 'web' && webInputNoFocusRing]}
+                      autoCapitalize="characters"
+                    />
+                    <TouchableOpacity
+                      onPress={onJoinSubmit}
+                      style={[styles.inviteJoinBtn, { opacity: inviteCode.trim() && userId ? 1 : 0.4 }]}
+                      disabled={!inviteCode.trim() || !userId || joinByCode.isPending}
+                    >
+                      <Text style={styles.inviteJoinBtnText}>
+                        {joinByCode.isPending ? 'Joining…' : 'Join'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </KeyboardSafeScrollView>
+              </View>
             </View>
-          </View>
-        </KeyboardFormRoot>
-      </Modal>
+          </KeyboardFormRoot>
+        </Modal>
+      ) : null}
 
       <NoGroupForActionModal
         visible={noGroupFor !== null}
@@ -191,15 +199,29 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount }: Props) {
 }
 
 const styles = StyleSheet.create({
-  trigger: {
-    minHeight: 34,
-    paddingHorizontal: 14,
-    justifyContent: 'center',
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
     alignItems: 'center',
-    borderRadius: 10,
-    backgroundColor: Colors.accent,
+    justifyContent: 'center',
+    zIndex: 50,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
   },
-  triggerText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  fabActive: {
+    borderColor: Colors.borderStrong,
+    backgroundColor: Colors.bg,
+  },
   menuRoot: {
     flex: 1,
     justifyContent: 'center',
