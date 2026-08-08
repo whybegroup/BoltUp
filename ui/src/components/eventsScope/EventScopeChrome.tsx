@@ -9,20 +9,22 @@ import { GroupsBreadcrumbTrail } from '../GroupsBreadcrumbTrail';
 import { NotificationsPanelModal } from '../NotificationsPanelModal';
 import { useEventScopeBreadcrumbs } from './useEventScopeBreadcrumbs';
 import { useEventScopeNav } from './EventScopeNavContext';
+import type { EventSubpage } from './useEventSubpage';
 
 type EventScopeChromeProps = {
-  eventId: string | null;
+  subpage: EventSubpage;
+  fromEventId?: string;
 };
 
 /**
  * Single top bar + breadcrumb strip for the entire Events tab.
  * Stack screens below must not render their own headers.
  */
-export function EventScopeChrome({ eventId }: EventScopeChromeProps) {
+export function EventScopeChrome({ subpage, fromEventId }: EventScopeChromeProps) {
   const insets = useSafeAreaInsets();
   const { userId: currentUserId } = useCurrentUserContext();
   const { viewMode, setViewMode } = useEventScopeNav();
-  const { segments } = useEventScopeBreadcrumbs(eventId);
+  const { segments } = useEventScopeBreadcrumbs(subpage, fromEventId);
 
   const { data: allGroupsForChrome = [] } = useGroups(currentUserId ?? '', true);
   const { data: notifs = [], isLoading: notifsLoading } = useNotifications(currentUserId || '');

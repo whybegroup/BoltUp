@@ -36,7 +36,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { EventFormPopoverChrome } from './EventFormPopoverChrome';
 import { modalTopBarStyles } from './modalTopBarStyles';
-import { usePathname, useNavigation, type Href } from 'expo-router';
+import { usePathname, useNavigation, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { COMMENT_REACTION_EMOJIS } from '../constants/commentReactionEmojis';
@@ -101,12 +101,12 @@ import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 import {
   ALL_EVENTS_HREF,
   navigateEventsTabTo,
-  navigateToGroupsTabGroupOverview,
   groupsTabParentHref,
   navigateGroupsTabTo,
   type EventsTabNavCallbacks,
   type GroupsTabNavCallbacks,
 } from '../utils/tabBreadcrumbNav';
+import { buildGroupDetailUrl } from '../utils/breadcrumbUrl';
 import Toast from 'react-native-toast-message';
 import {
   formatWallDateFromUtcIso,
@@ -394,6 +394,7 @@ export function EventDetailScreen({
   const router = useRouter();
   const navigation = useNavigation();
   const pathname = usePathname();
+  
   const returnToHref = useMemo(
     () => parseReturnToParam(returnToParam ?? undefined),
     [returnToParam]
@@ -1166,13 +1167,6 @@ export function EventDetailScreen({
     ],
   );
 
-  const openGroupOverview = useCallback(() => {
-    if (!ev?.groupId) return;
-    navigateToGroupsTabGroupOverview(router, ev.groupId, {
-      withinGroupsTab: variant === 'groups',
-      groupsTabNav,
-    });
-  }, [ev?.groupId, router, variant, groupsTabNav]);
 
   if (!eventId) {
     const missing = (
@@ -1997,33 +1991,8 @@ export function EventDetailScreen({
             <View style={styles.eventMainCard}>
           <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
             {isPageVariant ? (
-              <View style={styles.pageEventHeaderRow}>
-                <TouchableOpacity
-                  style={[styles.groupChipAboveTitle, styles.groupChipInRow]}
-                  onPress={openGroupOverview}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.groupDot, { backgroundColor: p.dot }]} />
-                  <Text style={styles.navGroupName} numberOfLines={1}>
-                    {group.name}
-                  </Text>
-                  <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
-                </TouchableOpacity>
-                <View style={styles.pageEventToolbar}>{eventToolbar}</View>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.groupChipAboveTitle}
-                onPress={() => router.push(withReturnTo(`/(tabs)/groups/${ev.groupId}`, pathname))}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.groupDot, { backgroundColor: p.dot }]} />
-                <Text style={styles.navGroupName} numberOfLines={1}>
-                  {group.name}
-                </Text>
-                <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
-              </TouchableOpacity>
-            )}
+              <View style={styles.pageEventToolbar}>{eventToolbar}</View>
+            ) : null}
             {canEditTitle ? (
               <View style={styles.eventTitleField}>
                 <Text style={formSectionTitleStyle}>
@@ -2410,7 +2379,7 @@ export function EventDetailScreen({
                 </InfoRowSlot>
               )}
               {canEditLive ? (
-                <InfoRowSlot ionicon="people-outline">
+                <InfoRowSlot ionicon="chevron-expand-outline">
                   <View>
                     <View style={styles.detailCapacityRow}>
                       <View style={styles.detailCapacityField}>
@@ -2441,8 +2410,38 @@ export function EventDetailScreen({
                     ) : null}
                   </View>
                 </InfoRowSlot>
+              ) : (displayEv.minAttendees || 0) > 0 || (displayEv.maxAttendees || 0) > 0 ? (
+                <InfoRow ionicon="chevron-expand-outline">
+                  {(displayEv.minAttendees || 0) > 0 && `Min ${displayEv.minAttendees}`}
+                  {(displayEv.minAttendees || 0) > 0 && (displayEv.maxAttendees || 0) > 0 && ' · '}
+                  {(displayEv.maxAttendees || 0) > 0 && `Max ${displayEv.maxAttendees}`}
+                  {(displayEv.maxAttendees || 0) > 0 && displayEv.enableWaitlist && ' · Waitlist enabled'}
+                </InfoRow>
               ) : null}
               <InfoRow ionicon="person-outline">Created by {getUserSafe(ev.createdBy).displayName}</InfoRow>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Ionicons name="people-outline" size={20} color={Colors.textSub} style={{ width: 22 }} />
+                <TouchableOpacity
+                  onPress={() => {
+                    if (variant === 'events') {
+                      eventsTabNav?.setFromEventId?.(eventId || undefined);
+                      console.log(buildGroupDetailUrl(ev.groupId, { isInEventsTab: true, fromEventId: eventId }));
+                      router.push(buildGroupDetailUrl(ev.groupId, { isInEventsTab: true, fromEventId: eventId }));
+                    } else if (variant === 'groups') {
+                      // When in group context within Events tab, check if we should use Events tab navigation
+                      const isInEventsTab = pathname.includes('/(tabs)/events/group') || pathname.includes('/events/group');
+                      if (isInEventsTab) {
+                        eventsTabNav?.setFromEventId?.(eventId || undefined);
+                      }
+                      router.push(buildGroupDetailUrl(ev.groupId, { isInEventsTab, fromEventId: isInEventsTab ? eventId : undefined }));
+                    }
+                  }}
+                  activeOpacity={0.7}
+                  style={{ flex: 1 }}
+                >
+                  <Text style={styles.infoText}>{group.name}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {pendingTimeSuggestions.length > 0 ? (
@@ -3710,6 +3709,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     flexShrink: 0,
+    justifyContent: 'flex-end',
   },
   pageEventIconBtn: {
     width: 40,

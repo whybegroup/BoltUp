@@ -1,21 +1,19 @@
 import { useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Stack, usePathname } from 'expo-router';
+import { Stack } from 'expo-router';
 import { Colors } from '../../../constants/theme';
 import { EventScopeChrome } from '../../../components/eventsScope/EventScopeChrome';
 import { EventsTabNavBridge } from '../../../components/eventsScope/EventsTabNavBridge';
 import { EventScopeNavProvider, useEventScopeNav } from '../../../components/eventsScope/EventScopeNavContext';
-import { eventIdFromEventsTabPathname } from '../../../components/eventsScope/eventIdFromPathname';
+import { useEventSubpage } from '../../../components/eventsScope/useEventSubpage';
 import { useEventsTabParentNavigation } from '../../../components/eventsScope/useEventsTabParentNavigation';
 import { CreateOrJoinButton } from '../../../components/CreateOrJoinButton';
 import { useGroups } from '../../../hooks/api';
 import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 
 function EventsTabLayoutInner() {
-  const pathname = usePathname();
-  const pathnameEventId = eventIdFromEventsTabPathname(pathname);
-  const { optimisticAllEvents, setOptimisticAllEvents } = useEventScopeNav();
-  const chromeEventId = optimisticAllEvents ? null : pathnameEventId;
+  const subpage = useEventSubpage();
+  const { optimisticAllEvents, setOptimisticAllEvents, fromEventId } = useEventScopeNav();
   const { userId: currentUserId } = useCurrentUserContext();
   const { data: allGroups = [] } = useGroups(currentUserId ?? '', true);
   const eventEligibleGroupCount = useMemo(
@@ -29,15 +27,18 @@ function EventsTabLayoutInner() {
   useEventsTabParentNavigation();
 
   useEffect(() => {
-    if (pathnameEventId) {
+    if (subpage.kind !== 'all-events') {
       setOptimisticAllEvents(false);
     }
-  }, [pathnameEventId, setOptimisticAllEvents]);
+  }, [subpage.kind, setOptimisticAllEvents]);
 
   return (
     <View style={styles.root}>
       <EventsTabNavBridge />
-      <EventScopeChrome eventId={chromeEventId} />
+      <EventScopeChrome 
+        subpage={optimisticAllEvents ? { kind: 'all-events' } : subpage} 
+        fromEventId={fromEventId}
+      />
       <View style={styles.stack}>
         <Stack
           screenOptions={{

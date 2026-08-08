@@ -90,8 +90,13 @@ function mergeFilterDraftTimePart(base: Date, picked: Date): Date {
 export function EventsListScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const { viewMode, setViewMode } = useEventScopeNav();
+  const { viewMode, setViewMode, setFromEventId } = useEventScopeNav();
   const { userId: currentUserId } = useCurrentUserContext();
+
+  // Clear fromEventId when returning to all events
+  useEffect(() => {
+    setFromEventId(undefined);
+  }, [setFromEventId]);
 
   const { data: events = [], refetch: refetchEvents } = useEvents({
     userId: currentUserId ?? '',

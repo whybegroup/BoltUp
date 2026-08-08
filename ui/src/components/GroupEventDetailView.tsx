@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { type Href } from 'expo-router';
+import { type Href, usePathname } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors } from '../constants/theme';
 import { useGroup } from '../hooks/api';
@@ -20,8 +20,12 @@ export function GroupEventDetailView({
   focusCommentId,
 }: GroupEventDetailViewProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const groupsTabNav = useGroupScopeNav();
   const { userId: currentUserId } = useCurrentUserContext();
+  
+  // Detect if we're in Events tab context
+  const isInEventsTab = pathname.includes('/(tabs)/events/group') || pathname.includes('/events/group');
 
   const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
 
@@ -32,15 +36,17 @@ export function GroupEventDetailView({
 
   useEffect(() => {
     if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/groups');
+      router.replace(isInEventsTab ? '/(tabs)/events' : '/(tabs)/groups');
     }
-  }, [isError, group?.membershipStatus, router]);
+  }, [isError, group?.membershipStatus, router, isInEventsTab]);
 
   useEffect(() => {
     if (group?.membershipStatus === 'pending') {
-      router.replace(`/(tabs)/groups/${groupId}` as Href);
+      router.replace((isInEventsTab 
+        ? `/(tabs)/events/group/${groupId}`
+        : `/(tabs)/groups/${groupId}`) as Href);
     }
-  }, [group?.membershipStatus, groupId, router]);
+  }, [group?.membershipStatus, groupId, router, isInEventsTab]);
 
   if (!group) {
     return null;

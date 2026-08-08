@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import * as Clipboard from 'expo-clipboard';
-import { usePathname, type Href } from 'expo-router';
+import { usePathname, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
@@ -50,6 +50,14 @@ import { groupSubpageFromPathname } from './groupScope/useGroupSubpage';
 import { groupsTabParentHref, navigateGroupsTabTo } from '../utils/tabBreadcrumbNav';
 import { useGroupScopeNav } from './groupScope/GroupScopeNavContext';
 import { AddImageButton } from './AddImageButton';
+import {
+  parseFromEventId,
+  buildGroupEventsUrl,
+  buildGroupPollsUrl,
+  buildGroupForumUrl,
+  buildGroupMembersUrl,
+  buildGroupSettingsUrl,
+} from '../utils/breadcrumbUrl';
 
 const AVATAR_SIZE = 56;
 
@@ -185,6 +193,16 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const router = useRouter();
   const pathname = usePathname();
   const groupsTabNav = useGroupScopeNav();
+  const searchParams = useLocalSearchParams<{ fromEventId?: string | string[] }>();
+  console.log('GroupDetailView - pathname:', pathname);
+  console.log('GroupDetailView - searchParams:', JSON.stringify(searchParams));
+  
+  // Detect if we're in Events tab context
+  const isInEventsTab = pathname.includes('/(tabs)/events/group') || pathname.includes('/events/group');
+  
+  // Get fromEventId to preserve across navigation
+  const fromEventId = parseFromEventId(searchParams);
+  console.log('GroupDetailView - fromEventId:', fromEventId);
 
   const navigateToParent = useCallback(() => {
     const subpage = groupSubpageFromPathname(pathname, groupId);
@@ -859,11 +877,11 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                   </View>
                 ) : null}
                 {canOpenGroupSettings ? (
-                  <TouchableOpacity
-                    onPress={() =>
-                      router.push(`/(tabs)/groups/${groupId}/settings` as Href)
-                    }
-                    style={styles.groupProfileEditBtn}
+              <TouchableOpacity
+                onPress={() =>
+                  router.push(buildGroupSettingsUrl(groupId, { isInEventsTab, fromEventId }))
+                }
+                style={styles.groupProfileEditBtn}
                     hitSlop={8}
                     accessibilityRole="button"
                     accessibilityLabel="Group settings"
@@ -901,7 +919,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
             !(canEditMain && editingGroupProfile) ? (
               <TouchableOpacity
                 onPress={() =>
-                  router.push(`/(tabs)/groups/${groupId}/members` as Href)
+                  router.push(buildGroupMembersUrl(groupId, { isInEventsTab, fromEventId }))
                 }
                 style={styles.membersPreviewBtn}
                 activeOpacity={0.65}
@@ -1054,7 +1072,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
               <View style={[styles.card, { marginBottom: 16 }]}>
                 <TouchableOpacity
                   onPress={() =>
-                    router.push(`/(tabs)/groups/${groupId}/events` as Href)
+                    router.push(buildGroupEventsUrl(groupId, { isInEventsTab, fromEventId }))
                   }
                   style={[styles.memberRow, styles.rowBorder]}
                   activeOpacity={0.7}
@@ -1074,7 +1092,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() =>
-                    router.push(`/(tabs)/groups/${groupId}/polls` as Href)
+                    router.push(buildGroupPollsUrl(groupId, { isInEventsTab, fromEventId }))
                   }
                   style={[styles.memberRow, styles.rowBorder]}
                   activeOpacity={0.7}
@@ -1092,7 +1110,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() =>
-                    router.push(`/(tabs)/groups/${groupId}/forum` as Href)
+                    router.push(buildGroupForumUrl(groupId, { isInEventsTab, fromEventId }))
                   }
                   style={styles.memberRow}
                   activeOpacity={0.7}

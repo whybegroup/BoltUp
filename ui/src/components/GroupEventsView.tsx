@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useCallback } from 'react';
+import { useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import { usePathname, type Href } from 'expo-router';
+import { usePathname, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts } from '../constants/theme';
@@ -23,6 +23,7 @@ import { useEventListFilterState } from '../hooks/useEventListFilterState';
 import { filterEventsForList } from '../utils/eventListFilters';
 import { withReturnTo } from '../utils/navigationReturn';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { parseFromEventId, buildGroupEventDetailUrl } from '../utils/breadcrumbUrl';
 
 export type GroupEventsViewProps = {
   groupId: string;
@@ -31,8 +32,15 @@ export type GroupEventsViewProps = {
 export function GroupEventsView({ groupId }: GroupEventsViewProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useLocalSearchParams<{ fromEventId?: string | string[] }>();
   const { userId: currentUserId } = useCurrentUserContext();
   const filterState = useEventListFilterState();
+  
+  // Detect if we're in Events tab context
+  const isInEventsTab = pathname.startsWith('/(tabs)/events') || pathname.startsWith('/events');
+  
+  // Get fromEventId to preserve across navigation
+  const fromEventId = parseFromEventId(searchParams);
 
   const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
   const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(
@@ -110,7 +118,7 @@ export function GroupEventsView({ groupId }: GroupEventsViewProps) {
       groupColors={groupColors}
       refreshControl={refreshControl}
       onSelect={(ev: EventDetailed) => {
-        router.push(`/(tabs)/groups/${groupId}/events/${ev.id}` as Href);
+        router.push(buildGroupEventDetailUrl(groupId, ev.id, { isInEventsTab, fromEventId }));
       }}
       onSelectGroup={(gid) => {
         router.push(withReturnTo(`/(tabs)/groups/${gid}`, pathname));

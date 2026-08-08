@@ -13,6 +13,7 @@ export default function EventsTabEventDetailRoute() {
     Array.isArray(params.commentId) ? params.commentId[0] : params.commentId
   );
   const eventsTabNav = useEventScopeNav();
+
   if (!eventId) return null;
   return (
     <EventDetailScreen

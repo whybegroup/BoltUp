@@ -104,18 +104,6 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
             </View>
           ) : null}
         </View>
-        {showGroup && group && (
-          <Pressable
-            onPress={() => onGroupPress?.(ev.groupId)}
-            style={({ pressed }) => [
-              styles.groupNameWrap,
-              onGroupPress && pressed && { backgroundColor: p.label, borderRadius: 6 },
-            ]}
-            disabled={!onGroupPress}
-          >
-            <Text style={[styles.groupName, onGroupPress && { color: p.dot }]} numberOfLines={1}>{group.name}</Text>
-          </Pressable>
-        )}
         <View style={styles.metaRow}>
           <Ionicons name="time-outline" size={14} color={Colors.textMuted} style={styles.metaIcon} />
           <Text style={styles.meta} numberOfLines={2}>
@@ -132,7 +120,7 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
         ) : null}
         {(minN > 0 || maxN > 0) && !isPast && (
           <View style={styles.minAttendeesRow}>
-            <Ionicons name="people-outline" size={14} color={Colors.textMuted} style={styles.minAttendeesIcon} />
+            <Ionicons name="chevron-expand-outline" size={14} color={Colors.textMuted} style={styles.minAttendeesIcon} />
             <Text style={styles.minAttendees} numberOfLines={2}>
               {[
                 minN > 0 ? `Min ${minN}` : null,
@@ -141,6 +129,12 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
                 .filter(Boolean)
                 .join(' · ')}
             </Text>
+          </View>
+        )}
+        {showGroup && group && (
+          <View style={styles.groupNameRow}>
+            <Ionicons name="people-outline" size={14} color={Colors.textMuted} style={styles.groupIcon} />
+            <Text style={styles.groupName} numberOfLines={1}>{group.name}</Text>
           </View>
         )}
         {going.length > 0 && (
@@ -242,6 +236,15 @@ const styles = StyleSheet.create({
     marginHorizontal: -6,
     paddingVertical: 2,
     marginVertical: -2,
+  },
+  groupNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 3,
+  },
+  groupIcon: {
+    marginTop: 0,
   },
   groupName: {
     fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted,

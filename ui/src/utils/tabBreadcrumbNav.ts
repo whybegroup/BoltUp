@@ -102,6 +102,7 @@ export function navigatePollsTabTo(
 
 export type EventsTabNavCallbacks = {
   setOptimisticAllEvents?: (value: boolean) => void;
+  setFromEventId?: (id: string | undefined) => void;
 };
 
 export function navigateEventsTabTo(
