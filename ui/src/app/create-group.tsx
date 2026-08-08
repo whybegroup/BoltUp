@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect } from 'react';
 import * as Crypto from 'expo-crypto';
 import {
   View,
@@ -15,12 +15,13 @@ import { useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { useGuardedPress } from '../hooks/useGuardedPress';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../utils/helpers';
-import { NavBar, formSectionTitleStyle, Avatar, Toggle } from '../components/ui';
+import { NavBar, Field, formSectionTitleStyle, Avatar, Toggle } from '../components/ui';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
 import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
-import { useCreateGroup } from '../hooks/api/useGroups';
+import { useCreateGroup, useGroup, useUpdateGroup } from '../hooks/api/useGroups';
 import { useAuth } from '../contexts/AuthContext';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { GroupAvatar } from '../components/GroupAvatar';
@@ -37,15 +38,40 @@ import { ApiError } from '@moijia/client';
 const DEFAULT_AVATAR_SEED = 'auto';
 const AVATAR_SIZE = 56;
 const DEFAULT_REQUIRE_APPROVAL = true;
+const DESC_MAX_LENGTH = 500;
+
+function serializeGroupForm(args: {
+  name: string;
+  desc: string;
+  seed: string;
+  thumbnail: string | null;
+  coverPhotos: string[];
+  requireApprovalToJoin: boolean;
+}): string {
+  return JSON.stringify({
+    name: args.name,
+    desc: args.desc,
+    seed: args.seed,
+    thumbnail: args.thumbnail,
+    coverPhotos: args.coverPhotos,
+    requireApprovalToJoin: args.requireApprovalToJoin,
+  });
+}
 
 export default function CreateGroupScreen() {
   const router = useRouter();
-  const { returnTo: returnToRaw } = useLocalSearchParams<{ returnTo?: string | string[] }>();
-  const groupReturnTo = parseReturnToParam(firstSearchParam(returnToRaw));
+  const params = useLocalSearchParams<{ returnTo?: string | string[]; editId?: string | string[] }>();
+  const editId = firstSearchParam(params.editId);
+  const isEditing = !!editId;
+  const groupReturnTo = parseReturnToParam(firstSearchParam(params.returnTo));
   const { user } = useAuth();
   const { userId: currentUserId } = useCurrentUserContext();
   const createGroup = useCreateGroup();
-  const [groupId] = useState(() => Crypto.randomUUID());
+  const updateGroup = useUpdateGroup(editId ?? '', currentUserId ?? '');
+  const { data: editingGroup } = useGroup(editId ?? '', currentUserId ?? '', { enabled: isEditing });
+  const [newGroupId] = useState(() => Crypto.randomUUID());
+  const groupId = editId ?? newGroupId;
+  const hydratedEditRef = useRef(false);
 
   const [draftName, setDraftName] = useState('');
   const [draftDesc, setDraftDesc] = useState('');
@@ -57,21 +83,49 @@ export default function CreateGroupScreen() {
     null,
   );
   const [requireApprovalToJoin, setRequireApprovalToJoin] = useState(DEFAULT_REQUIRE_APPROVAL);
+  const [formBaselineSerialized, setFormBaselineSerialized] = useState<string | null>(null);
   const valid = !!draftName.trim();
+  const savePending = createGroup.isPending || updateGroup.isPending;
 
-  const settingsDirty = requireApprovalToJoin !== DEFAULT_REQUIRE_APPROVAL;
+  useEffect(() => {
+    if (!isEditing || !editingGroup || hydratedEditRef.current) return;
+    setDraftName(editingGroup.name ?? '');
+    setDraftDesc(editingGroup.desc ?? '');
+    setDraftSeed(editingGroup.avatarSeed ?? editingGroup.name ?? '');
+    setDraftThumbnail(editingGroup.thumbnail ?? null);
+    setDraftCoverPhotos(editingGroup.coverPhotos ?? []);
+    setRequireApprovalToJoin(
+      editingGroup.requireApprovalToJoin == null
+        ? DEFAULT_REQUIRE_APPROVAL
+        : !!editingGroup.requireApprovalToJoin
+    );
+    hydratedEditRef.current = true;
+    setFormBaselineSerialized(null);
+  }, [editingGroup, isEditing]);
 
-  const createFormDirty = useMemo(
+  const currentFormSerialized = useMemo(
     () =>
-      !!(
-        draftName.trim() ||
-        draftDesc.trim() ||
-        draftCoverPhotos.length > 0 ||
-        draftThumbnail != null ||
-        settingsDirty
-      ),
-    [draftName, draftDesc, draftCoverPhotos.length, draftThumbnail, settingsDirty],
+      serializeGroupForm({
+        name: draftName,
+        desc: draftDesc,
+        seed: draftSeed,
+        thumbnail: draftThumbnail,
+        coverPhotos: draftCoverPhotos,
+        requireApprovalToJoin,
+      }),
+    [draftName, draftDesc, draftSeed, draftThumbnail, draftCoverPhotos, requireApprovalToJoin]
   );
+
+  useLayoutEffect(() => {
+    if (formBaselineSerialized != null) return;
+    if (isEditing && !hydratedEditRef.current) return;
+    setFormBaselineSerialized(currentFormSerialized);
+  }, [formBaselineSerialized, currentFormSerialized, isEditing]);
+
+  const createFormDirty = useMemo(() => {
+    if (formBaselineSerialized == null) return false;
+    return currentFormSerialized !== formBaselineSerialized;
+  }, [formBaselineSerialized, currentFormSerialized]);
 
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const pendingAvatarFileRef = useRef<PendingAvatarFile | null>(null);
@@ -93,18 +147,6 @@ export default function CreateGroupScreen() {
     pendingAvatarFileRef.current = null;
     setShowAvatarPicker(false);
   };
-
-  const resetCreateForm = useCallback(() => {
-    setDraftName('');
-    setDraftDesc('');
-    setDraftSeed('');
-    setDraftThumbnail(null);
-    setDraftCoverPhotos([]);
-    setRequireApprovalToJoin(DEFAULT_REQUIRE_APPROVAL);
-    const p = pendingAvatarFileRef.current;
-    if (p?.kind === 'web') URL.revokeObjectURL(p.objectUrl);
-    pendingAvatarFileRef.current = null;
-  }, []);
 
   const addCoverPhotoFromPicker = async () => {
     if (!user?.uid || coverPhotoBusy) return;
@@ -134,7 +176,7 @@ export default function CreateGroupScreen() {
     setDraftCoverPhotos((prev) => [...prev, clean]);
   };
 
-  const handleBack = () => {
+  const handleBack = useCallback(() => {
     if (Platform.OS !== 'web' && router.canGoBack()) {
       router.back();
       return;
@@ -144,7 +186,7 @@ export default function CreateGroupScreen() {
       return;
     }
     router.push('/(tabs)/groups');
-  };
+  }, [router, groupReturnTo]);
 
   const requestClose = useCallback(() => {
     if (!createFormDirty) {
@@ -164,7 +206,7 @@ export default function CreateGroupScreen() {
 
   const guardedRequestClose = useGuardedPress(requestClose);
 
-  const handleCreate = useGuardedPress(async () => {
+  const handleSubmit = useGuardedPress(async () => {
     if (!valid || !user) return;
     const actorId = (currentUserId ?? user.uid ?? '').trim();
     if (!actorId) {
@@ -180,6 +222,21 @@ export default function CreateGroupScreen() {
         if (p.kind === 'web') URL.revokeObjectURL(p.objectUrl);
         pendingAvatarFileRef.current = null;
         setDraftThumbnail(thumbnail);
+      }
+
+      if (isEditing && editId) {
+        await updateGroup.mutateAsync({
+          name: draftName.trim(),
+          desc: draftDesc.trim(),
+          thumbnail,
+          coverPhotos: draftCoverPhotos,
+          avatarSeed: draftSeed || draftName.trim() || undefined,
+          requireApprovalToJoin,
+          updatedBy: actorId,
+        });
+        Toast.show({ type: 'success', text1: 'Group updated' });
+        handleBack();
+        return;
       }
 
       await createGroup.mutateAsync({
@@ -198,7 +255,9 @@ export default function CreateGroupScreen() {
 
       handleBack();
     } catch (e) {
-      let message = 'Failed to create group. Please try again.';
+      let message = isEditing
+        ? 'Failed to update group. Please try again.'
+        : 'Failed to create group. Please try again.';
       if (e instanceof ApiError) {
         const body = e.body as { error?: string; message?: string } | undefined;
         message = (body?.error || body?.message || e.message || message).trim() || message;
@@ -207,206 +266,193 @@ export default function CreateGroupScreen() {
       }
       Alert.alert('Error', message);
     }
-  }, { disabled: !valid || createGroup.isPending || !user });
+  }, { disabled: !valid || savePending || !user });
 
   const coverPhotosForDisplay = draftCoverPhotos;
   const themeName = draftName.trim() || 'Group';
-
-  const groupPhotosBlock = (
-    <View style={{ marginTop: 10, marginBottom: 0 }}>
-      <View style={{ paddingHorizontal: 16 }}>
-        <Text style={formSectionTitleStyle}>
-          Photos{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
-        </Text>
-      </View>
-      {coverPhotosForDisplay.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{
-            borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: Colors.border,
-          }}
-          contentContainerStyle={{ gap: 4, paddingVertical: 10, paddingHorizontal: 16 }}
-        >
-          {coverPhotosForDisplay.map((uri, i) => (
-            <View key={`${uri}-${i}`} style={{ position: 'relative' }}>
-              <TouchableOpacity
-                onPress={() => setGroupPhotoLightbox({ urls: coverPhotosForDisplay, index: i })}
-                activeOpacity={0.9}
-              >
-                <ResolvableImage
-                  storedUrl={uri}
-                  style={{
-                    width: 80,
-                    height: 80,
-                    borderRadius: Radius.lg,
-                    backgroundColor: Colors.bg,
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: Colors.border,
-                  }}
-                  resizeMode="cover"
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setDraftCoverPhotos((prev) => prev.filter((_, j) => j !== i))}
-                style={styles.coverRemoveThumb}
-              >
-                <Ionicons name="close" size={11} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          ))}
-        </ScrollView>
-      ) : null}
-      <View
-        style={{
-          paddingHorizontal: 16,
-          marginTop: coverPhotosForDisplay.length > 0 ? 4 : 0,
-          marginBottom: 16,
-        }}
-      >
-        <View style={[styles.groupPhotosAddCard, styles.groupPhotosAddCardNested]}>
-          <AddImageButton
-            label="Add photo"
-            busy={coverPhotoBusy}
-            disabled={coverPhotoBusy}
-            onTakePhoto={addCoverPhotoFromCamera}
-            onChooseFromLibrary={addCoverPhotoFromPicker}
-            onInsertLink={addCoverPhotoFromLink}
-          />
-        </View>
-      </View>
-    </View>
-  );
-
+  const avatarTheme = getGroupColor(getDefaultGroupThemeFromName(themeName));
   const displayNameForChrome = draftName.trim() || 'New group';
+  const navTitle = isEditing ? 'Edit Group' : 'New Group';
 
   return (
     <>
       <EventFormPopoverChrome onClose={guardedRequestClose}>
-        <View style={styles.safe}>
+        <View style={styles.inner}>
           <NavBar
+            title={navTitle}
             onClose={guardedRequestClose}
             right={
-              <View style={styles.navEditActions}>
-                <TouchableOpacity
-                  onPress={resetCreateForm}
-                  disabled={!createFormDirty || createGroup.isPending}
-                  style={[
-                    styles.draftBarBtnSecondary,
-                    (!createFormDirty || createGroup.isPending) && { opacity: 0.45 },
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.draftBarBtnSecondaryText}>Reset</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => void handleCreate()}
-                  disabled={!valid || createGroup.isPending}
-                  style={[
-                    styles.draftBarBtnPrimary,
-                    (!valid || createGroup.isPending) && styles.draftBarBtnPrimaryDisabled,
-                  ]}
-                  activeOpacity={0.8}
-                >
-                  {createGroup.isPending ? (
-                    <ActivityIndicator size="small" color={Colors.accentFg} />
-                  ) : (
-                    <Text style={styles.draftBarBtnPrimaryText}>Create</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                onPress={() => void handleSubmit()}
+                disabled={!valid || savePending}
+                style={[styles.headerBtn, (!valid || savePending) && styles.headerBtnDis]}
+              >
+                {savePending ? (
+                  <ActivityIndicator size="small" color={Colors.accentFg} />
+                ) : (
+                  <Text style={[styles.headerBtnText, !valid && { color: Colors.textMuted }]} numberOfLines={1}>
+                    {isEditing ? 'Save' : 'Create'}
+                  </Text>
+                )}
+              </TouchableOpacity>
             }
           />
 
           <KeyboardSafeScrollView
-            style={styles.groupScrollView}
-            contentContainerStyle={styles.groupScrollContent}
+            contentContainerStyle={{ padding: 20, paddingBottom: 100, width: '100%', alignSelf: 'stretch' }}
             showsVerticalScrollIndicator={false}
           >
-            <View style={styles.groupMainCardWrap}>
-              <View style={styles.groupMainCard}>
-                <View style={{ paddingHorizontal: 16, paddingTop: 18 }}>
-                  <TouchableOpacity
-                    onPress={openAvatarPicker}
-                    style={[
-                      styles.groupThumb,
-                      {
-                        alignSelf: 'flex-start',
-                        marginBottom: 10,
-                        backgroundColor: getGroupColor(getDefaultGroupThemeFromName(themeName)).row,
-                        borderColor: getGroupColor(getDefaultGroupThemeFromName(themeName)).cal,
-                        borderRadius: groupAvatarBorderRadius(AVATAR_SIZE),
-                      },
-                    ]}
-                    activeOpacity={0.8}
-                  >
-                    <GroupAvatar
-                      seed={draftSeed || DEFAULT_AVATAR_SEED}
-                      thumbnail={draftThumbnail}
-                      name={themeName}
-                      size={AVATAR_SIZE}
-                      style={{ width: AVATAR_SIZE, height: AVATAR_SIZE }}
+            <Field label="Avatar">
+              <TouchableOpacity
+                onPress={openAvatarPicker}
+                style={[
+                  styles.avatarRow,
+                  {
+                    backgroundColor: avatarTheme.row,
+                    borderColor: avatarTheme.dot,
+                  },
+                ]}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Choose group avatar"
+              >
+                <View
+                  style={[
+                    styles.avatarWrap,
+                    {
+                      backgroundColor: avatarTheme.cal,
+                      borderRadius: groupAvatarBorderRadius(AVATAR_SIZE),
+                    },
+                  ]}
+                >
+                  <GroupAvatar
+                    seed={draftSeed || DEFAULT_AVATAR_SEED}
+                    thumbnail={draftThumbnail}
+                    name={themeName}
+                    size={AVATAR_SIZE}
+                    style={{ width: AVATAR_SIZE, height: AVATAR_SIZE }}
+                  />
+                </View>
+                <View style={styles.avatarTextCol}>
+                  <Text style={[styles.avatarTitle, { color: avatarTheme.text }]}>Group avatar</Text>
+                  <Text style={styles.avatarHint}>Tap to choose a photo or pattern</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </Field>
+
+            <Field label="Group name" required>
+              <TextInput
+                value={draftName}
+                onChangeText={(text) => {
+                  setDraftName(text);
+                  if (text) {
+                    setDraftSeed(text);
+                  } else {
+                    setDraftSeed(DEFAULT_AVATAR_SEED);
+                  }
+                }}
+                placeholder="e.g. Weekend hikers"
+                placeholderTextColor={Colors.textMuted}
+                style={styles.input}
+                autoCapitalize="words"
+                autoCorrect={false}
+              />
+            </Field>
+
+            <Field label="Description">
+              <View style={styles.descBox}>
+                <TextInput
+                  value={draftDesc}
+                  onChangeText={setDraftDesc}
+                  placeholder="What is this group about?"
+                  placeholderTextColor={Colors.textMuted}
+                  multiline
+                  numberOfLines={5}
+                  maxLength={DESC_MAX_LENGTH}
+                  style={styles.descInput}
+                />
+                <View style={styles.descToolbar}>
+                  <Text style={{ fontSize: 11, color: Colors.textMuted }}>
+                    {draftDesc.length}/{DESC_MAX_LENGTH}
+                  </Text>
+                </View>
+              </View>
+            </Field>
+
+            {!isEditing ? (
+              <View style={styles.photosSection}>
+                <Text style={formSectionTitleStyle}>
+                  Photos{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
+                </Text>
+                <View style={styles.photosCard}>
+                  {coverPhotosForDisplay.length > 0 ? (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={{ borderBottomWidth: 1, borderBottomColor: Colors.border }}
+                      contentContainerStyle={{ gap: 4, padding: 10 }}
+                    >
+                      {coverPhotosForDisplay.map((uri, i) => (
+                        <View key={`${uri}-${i}`} style={{ position: 'relative' }}>
+                          <TouchableOpacity
+                            onPress={() => setGroupPhotoLightbox({ urls: coverPhotosForDisplay, index: i })}
+                            activeOpacity={0.9}
+                          >
+                            <ResolvableImage
+                              storedUrl={uri}
+                              style={{ width: 80, height: 80, borderRadius: Radius.lg }}
+                              resizeMode="cover"
+                            />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => setDraftCoverPhotos((prev) => prev.filter((_, j) => j !== i))}
+                            style={styles.removeThumb}
+                          >
+                            <Ionicons name="close" size={11} color="#fff" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  ) : null}
+                  <View style={[styles.photosToolbar, coverPhotosForDisplay.length === 0 && { borderTopWidth: 0 }]}>
+                    <AddImageButton
+                      label="Add photo"
+                      busy={coverPhotoBusy}
+                      disabled={coverPhotoBusy}
+                      onTakePhoto={addCoverPhotoFromCamera}
+                      onChooseFromLibrary={addCoverPhotoFromPicker}
+                      onInsertLink={addCoverPhotoFromLink}
                     />
-                  </TouchableOpacity>
-                  <View style={styles.groupNameField}>
-                    <Text style={formSectionTitleStyle}>
-                      Group name
-                      <Text style={styles.requiredMark} accessibilityLabel="required">
-                        {' '}
-                        *
-                      </Text>
-                    </Text>
-                    <TextInput
-                      value={draftName}
-                      onChangeText={(text) => {
-                        setDraftName(text);
-                        if (text) {
-                          setDraftSeed(text);
-                        } else {
-                          setDraftSeed(DEFAULT_AVATAR_SEED);
-                        }
-                      }}
-                      placeholder="e.g. Weekend hikers"
-                      placeholderTextColor={Colors.textMuted}
-                      style={styles.groupTitleInput}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                    />
-                  </View>
-                  <View style={styles.groupDescField}>
-                    <Text style={formSectionTitleStyle}>Description</Text>
-                    <View style={styles.groupDescBox}>
-                      <TextInput
-                        value={draftDesc}
-                        onChangeText={setDraftDesc}
-                        placeholder="Optional"
-                        placeholderTextColor={Colors.textMuted}
-                        style={styles.groupDescInput}
-                        multiline
-                        scrollEnabled
-                      />
-                    </View>
                   </View>
                 </View>
-
-                {groupPhotosBlock}
               </View>
-            </View>
+            ) : null}
 
-            <View style={styles.groupDetailSections}>
-              <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>SETTINGS</Text>
-              <View style={[styles.card, { marginBottom: 16 }]}>
+            <Field label="Settings">
+              <View style={styles.settingsCard}>
                 <Toggle
                   value={requireApprovalToJoin}
                   onChange={setRequireApprovalToJoin}
-                  label="Require approval to join?"
-                  style={{ borderBottomWidth: 0, paddingHorizontal: 16 }}
+                  label="Require approval to join"
+                  style={{ borderBottomWidth: 0 }}
                 />
               </View>
-            </View>
+            </Field>
 
-            <View style={{ height: 24 }} />
+            <TouchableOpacity
+              onPress={() => void handleSubmit()}
+              style={[styles.submitBtn, (!valid || savePending) && { backgroundColor: Colors.border }]}
+              disabled={!valid || savePending}
+            >
+              {savePending ? (
+                <ActivityIndicator color={Colors.accentFg} />
+              ) : (
+                <Text style={[styles.submitBtnText, !valid && { color: Colors.textMuted }]} numberOfLines={1}>
+                  {isEditing ? 'Save group' : 'Create group'}
+                </Text>
+              )}
+            </TouchableOpacity>
           </KeyboardSafeScrollView>
         </View>
       </EventFormPopoverChrome>
@@ -447,79 +493,93 @@ export default function CreateGroupScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bg },
-  groupScrollView: { flex: 1, backgroundColor: Colors.bg },
-  groupScrollContent: { flexGrow: 1, backgroundColor: Colors.bg, paddingBottom: 8 },
-  groupDetailSections: { paddingHorizontal: 20 },
-  sectionLabel: {
-    fontSize: 11,
-    fontFamily: Fonts.semiBold,
-    color: Colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 10,
-  },
-  sectionLabelSpaced: { marginTop: 8 },
-  card: { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], overflow: 'hidden' },
-  groupMainCardWrap: { marginHorizontal: 20, marginTop: 10, marginBottom: 4 },
-  groupMainCard: { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], overflow: 'hidden' },
-  groupThumb: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  groupNameField: { marginBottom: 2 },
-  requiredMark: { color: Colors.todayRed, fontFamily: Fonts.semiBold },
-  groupTitleInput: {
-    width: '100%',
-    minHeight: 40,
-    paddingVertical: Platform.OS === 'ios' ? 6 : 4,
-    paddingHorizontal: 0,
-    margin: 0,
-    marginTop: 2,
-    borderWidth: 0,
-    backgroundColor: 'transparent',
-    fontSize: 21,
-    fontFamily: Fonts.extraBold,
-    color: Colors.text,
-    lineHeight: 28,
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
-  },
-  groupDescField: { marginTop: 10 },
-  groupDescBox: {
-    backgroundColor: Colors.bg,
+  inner: { flex: 1, backgroundColor: Colors.bg },
+  headerBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 12,
-    marginTop: 6,
-    marginBottom: 16,
-    height: 112,
+    backgroundColor: Colors.accent,
+    flexShrink: 0,
   },
-  groupDescInput: {
-    flex: 1,
-    width: '100%',
-    minHeight: 88,
-    padding: 0,
-    margin: 0,
-    fontSize: 14,
-    fontFamily: Fonts.regular,
-    color: Colors.text,
-    lineHeight: 22,
-    textAlignVertical: 'top',
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
-  },
-  groupPhotosAddCard: {
-    backgroundColor: Colors.bg,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  groupPhotosAddCardNested: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.border,
-  },
-  groupPhotosAddBtn: {
+  headerBtnDis: { backgroundColor: Colors.border },
+  headerBtnText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  avatarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    alignItems: 'flex-start',
+    borderRadius: Radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.surface,
   },
-  coverRemoveThumb: {
+  avatarWrap: {
+    width: AVATAR_SIZE,
+    height: AVATAR_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarTextCol: { flex: 1, minWidth: 0 },
+  avatarTitle: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text },
+  avatarHint: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 2 },
+  input: {
+    padding: 10,
+    paddingHorizontal: 14,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    fontSize: 14,
+    color: Colors.text,
+    fontFamily: Fonts.regular,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
+  },
+  descBox: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.xl,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  descInput: {
+    padding: 12,
+    paddingHorizontal: 14,
+    fontSize: 14,
+    color: Colors.text,
+    fontFamily: Fonts.regular,
+    minHeight: 100,
+    textAlignVertical: 'top',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
+  },
+  descToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    padding: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  photosSection: { marginTop: 0, marginBottom: 18 },
+  photosCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  photosToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  removeThumb: {
     position: 'absolute',
     top: -5,
     right: -5,
@@ -532,25 +592,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  navEditActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  draftBarBtnSecondary: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: Radius.lg,
+  settingsCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: Colors.border,
-    backgroundColor: Colors.bg,
+    paddingHorizontal: 16,
   },
-  draftBarBtnSecondaryText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
-  draftBarBtnPrimary: {
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+  submitBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     borderRadius: Radius.lg,
     backgroundColor: Colors.accent,
-    minWidth: 72,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 8,
+    minHeight: 48,
   },
-  draftBarBtnPrimaryDisabled: { opacity: 0.45 },
-  draftBarBtnPrimaryText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  submitBtnText: {
+    fontSize: 15,
+    fontFamily: Fonts.bold,
+    color: Colors.accentFg,
+    textAlign: 'center',
+  },
 });

@@ -1408,7 +1408,7 @@ export function PollDetailScreen({
                           ) : null}
                         </View>
                       </View>
-                      <Text style={styles.eventTitle} numberOfLines={8}>
+                      <Text style={styles.pollTitle} numberOfLines={8}>
                         {poll.title}
                       </Text>
                     </>
@@ -1425,7 +1425,7 @@ export function PollDetailScreen({
                         </Text>
                         <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
                       </TouchableOpacity>
-                      <Text style={styles.eventTitle}>{poll.title}</Text>
+                      <Text style={styles.pollTitle}>{poll.title}</Text>
                     </>
                   )}
                   {poll.description?.trim() ? (
@@ -2120,6 +2120,8 @@ const styles = StyleSheet.create({
   pollSectionCard: {
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
     overflow: 'hidden',
   },
   pollSectionPad: { paddingHorizontal: POLL_H_PAD, paddingVertical: 14 },
@@ -2150,6 +2152,8 @@ const styles = StyleSheet.create({
   eventMainCard: {
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
     overflow: 'hidden',
   },
   groupNameRow: {
@@ -2190,7 +2194,7 @@ const styles = StyleSheet.create({
   },
   groupDot: { width: 8, height: 8, borderRadius: 4 },
   navGroupName: { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.medium, flexShrink: 1 },
-  eventTitle: {
+  pollTitle: {
     fontSize: 21,
     fontFamily: Fonts.extraBold,
     color: Colors.text,

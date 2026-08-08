@@ -94,8 +94,8 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
       {/* Content */}
       <View style={styles.content}>
         <View style={styles.titleRow}>
-          <Text style={styles.title} numberOfLines={1}>
-            {ev.title}
+          <Text style={styles.name} numberOfLines={1}>
+            {ev.name}
           </Text>
           {isOngoing ? (
             <View style={styles.inProgressPill}>
@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 2,
   },
-  title: {
+  name: {
     flex: 1,
     minWidth: 0,
     fontSize: 15,

@@ -101,3 +101,67 @@ export function isValidEventFormTimeRange(form: EventFormTimeRangeFields): boole
     return false;
   }
 }
+
+const DEFAULT_TIMED_DURATION_MS = 60 * 60 * 1000;
+
+function localYmdNoon(ymd: string): Date | null {
+  const [y, m, d] = ymd.split('-').map((x) => parseInt(x, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
+}
+
+function formatWallTimeHmFromDate(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * When the event start moves, return a new end that keeps the same duration.
+ * Returns null if inputs are incomplete or invalid.
+ */
+export function endPreservingDuration(args: {
+  prevStartDate: string;
+  prevStartTime: string;
+  prevEndDate: string;
+  prevEndTime: string;
+  nextStartDate: string;
+  nextStartTime: string;
+  allDay: boolean;
+}): { endDate: string; endTime: string } | null {
+  const prevStartDate = args.prevStartDate?.trim();
+  const prevEndDate = args.prevEndDate?.trim();
+  const nextStartDate = args.nextStartDate?.trim();
+  if (!prevStartDate || !prevEndDate || !nextStartDate) return null;
+
+  if (args.allDay) {
+    const prevStart = localYmdNoon(prevStartDate);
+    const prevEnd = localYmdNoon(prevEndDate);
+    const nextStart = localYmdNoon(nextStartDate);
+    if (!prevStart || !prevEnd || !nextStart) return null;
+    const durationMs = Math.max(0, prevEnd.getTime() - prevStart.getTime());
+    const nextEnd = new Date(nextStart.getTime() + durationMs);
+    return {
+      endDate: formatLocalDateInput(nextEnd),
+      endTime: args.prevEndTime,
+    };
+  }
+
+  const prevStartTime = args.prevStartTime?.trim();
+  const prevEndTime = args.prevEndTime?.trim();
+  const nextStartTime = args.nextStartTime?.trim();
+  if (!prevStartTime || !prevEndTime || !nextStartTime) return null;
+
+  try {
+    const prevStart = localWallDateTimeToDate(prevStartDate, prevStartTime);
+    const prevEnd = localWallDateTimeToDate(prevEndDate, prevEndTime);
+    const nextStart = localWallDateTimeToDate(nextStartDate, nextStartTime);
+    let durationMs = prevEnd.getTime() - prevStart.getTime();
+    if (!(durationMs > 0)) durationMs = DEFAULT_TIMED_DURATION_MS;
+    const nextEnd = new Date(nextStart.getTime() + durationMs);
+    return {
+      endDate: formatLocalDateInput(nextEnd),
+      endTime: formatWallTimeHmFromDate(nextEnd),
+    };
+  } catch {
+    return null;
+  }
+}

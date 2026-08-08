@@ -58,6 +58,7 @@ import {
   buildGroupMembersUrl,
   buildGroupSettingsUrl,
 } from '../utils/breadcrumbUrl';
+import { withReturnTo } from '../utils/navigationReturn';
 
 const AVATAR_SIZE = 56;
 
@@ -75,12 +76,9 @@ type AnnouncementModalBodyProps = {
   announcement: string;
   draftAnnouncement: string;
   setDraftAnnouncement: (v: string) => void;
-  editingAnnouncement: boolean;
   canEditAnnouncement: boolean;
   updatePending: boolean;
   onClose: () => void;
-  onStartEdit: () => void;
-  onCancelEdit: () => void;
   onSave: () => void;
 };
 
@@ -90,14 +88,12 @@ function AnnouncementModalBody({
   announcement,
   draftAnnouncement,
   setDraftAnnouncement,
-  editingAnnouncement,
   canEditAnnouncement,
   updatePending,
   onClose,
-  onStartEdit,
-  onCancelEdit,
   onSave,
 }: AnnouncementModalBodyProps) {
+  const isDirty = draftAnnouncement.trim() !== announcement;
   return (
     <SafeAreaView style={styles.announcementModalRoot} edges={['top', 'left', 'right', 'bottom']}>
       <View style={styles.membersModalHeader}>
@@ -110,14 +106,20 @@ function AnnouncementModalBody({
           {`Announcement @ ${groupName}`}
         </Text>
         <View style={styles.announcementModalHeaderActions}>
-          {canEditAnnouncement && !editingAnnouncement ? (
+          {canEditAnnouncement && isDirty ? (
             <TouchableOpacity
-              onPress={onStartEdit}
+              onPress={onSave}
+              disabled={updatePending}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityRole="button"
-              accessibilityLabel="Edit announcement"
+              accessibilityLabel="Save announcement"
+              style={styles.announcementModalSaveHeaderBtn}
             >
-              <Text style={styles.announcementModalEditHeader}>Edit</Text>
+              {updatePending ? (
+                <ActivityIndicator size="small" color={Colors.accent} />
+              ) : (
+                <Text style={styles.announcementModalEditHeader}>Save</Text>
+              )}
             </TouchableOpacity>
           ) : null}
           <TouchableOpacity
@@ -136,42 +138,19 @@ function AnnouncementModalBody({
         bounces={false}
       >
           <View style={styles.membersModalCardWrap}>
-            {editingAnnouncement ? (
-              <>
-                <View style={styles.announcementInputWrapper}>
-                  <TextInput
-                    value={draftAnnouncement}
-                    onChangeText={setDraftAnnouncement}
-                    placeholder="Announcement for all members…"
-                    placeholderTextColor={Colors.textMuted}
-                    style={styles.announcementInput}
-                    multiline
-                    scrollEnabled
-                    textAlignVertical="top"
-                    underlineColorAndroid="transparent"
-                  />
-                </View>
-                <View style={styles.announcementEditActions}>
-                  <TouchableOpacity
-                    onPress={onCancelEdit}
-                    disabled={updatePending}
-                    style={[styles.announcementEditActionBtn, styles.announcementEditActionBtnSecondary]}
-                  >
-                    <Text style={styles.announcementEditActionBtnTextSecondary}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={onSave}
-                    disabled={updatePending}
-                    style={[styles.announcementEditActionBtn, styles.announcementEditActionBtnPrimary]}
-                  >
-                    {updatePending ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.announcementEditActionBtnTextPrimary}>Save</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </>
+            {canEditAnnouncement ? (
+              <TextInput
+                value={draftAnnouncement}
+                onChangeText={setDraftAnnouncement}
+                placeholder="Announcement for all members ..."
+                placeholderTextColor={Colors.textMuted}
+                style={styles.announcementModalBodyInput}
+                multiline
+                scrollEnabled
+                textAlignVertical="top"
+                underlineColorAndroid="transparent"
+                autoFocus={!announcement}
+              />
             ) : announcement ? (
               <Text style={styles.announcementModalBodyText} selectable>
                 {announcement}
@@ -194,15 +173,12 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const pathname = usePathname();
   const groupsTabNav = useGroupScopeNav();
   const searchParams = useLocalSearchParams<{ fromEventId?: string | string[] }>();
-  console.log('GroupDetailView - pathname:', pathname);
-  console.log('GroupDetailView - searchParams:', JSON.stringify(searchParams));
-  
+
   // Detect if we're in Events tab context
   const isInEventsTab = pathname.includes('/(tabs)/events/group') || pathname.includes('/events/group');
-  
+
   // Get fromEventId to preserve across navigation
   const fromEventId = parseFromEventId(searchParams);
-  console.log('GroupDetailView - fromEventId:', fromEventId);
 
   const navigateToParent = useCallback(() => {
     const subpage = groupSubpageFromPathname(pathname, groupId);
@@ -307,7 +283,6 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const [draftDesc, setDraftDesc] = useState('');
   const [draftAnnouncement, setDraftAnnouncement] = useState('');
   const [editingGroupProfile, setEditingGroupProfile] = useState(false);
-  const [editingAnnouncement, setEditingAnnouncement] = useState(false);
   const [showAnnouncementReadModal, setShowAnnouncementReadModal] = useState(false);
   const [coverPhotoBusy, setCoverPhotoBusy] = useState(false);
   const [localCoverPhotos, setLocalCoverPhotos] = useState<string[]>([]);
@@ -399,7 +374,6 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   useEffect(() => {
     setDescExpanded(false);
     setEditingGroupProfile(false);
-    setEditingAnnouncement(false);
     setShowAnnouncementReadModal(false);
   }, [groupId]);
 
@@ -567,10 +541,8 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
         announcement: trimmed || null,
         updatedBy: currentUserId ?? '',
       });
-      setEditingAnnouncement(false);
-      if (!trimmed) {
-        setShowAnnouncementReadModal(false);
-      }
+      setDraftAnnouncement(trimmed);
+      setShowAnnouncementReadModal(false);
       Toast.show({ type: 'success', text1: trimmed ? 'Announcement updated' : 'Announcement removed' });
     } catch {
       if (Platform.OS === 'web') window.alert('Failed to save announcement');
@@ -578,18 +550,8 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     }
   };
 
-  const cancelAnnouncementEdit = () => {
-    const hadNoAnnouncement = !(group.announcement ?? '').trim();
-    setDraftAnnouncement(group.announcement ?? '');
-    setEditingAnnouncement(false);
-    if (hadNoAnnouncement) {
-      setShowAnnouncementReadModal(false);
-    }
-  };
-
   const closeAnnouncementModal = () => {
     setDraftAnnouncement(group.announcement ?? '');
-    setEditingAnnouncement(false);
     setShowAnnouncementReadModal(false);
   };
 
@@ -713,7 +675,11 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
               </View>
             ))}
           </ScrollView>
-        ) : null}
+        ) : (
+          <View style={styles.photosEmptyBody}>
+            <Text style={styles.photosEmptyText}>No photos</Text>
+          </View>
+        )}
       </View>
     </View>
   ) : null;
@@ -724,13 +690,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
         const annTrim = (group.announcement ?? '').trim();
         if (!annTrim && !canEditAnnouncement) return null;
         const onAnnouncementRowPress = () => {
-          if (!annTrim && canEditAnnouncement) {
-            setDraftAnnouncement('');
-            setEditingAnnouncement(true);
-          } else {
-            setDraftAnnouncement(group.announcement ?? '');
-            setEditingAnnouncement(false);
-          }
+          setDraftAnnouncement(group.announcement ?? '');
           setShowAnnouncementReadModal(true);
         };
         const announcementRowA11yLabel =
@@ -823,56 +783,18 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
               <View style={styles.groupProfileTrailing}>
                 {canEditMain ? (
                   <View style={styles.groupProfileEditActions}>
-                    {editingGroupProfile && profileDirty ? (
-                      <>
-                        <TouchableOpacity
-                          onPress={resetProfileDrafts}
-                          disabled={updateGroup.isPending}
-                          style={[styles.groupProfileEditBtn, updateGroup.isPending && { opacity: 0.45 }]}
-                          hitSlop={8}
-                          accessibilityRole="button"
-                          accessibilityLabel="Reset group name and description"
-                        >
-                          <Ionicons name="refresh-outline" size={20} color={Colors.textSub} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => void saveProfileDrafts()}
-                          disabled={!draftName.trim() || updateGroup.isPending}
-                          style={[
-                            styles.groupProfileEditBtn,
-                            (!draftName.trim() || updateGroup.isPending) && { opacity: 0.45 },
-                          ]}
-                          hitSlop={8}
-                          accessibilityRole="button"
-                          accessibilityLabel="Save group name and description"
-                        >
-                          {updateGroup.isPending ? (
-                            <ActivityIndicator size="small" color={Colors.textSub} />
-                          ) : (
-                            <Ionicons name="save-outline" size={20} color={Colors.textSub} />
-                          )}
-                        </TouchableOpacity>
-                      </>
-                    ) : null}
                     <TouchableOpacity
-                      onPress={
-                        editingGroupProfile
-                          ? requestExitProfileEdit
-                          : () => {
-                              setDescExpanded(false);
-                              setEditingGroupProfile(true);
-                            }
+                      onPress={() =>
+                        router.push(
+                          withReturnTo(`/create-group?editId=${encodeURIComponent(groupId)}`, pathname)
+                        )
                       }
                       style={styles.groupProfileEditBtn}
                       hitSlop={8}
                       accessibilityRole="button"
-                      accessibilityLabel={editingGroupProfile ? 'Stop editing group' : 'Edit group name and description'}
+                      accessibilityLabel="Edit group"
                     >
-                      <Ionicons
-                        name={editingGroupProfile ? 'close' : 'create-outline'}
-                        size={20}
-                        color={Colors.textSub}
-                      />
+                      <Ionicons name="create-outline" size={20} color={Colors.text} />
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -886,7 +808,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                     accessibilityRole="button"
                     accessibilityLabel="Group settings"
                   >
-                    <Ionicons name="settings-outline" size={20} color={Colors.textSub} />
+                    <Ionicons name="settings-outline" size={20} color={Colors.text} />
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -1311,15 +1233,9 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
               announcement={(group.announcement ?? '').trim()}
               draftAnnouncement={draftAnnouncement}
               setDraftAnnouncement={setDraftAnnouncement}
-              editingAnnouncement={editingAnnouncement}
               canEditAnnouncement={canEditAnnouncement}
               updatePending={updateGroup.isPending}
               onClose={closeAnnouncementModal}
-              onStartEdit={() => {
-                setDraftAnnouncement(group.announcement ?? '');
-                setEditingAnnouncement(true);
-              }}
-              onCancelEdit={cancelAnnouncementEdit}
               onSave={() => void saveAnnouncement()}
             />
           </SafeAreaProvider>
@@ -1338,7 +1254,13 @@ const styles = StyleSheet.create({
   groupScrollContent: { flexGrow: 1, backgroundColor: Colors.bg, paddingBottom: 8 },
   groupMainCardWrap:{ marginHorizontal: 20, marginTop: 10, marginBottom: 4 },
   groupPhotosSectionWrap: { marginHorizontal: 20, marginTop: 12, marginBottom: 4 },
-  groupMainCard:    { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], overflow: 'hidden' },
+  groupMainCard:    {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
+    overflow: 'hidden',
+  },
   groupProfileTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1448,6 +1370,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     alignItems: 'flex-start',
   },
+  photosEmptyBody: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  photosEmptyText: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+  },
   coverRemoveThumb: {
     position: 'absolute',
     top: -5,
@@ -1477,7 +1409,13 @@ const styles = StyleSheet.create({
   copyIconBtn:      { padding: 4 },
   copyIconWrap:     { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
   copyIconText:     { fontSize: 16, fontFamily: Fonts.bold },
-  card:             { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], overflow: 'hidden' },
+  card:             {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
+    overflow: 'hidden',
+  },
   cardPendingNotice:{ backgroundColor: '#FFFBEB', borderWidth: StyleSheet.hairlineWidth, borderColor: '#FDE68A' },
   cardDanger:       { borderWidth: StyleSheet.hairlineWidth, borderColor: '#FECACA' },
   sectionLabel:     {
@@ -1623,11 +1561,32 @@ const styles = StyleSheet.create({
     color: Colors.accent,
     paddingRight: 4,
   },
+  announcementModalSaveHeaderBtn: {
+    minWidth: 48,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
   announcementModalBodyText: {
     fontSize: 16,
     fontFamily: Fonts.regular,
     color: Colors.text,
     lineHeight: 24,
+  },
+  announcementModalBodyInput: {
+    width: '100%',
+    minHeight: 200,
+    padding: 0,
+    margin: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    fontSize: 16,
+    fontFamily: Fonts.regular,
+    color: Colors.text,
+    lineHeight: 24,
+    textAlignVertical: 'top',
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null),
   },
   announcementModalEmptyText: {
     fontSize: 15,
@@ -1644,7 +1603,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: Radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.border,
+    borderColor: Colors.borderStrong,
     backgroundColor: Colors.surface,
   },
   announcementRowHasContent: {
@@ -1658,6 +1617,7 @@ const styles = StyleSheet.create({
   announcementTextWrap: {
     flex: 1,
     minWidth: 0,
+    justifyContent: 'center',
   },
   announcementRowText: {
     fontSize: 14,
@@ -1672,67 +1632,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   announcementRowPlaceholder: {
-    flex: 1,
     fontSize: 14,
     fontFamily: Fonts.regular,
     color: Colors.textMuted,
     lineHeight: 20,
-  },
-  announcementEditActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
-    marginTop: 12,
-  },
-  announcementEditActionBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    minWidth: 88,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  announcementEditActionBtnSecondary: {
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-  },
-  announcementEditActionBtnPrimary: {
-    borderColor: Colors.accent,
-    backgroundColor: Colors.accent,
-  },
-  announcementEditActionBtnTextSecondary: {
-    fontFamily: Fonts.semiBold,
-    color: Colors.text,
-    fontSize: 14,
-  },
-  announcementEditActionBtnTextPrimary: {
-    fontFamily: Fonts.semiBold,
-    color: '#fff',
-    fontSize: 14,
-  },
-  announcementInputWrapper: {
-    backgroundColor: Colors.bg,
-    borderWidth: 1,
-    borderColor: Colors.borderStrong,
-    borderRadius: Radius.md,
-    minHeight: 120,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  announcementInput: {
-    width: '100%',
-    minHeight: 96,
-    padding: 0,
-    margin: 0,
-    borderWidth: 0,
-    backgroundColor: 'transparent',
-    fontSize: 15,
-    fontFamily: Fonts.regular,
-    color: Colors.text,
-    lineHeight: 22,
-    textAlignVertical: 'top',
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null),
   },
 });

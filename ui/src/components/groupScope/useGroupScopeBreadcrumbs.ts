@@ -105,7 +105,7 @@ export function useGroupScopeBreadcrumbs(
         out.push({ label: pollLabel });
       }
       if (subpage.kind === 'event') {
-        const eventLabel = breadcrumbTruncate(event?.title?.trim() ? event.title : 'Event');
+        const eventLabel = breadcrumbTruncate(event?.name?.trim() ? event.name : 'Event');
         out.push({ label: eventLabel });
       }
       return out;
@@ -126,7 +126,7 @@ export function useGroupScopeBreadcrumbs(
     activitySectionSegment,
     subpage.kind,
     poll?.title,
-    event?.title,
+    event?.name,
   ]);
 
   return {

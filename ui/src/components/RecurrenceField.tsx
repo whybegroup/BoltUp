@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, type ReactNode } from 'react';
 import {
   View,
   Text,
@@ -35,10 +35,6 @@ type Props = {
 
 const UNTIL_CAL_WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
 
-/** Selected rows/chips in the repeat modal (not primary actions). */
-const REPEAT_SELECT_BG = '#52525B';
-const REPEAT_SELECT_FG = '#FAFAF9';
-
 function getUntilMonthGrid(year: number, month: number): (Date | null)[][] {
   const first = new Date(year, month, 1);
   const last = new Date(year, month + 1, 0);
@@ -63,6 +59,26 @@ function getUntilMonthGrid(year: number, month: number): (Date | null)[][] {
 
 function untilLocalDayMs(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function parseYmdToLocalDate(s: string): Date | null {
+  const [y, m, d] = s.trim().split('-').map((x) => parseInt(x, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+  return dt;
+}
+
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function RadioMark({ selected }: { selected: boolean }) {
+  return (
+    <View style={[styles.radioOuter, selected && styles.radioOuterOn]}>
+      {selected ? <View style={styles.radioInner} /> : null}
+    </View>
+  );
 }
 
 function UntilEndDateCalendar({
@@ -96,11 +112,21 @@ function UntilEndDateCalendar({
   return (
     <View style={styles.untilCal}>
       <View style={styles.untilCalHeader}>
-        <TouchableOpacity onPress={onPrevMonth} hitSlop={10} style={styles.untilCalNav} accessibilityLabel="Previous month">
+        <TouchableOpacity
+          onPress={onPrevMonth}
+          hitSlop={10}
+          style={styles.untilCalNav}
+          accessibilityLabel="Previous month"
+        >
           <Ionicons name="chevron-back" size={18} color={Colors.text} />
         </TouchableOpacity>
         <Text style={styles.untilCalTitle}>{monthTitle}</Text>
-        <TouchableOpacity onPress={onNextMonth} hitSlop={10} style={styles.untilCalNav} accessibilityLabel="Next month">
+        <TouchableOpacity
+          onPress={onNextMonth}
+          hitSlop={10}
+          style={styles.untilCalNav}
+          accessibilityLabel="Next month"
+        >
           <Ionicons name="chevron-forward" size={18} color={Colors.text} />
         </TouchableOpacity>
       </View>
@@ -170,16 +196,33 @@ function toggleDay(days: number[], d: number): number[] {
   return [...days, d].sort((a, b) => a - b);
 }
 
-function parseYmdToLocalDate(s: string): Date | null {
-  const [y, m, d] = s.trim().split('-').map((x) => parseInt(x, 10));
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
-  const dt = new Date(y, m - 1, d);
-  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
-  return dt;
+function ChoiceCard({ children }: { children: ReactNode }) {
+  return <View style={styles.choiceCard}>{children}</View>;
 }
 
-function startOfLocalDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+function ChoiceRow({
+  selected,
+  onPress,
+  title,
+  borderTop,
+}: {
+  selected: boolean;
+  onPress: () => void;
+  title: string;
+  borderTop?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.choiceRow, borderTop && styles.choiceRowBorder, selected && styles.choiceRowSelected]}
+      activeOpacity={0.85}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+    >
+      <RadioMark selected={selected} />
+      <Text style={styles.choiceRowText}>{title}</Text>
+    </TouchableOpacity>
+  );
 }
 
 function MonthlyPatternSection({
@@ -196,32 +239,20 @@ function MonthlyPatternSection({
   const iv = Math.max(1, interval);
   return (
     <View style={styles.section}>
-      <TouchableOpacity
-        style={[styles.endRow, pattern === 'monthDay' && styles.endRowOn]}
-        onPress={() => onPattern('monthDay')}
-      >
-        <Text style={[styles.endRowText, styles.monthlyOptionSummary]}>
-          {formatMonthlyPatternSummary('monthDay', iv, anchorDate)}
-        </Text>
-        {pattern === 'monthDay' ? (
-          <Ionicons name="radio-button-on" size={18} color={REPEAT_SELECT_BG} />
-        ) : (
-          <Ionicons name="radio-button-off" size={18} color={Colors.textMuted} />
-        )}
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.endRow, pattern === 'weekdayOfMonth' && styles.endRowOn]}
-        onPress={() => onPattern('weekdayOfMonth')}
-      >
-        <Text style={[styles.endRowText, styles.monthlyOptionSummary]}>
-          {formatMonthlyPatternSummary('weekdayOfMonth', iv, anchorDate)}
-        </Text>
-        {pattern === 'weekdayOfMonth' ? (
-          <Ionicons name="radio-button-on" size={18} color={REPEAT_SELECT_BG} />
-        ) : (
-          <Ionicons name="radio-button-off" size={18} color={Colors.textMuted} />
-        )}
-      </TouchableOpacity>
+      <Text style={styles.sectionLabel}>Repeat by</Text>
+      <ChoiceCard>
+        <ChoiceRow
+          selected={pattern === 'monthDay'}
+          onPress={() => onPattern('monthDay')}
+          title={formatMonthlyPatternSummary('monthDay', iv, anchorDate)}
+        />
+        <ChoiceRow
+          selected={pattern === 'weekdayOfMonth'}
+          onPress={() => onPattern('weekdayOfMonth')}
+          title={formatMonthlyPatternSummary('weekdayOfMonth', iv, anchorDate)}
+          borderTop
+        />
+      </ChoiceCard>
     </View>
   );
 }
@@ -283,8 +314,10 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
     <View style={styles.wrap}>
       <Text style={formSectionTitleStyle}>Repeat</Text>
       <TouchableOpacity style={styles.row} onPress={() => setOpen(true)} activeOpacity={0.75}>
-        <Text style={styles.rowText}>{summary}</Text>
-        <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} />
+        <Text style={styles.rowText} numberOfLines={2}>
+          {summary}
+        </Text>
+        <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
       </TouchableOpacity>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -297,31 +330,38 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
           />
           <Pressable style={styles.dialog} onPress={(e) => e.stopPropagation()}>
             <View style={styles.dialogHeader}>
-              <Text style={styles.dialogTitle}>Repeat event</Text>
-              <TouchableOpacity onPress={() => setOpen(false)} hitSlop={12}>
-                <Ionicons name="close" size={20} color={Colors.text} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.dialogTitle}>Repeat event</Text>
+                <Text style={styles.dialogSubtitle}>Choose how often this event repeats.</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setOpen(false)}
+                hitSlop={12}
+                style={styles.closeBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <Ionicons name="close" size={22} color={Colors.textSub} />
               </TouchableOpacity>
             </View>
+
             <ScrollView
               style={styles.dialogScroll}
               contentContainerStyle={styles.dialogScrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              {PRESET_ROWS.map(({ preset, label }) => (
-                <TouchableOpacity
-                  key={preset}
-                  style={[styles.option, value.preset === preset && styles.optionOn]}
-                  onPress={() => applyPreset(preset)}
-                >
-                  <Text style={[styles.optionText, value.preset === preset && styles.optionTextOn]}>
-                    {label}
-                  </Text>
-                  {value.preset === preset ? (
-                    <Ionicons name="checkmark" size={18} color={REPEAT_SELECT_FG} />
-                  ) : null}
-                </TouchableOpacity>
-              ))}
+              <ChoiceCard>
+                {PRESET_ROWS.map(({ preset, label }, i) => (
+                  <ChoiceRow
+                    key={preset}
+                    selected={value.preset === preset}
+                    onPress={() => applyPreset(preset)}
+                    title={label}
+                    borderTop={i > 0}
+                  />
+                ))}
+              </ChoiceCard>
 
               {value.preset === 'monthly' && (
                 <MonthlyPatternSection
@@ -348,7 +388,7 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
                         });
                       }}
                     />
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.unitScroll}>
+                    <View style={styles.unitPills}>
                       {(
                         [
                           ['day', 'day'],
@@ -356,18 +396,29 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
                           ['month', 'month'],
                           ['year', 'year'],
                         ] as const
-                      ).map(([u, lab]) => (
-                        <TouchableOpacity
-                          key={u}
-                          style={[styles.unitChip, value.customUnit === u && styles.unitChipOn]}
-                          onPress={() => onChange({ ...value, customUnit: u })}
-                        >
-                          <Text style={[styles.unitChipText, value.customUnit === u && styles.unitChipTextOn]}>
-                            {lab}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
+                      ).map(([u, lab]) => {
+                        const on = value.customUnit === u;
+                        return (
+                          <TouchableOpacity
+                            key={u}
+                            style={[styles.unitChip, on && styles.optionChipOn]}
+                            onPress={() => onChange({ ...value, customUnit: u })}
+                            activeOpacity={0.85}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: on }}
+                          >
+                            <Text
+                              style={[styles.unitChipText, on && styles.optionChipTextOn]}
+                              numberOfLines={1}
+                              adjustsFontSizeToFit
+                              minimumFontScale={0.75}
+                            >
+                              {lab}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
               )}
@@ -381,7 +432,7 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
                       return (
                         <TouchableOpacity
                           key={i}
-                          style={[styles.dowCell, on && styles.dowCellOn]}
+                          style={[styles.optionChip, styles.dowCell, on && styles.optionChipOn]}
                           onPress={() =>
                             onChange({
                               ...value,
@@ -391,8 +442,12 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
                               ),
                             })
                           }
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: on }}
                         >
-                          <Text style={[styles.dowText, on && styles.dowTextOn]}>{ch}</Text>
+                          <Text style={[styles.optionChipText, on && styles.optionChipTextOn]}>
+                            {ch}
+                          </Text>
                         </TouchableOpacity>
                       );
                     })}
@@ -412,28 +467,19 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
               {value.preset !== 'none' && (
                 <View style={styles.section}>
                   <Text style={styles.sectionLabel}>Ends</Text>
-                  <TouchableOpacity
-                    style={[styles.endRow, value.endType === 'until' && styles.endRowOn]}
-                    onPress={() => setEndType('until')}
-                  >
-                    <Text style={styles.endRowText}>On date</Text>
-                    {value.endType === 'until' ? (
-                      <Ionicons name="radio-button-on" size={18} color={REPEAT_SELECT_BG} />
-                    ) : (
-                      <Ionicons name="radio-button-off" size={18} color={Colors.textMuted} />
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.endRow, value.endType === 'count' && styles.endRowOn]}
-                    onPress={() => setEndType('count')}
-                  >
-                    <Text style={styles.endRowText}>After number of times</Text>
-                    {value.endType === 'count' ? (
-                      <Ionicons name="radio-button-on" size={18} color={REPEAT_SELECT_BG} />
-                    ) : (
-                      <Ionicons name="radio-button-off" size={18} color={Colors.textMuted} />
-                    )}
-                  </TouchableOpacity>
+                  <ChoiceCard>
+                    <ChoiceRow
+                      selected={value.endType === 'until'}
+                      onPress={() => setEndType('until')}
+                      title="On date"
+                    />
+                    <ChoiceRow
+                      selected={value.endType === 'count'}
+                      onPress={() => setEndType('count')}
+                      title="After number of times"
+                      borderTop
+                    />
+                  </ChoiceCard>
                   {value.endType === 'until' ? (
                     <UntilEndDateCalendar
                       viewYear={untilViewMonth.y}
@@ -459,27 +505,31 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
                     />
                   ) : null}
                   {value.endType === 'count' ? (
-                    <TextInput
-                      style={[styles.dateInput, styles.countInputMargin]}
-                      keyboardType="number-pad"
-                      value={value.count}
-                      onChangeText={(t) => onChange({ ...value, count: t.replace(/\D/g, '') })}
-                      onBlur={() => {
-                        const raw = value.count.replace(/\D/g, '');
-                        const parsed = parseInt(raw, 10);
-                        const n =
-                          !raw || !Number.isFinite(parsed) || parsed < 1
-                            ? normalizeRecurrenceCount(10)
-                            : normalizeRecurrenceCount(parsed);
-                        if (String(n) !== value.count) onChange({ ...value, count: String(n) });
-                      }}
-                    />
+                    <View style={styles.countRow}>
+                      <Text style={styles.countHint}>Times</Text>
+                      <TextInput
+                        style={styles.countInput}
+                        keyboardType="number-pad"
+                        value={value.count}
+                        onChangeText={(t) => onChange({ ...value, count: t.replace(/\D/g, '') })}
+                        onBlur={() => {
+                          const raw = value.count.replace(/\D/g, '');
+                          const parsed = parseInt(raw, 10);
+                          const n =
+                            !raw || !Number.isFinite(parsed) || parsed < 1
+                              ? normalizeRecurrenceCount(10)
+                              : normalizeRecurrenceCount(parsed);
+                          if (String(n) !== value.count) onChange({ ...value, count: String(n) });
+                        }}
+                      />
+                    </View>
                   ) : null}
                 </View>
               )}
             </ScrollView>
+
             <View style={styles.dialogFooter}>
-              <TouchableOpacity style={styles.doneBtn} onPress={() => setOpen(false)}>
+              <TouchableOpacity style={styles.doneBtn} onPress={() => setOpen(false)} activeOpacity={0.85}>
                 <Text style={styles.doneBtnText}>Done</Text>
               </TouchableOpacity>
             </View>
@@ -496,32 +546,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
     backgroundColor: Colors.surface,
     borderWidth: 1.5,
     borderColor: Colors.border,
     borderRadius: Radius.lg,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    minHeight: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    minHeight: 44,
   },
   rowText: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.text, flex: 1 },
   modalRoot: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   modalDismiss: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: Colors.overlay,
   },
   dialog: {
     width: '100%',
-    maxWidth: 320,
+    maxWidth: 420,
     maxHeight: Platform.OS === 'web' ? ('92vh' as any) : '90%',
     backgroundColor: Colors.surface,
-    borderRadius: Radius.xl,
+    borderRadius: Radius['2xl'],
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: 'hidden',
@@ -531,65 +582,141 @@ const styles = StyleSheet.create({
   dialogHeader: {
     flexShrink: 0,
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.border,
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
-  dialogTitle: { fontSize: 15, fontFamily: Fonts.bold, color: Colors.text },
-  dialogScroll: { flexGrow: 1, flexShrink: 1, minHeight: 0 },
-  dialogScrollContent: { paddingHorizontal: 6, paddingTop: 2, paddingBottom: 4 },
-  dialogFooter: {
-    flexShrink: 0,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
-  },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: Radius.md,
-  },
-  optionOn: { backgroundColor: REPEAT_SELECT_BG },
-  optionText: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.text, flex: 1 },
-  optionTextOn: { color: REPEAT_SELECT_FG },
-  section: { marginTop: 6, marginBottom: 2, paddingHorizontal: 6 },
-  sectionLabel: {
-    fontSize: 11,
+  dialogTitle: {
+    fontSize: 18,
     fontFamily: Fonts.semiBold,
-    color: Colors.textMuted,
+    color: Colors.text,
     marginBottom: 4,
-    textTransform: 'uppercase',
   },
-  dowRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 4 },
-  dowCell: {
-    flex: 1,
-    aspectRatio: 1,
-    maxWidth: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  dialogSubtitle: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
+    lineHeight: 20,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.bg,
   },
-  dowCellOn: { backgroundColor: REPEAT_SELECT_BG, borderColor: REPEAT_SELECT_BG },
-  dowText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.text },
-  dowTextOn: { color: REPEAT_SELECT_FG },
-  customRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  intervalInput: {
-    width: 48,
+  dialogScroll: { flexGrow: 1, flexShrink: 1, minHeight: 0 },
+  dialogScrollContent: { paddingHorizontal: 20, paddingBottom: 8, gap: 4 },
+  dialogFooter: {
+    flexShrink: 0,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  choiceCard: {
+    borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.sm,
-    paddingVertical: 7,
+    overflow: 'hidden',
+    backgroundColor: Colors.surface,
+  },
+  choiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.surface,
+  },
+  choiceRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  choiceRowSelected: {
+    backgroundColor: Colors.bg,
+  },
+  choiceRowText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.text,
+  },
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: Colors.textMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioOuterOn: {
+    borderColor: Colors.text,
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.text,
+  },
+  section: { marginTop: 16 },
+  sectionLabel: {
+    fontSize: 12,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textSub,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  dowRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 6 },
+  optionChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: Radius.full,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  optionChipOn: {
+    borderColor: Colors.text,
+    backgroundColor: Colors.bg,
+  },
+  optionChipText: {
+    fontSize: 13,
+    fontFamily: Fonts.medium,
+    color: Colors.textSub,
+  },
+  optionChipTextOn: {
+    color: Colors.text,
+  },
+  dowCell: {
+    flex: 1,
+    aspectRatio: 1,
+    maxWidth: 40,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    borderRadius: Radius.md,
+  },
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  intervalInput: {
+    width: 52,
+    flexShrink: 0,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    borderRadius: Radius.lg,
+    paddingVertical: 10,
     paddingHorizontal: 6,
     fontSize: 14,
     fontFamily: Fonts.medium,
@@ -598,69 +725,82 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
   },
-  unitScroll: { flexGrow: 0, flexShrink: 1 },
-  unitChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginRight: 6,
-    backgroundColor: Colors.bg,
-  },
-  unitChipOn: { backgroundColor: REPEAT_SELECT_BG, borderColor: REPEAT_SELECT_BG },
-  unitChipText: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.text },
-  unitChipTextOn: { color: REPEAT_SELECT_FG },
-  endRow: {
+  unitPills: {
+    flex: 1,
     flexDirection: 'row',
+    flexWrap: 'nowrap',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 4,
+    minWidth: 0,
+  },
+  unitChip: {
+    flex: 1,
+    minWidth: 0,
     paddingVertical: 6,
     paddingHorizontal: 4,
+    borderRadius: Radius.full,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  endRowOn: {},
-  endRowText: { fontSize: 14, fontFamily: Fonts.regular, color: Colors.text },
-  monthlyOptionSummary: { flex: 1, marginRight: 6 },
+  unitChipText: {
+    fontSize: 13,
+    fontFamily: Fonts.medium,
+    color: Colors.textSub,
+    textAlign: 'center',
+    width: '100%',
+  },
   untilCal: {
-    marginTop: 6,
+    marginTop: 12,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.lg,
-    padding: 6,
+    padding: 10,
     backgroundColor: Colors.bg,
   },
   untilCalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 8,
   },
-  untilCalNav: { padding: 2 },
-  untilCalTitle: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.text },
+  untilCalNav: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  untilCalTitle: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
   untilCalWeekdayRow: { flexDirection: 'row', marginBottom: 4 },
   untilCalWeekday: {
     flex: 1,
     textAlign: 'center',
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: Fonts.medium,
     color: Colors.textMuted,
   },
   untilCalRow: { flexDirection: 'row' },
   untilCalCell: {
     flex: 1,
-    minHeight: 28,
+    minHeight: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: Radius.sm,
+    borderRadius: Radius.md,
   },
   untilCalCellDisabled: {
     opacity: 0.38,
   },
   untilCalCellSelected: {
-    backgroundColor: REPEAT_SELECT_BG,
+    backgroundColor: Colors.accent,
   },
   untilCalCellText: {
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: Fonts.medium,
     color: Colors.text,
     textAlign: 'center',
@@ -669,25 +809,39 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
   },
   untilCalCellTextSelected: {
-    color: REPEAT_SELECT_FG,
+    color: Colors.accentFg,
   },
-  dateInput: {
-    borderWidth: 1,
+  countRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  countHint: {
+    fontSize: 14,
+    fontFamily: Fonts.medium,
+    color: Colors.textSub,
+  },
+  countInput: {
+    flex: 1,
+    borderWidth: 1.5,
     borderColor: Colors.border,
-    borderRadius: Radius.md,
-    padding: 8,
+    borderRadius: Radius.lg,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     fontSize: 14,
     fontFamily: Fonts.regular,
     color: Colors.text,
     backgroundColor: Colors.surface,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
   },
-  countInputMargin: { marginTop: 6 },
   doneBtn: {
-    backgroundColor: REPEAT_SELECT_BG,
-    borderRadius: Radius.md,
-    paddingVertical: 10,
+    backgroundColor: Colors.accent,
+    borderRadius: Radius.lg,
+    paddingVertical: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
   },
-  doneBtnText: { fontSize: 14, fontFamily: Fonts.bold, color: REPEAT_SELECT_FG },
+  doneBtnText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
 });

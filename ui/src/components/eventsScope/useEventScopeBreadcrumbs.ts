@@ -30,9 +30,7 @@ export function useEventScopeBreadcrumbs(
   const router = useRouter();
   const navCallbacks = useEventScopeNav();
   const { userId: currentUserId } = useCurrentUserContext();
-  console.log('useEventScopeBreadcrumbs - fromEventIdProp:', fromEventIdProp);
-  console.log('useEventScopeBreadcrumbs - subpage:', subpage);
-  
+
   // Extract IDs from subpage
   const eventId = subpage.kind === 'event-detail' ? subpage.eventId 
     : subpage.kind === 'group-event-detail' ? subpage.eventId 
@@ -83,7 +81,7 @@ export function useEventScopeBreadcrumbs(
       case 'event-detail':
         // All Events > Event
         if (event) {
-          segs.push({ label: breadcrumbTruncate(event.title || 'Event') });
+          segs.push({ label: breadcrumbTruncate(event.name || 'Event') });
         }
         return segs;
 
@@ -94,7 +92,7 @@ export function useEventScopeBreadcrumbs(
         console.log('fromEvent', fromEvent);
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -108,7 +106,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Events (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -127,7 +125,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Events > Event (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -143,7 +141,7 @@ export function useEventScopeBreadcrumbs(
             onPress: () => navigateTo(eventsHref),
           });
           if (event) {
-            segs.push({ label: breadcrumbTruncate(event.title || 'Event') });
+            segs.push({ label: breadcrumbTruncate(event.name || 'Event') });
           }
         }
         return segs;
@@ -153,7 +151,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Polls (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -172,7 +170,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Polls > Poll (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -198,7 +196,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Forum (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -217,7 +215,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Members (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }
@@ -236,7 +234,7 @@ export function useEventScopeBreadcrumbs(
         // All Events > Group > Settings (if no fromEventId)
         if (fromEventId && fromEvent) {
           segs.push({
-            label: breadcrumbTruncate(fromEvent.title || 'Event'),
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
             onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
           });
         }

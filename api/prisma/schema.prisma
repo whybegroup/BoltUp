@@ -188,12 +188,18 @@ model Event {
   groupId      String
   createdBy    String
   updatedBy    String
-  title        String
+  name         String
   description  String?
   start        DateTime
   end          DateTime
   isAllDay       Boolean?  @default(false)
   location       String?
+  /// When true, the location string may be opened in maps. False for free-text / "use as entered".
+  locationLinkable Boolean @default(true)
+  /// Place display name when location came from Places (null for free-text).
+  locationName     String?
+  /// Full formatted address when location came from Places (null for free-text).
+  locationAddress  String?
   minAttendees   Int?
   maxAttendees   Int?
   enableWaitlist Boolean?  @default(false)

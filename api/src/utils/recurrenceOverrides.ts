@@ -3,13 +3,16 @@
  */
 
 export type RecurrenceOccurrenceOverrideStored = {
-  title?: string;
+  name?: string;
   description?: string | null;
   coverPhotos?: string[];
   start?: string;
   end?: string;
   isAllDay?: boolean;
   location?: string | null;
+  locationLinkable?: boolean;
+  locationName?: string | null;
+  locationAddress?: string | null;
   minAttendees?: number | null;
   maxAttendees?: number | null;
   enableWaitlist?: boolean;

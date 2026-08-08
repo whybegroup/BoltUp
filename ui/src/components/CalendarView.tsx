@@ -913,7 +913,7 @@ export function CalendarView({
                           numberOfLines={1}
                           ellipsizeMode="tail"
                         >
-                          {ev.title}
+                          {ev.name}
                         </Text>
                       </RectButton>
                     );
@@ -972,14 +972,14 @@ export function CalendarView({
                         />
                         <Text
                           style={[
-                            styles.timedEventTitle,
+                            styles.timedEventName,
                             styles.calendarEventForeground,
                             { color: appearance.textColor },
                           ]}
                           numberOfLines={1}
                           ellipsizeMode="tail"
                         >
-                          {ev.title}
+                          {ev.name}
                         </Text>
                         <Text
                           style={[
@@ -1895,7 +1895,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     zIndex: 20,
   },
-  timedEventTitle: {
+  timedEventName: {
     fontSize: 10,
     fontFamily: Fonts.bold,
     flexShrink: 1,

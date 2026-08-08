@@ -10,8 +10,8 @@ export interface Event {
   createdBy: string;
   /** ID of the user who last updated this event */
   updatedBy: string;
-  /** Event title */
-  title: string;
+  /** Event name */
+  name: string;
   /** Event description (multiline) */
   description?: string | null;
   /** Array of cover photo URLs */
@@ -24,6 +24,15 @@ export interface Event {
   isAllDay?: boolean | null;
   /** Event location */
   location?: string | null;
+  /**
+   * When true, the location may be opened in maps (Places pick).
+   * False for free-text / “use as entered” locations.
+   */
+  locationLinkable?: boolean;
+  /** Place name when chosen from Places; null for free-text. */
+  locationName?: string | null;
+  /** Full formatted address when chosen from Places; null for free-text. */
+  locationAddress?: string | null;
   /** Minimum number of attendees required */
   minAttendees?: number | null;
   /** Maximum number of attendees allowed */
@@ -114,7 +123,7 @@ export interface EventInput {
   id: string;
   groupId: string;
   createdBy: string;
-  title: string;
+  name: string;
   /** Event description (multiline) */
   description?: string;
   coverPhotos?: string[];
@@ -122,6 +131,10 @@ export interface EventInput {
   end: Date | string;
   isAllDay?: boolean;
   location?: string;
+  /** Defaults to false when omitted (free text). Set true when picking a Places suggestion. */
+  locationLinkable?: boolean;
+  locationName?: string | null;
+  locationAddress?: string | null;
   minAttendees?: number;
   maxAttendees?: number;
   enableWaitlist?: boolean;
@@ -139,7 +152,7 @@ export interface EventInput {
  * Input for updating an event
  */
 export interface EventUpdate {
-  title?: string;
+  name?: string;
   /** Event description (multiline) */
   description?: string;
   coverPhotos?: string[];
@@ -147,6 +160,10 @@ export interface EventUpdate {
   end?: Date | string;
   isAllDay?: boolean;
   location?: string;
+  /** When updating location: true for Places picks, false for free-text / use-as-entered. */
+  locationLinkable?: boolean;
+  locationName?: string | null;
+  locationAddress?: string | null;
   /** Omit to leave unchanged; `null` clears the cap. */
   minAttendees?: number | null;
   /** Omit to leave unchanged; `null` clears the cap. */

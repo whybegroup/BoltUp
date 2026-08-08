@@ -6,7 +6,6 @@ import { type Href } from 'expo-router';
 export function parseFromEventId(
   searchParams: { fromEventId?: string | string[] } | undefined
 ): string | undefined {
-  console.log('parseFromEventId - searchParams:', searchParams);
   if (!searchParams?.fromEventId) return undefined;
   return Array.isArray(searchParams.fromEventId) 
     ? searchParams.fromEventId[0] 

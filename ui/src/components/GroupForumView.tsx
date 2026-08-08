@@ -977,44 +977,6 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     })();
   }, [currentUserId, forumDraftsReady, groupId]);
 
-  const discardEditPostDraft = useCallback(() => {
-    if (!editingPostId) return;
-    const pid = editingPostId;
-    const post = posts.find((p) => p.id === pid);
-    delete postEditsRef.current[pid];
-    bumpDraftBadgeTick();
-    if (post) {
-      const split = splitStoredPostBody(post.body);
-      setPostBody(split.markdownSource);
-      setComposerPhotoUrls(split.attachmentImages.map((img) => img.url));
-      setComposerFileAttachments(split.attachmentFiles.map((f) => ({ name: f.name, url: f.url })));
-      setComposerSelection({ start: 0, end: 0 });
-    }
-    void (async () => {
-      if (!currentUserId || !forumDraftsReady) return;
-      const postEdits = { ...postEditsRef.current };
-      const newPost =
-        newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0
-          ? {
-              markdown: newPostBody,
-              photos: [...newPostPhotoUrls],
-              files: [...newPostFileAttachments],
-            }
-          : null;
-      await saveForumGroupDraft(currentUserId, groupId, { v: 1, newPost, postEdits });
-    })();
-  }, [
-    bumpDraftBadgeTick,
-    currentUserId,
-    editingPostId,
-    forumDraftsReady,
-    groupId,
-    newPostBody,
-    newPostPhotoUrls,
-    newPostFileAttachments,
-    posts,
-  ]);
-
   const beginEditPost = useCallback(
     (post: GroupPost) => {
       if (!currentUserId) return;
@@ -1526,17 +1488,6 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     [newPostBody, newPostPhotoUrls, newPostFileAttachments]
   );
 
-  const editingPostDraftDirty = useMemo(() => {
-    if (!editingPostId) return false;
-    const post = posts.find((p) => p.id === editingPostId);
-    if (!post) return false;
-    const merged = normalizeForumStoredBody(
-      mergeComposerBodyForApi(postBody, composerPhotoUrls, composerFileAttachments)
-    );
-    const original = normalizeForumStoredBody(post.body);
-    return merged !== original;
-  }, [composerPhotoUrls, composerFileAttachments, editingPostId, postBody, posts]);
-
   const postIdsWithUnsavedDraft = useMemo(() => {
     const ids = new Set<string>();
     for (const [id, e] of Object.entries(postEditsRef.current)) {
@@ -1577,25 +1528,15 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
           </View>
         ) : null}
         {!isNew ? (
-          <View style={styles.editingPostBanner}>
-            <Text style={[styles.editingPostBannerText, styles.editingPostBannerTitleGrow]} numberOfLines={2}>
-              Editing your post
-              {editingPostDraftDirty ? ' · not saved yet' : ''}
-            </Text>
-            <View style={styles.editingPostBannerActions}>
-              {editingPostDraftDirty ? (
-                <TouchableOpacity
-                  onPress={discardEditPostDraft}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityLabel="Discard edit draft"
-                >
-                  <Text style={styles.editingPostBannerSecondary}>Discard draft</Text>
-                </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity onPress={cancelEditPost} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={styles.editingPostBannerCancel}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.forumDraftBar}>
+            <Text style={styles.forumDraftBarHint}>Draft saved on this device</Text>
+            <TouchableOpacity
+              onPress={cancelEditPost}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Discard draft"
+            >
+              <Text style={styles.forumDraftBarDiscard}>Discard draft</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
         <View ref={postComposerRef} collapsable={false}>
@@ -1780,17 +1721,25 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
               <View style={styles.cardPad}>
                 <View style={styles.postMetaHeaderRow}>
                   <View style={styles.postMetaTitleColumn}>
-                    <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={2}>
-                      {post.userId === currentUserId ? (
-                        <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
-                      ) : (
-                        getUserDisplayName(post.userId)
-                      )}
-                      {post.userId === currentUserId ? (
-                        <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
-                      ) : null}{' '}
-                      · {formatCreatedAt(post.createdAt)}
-                    </Text>
+                    <View style={styles.postMetaAuthorRow}>
+                      <UserAvatar
+                        seed={getUserDisplayName(post.userId)}
+                        backgroundColor={[usersById.get(post.userId)?.avatarSeed ?? '']}
+                        thumbnail={usersById.get(post.userId)?.thumbnail}
+                        size={18}
+                      />
+                      <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={1}>
+                        {post.userId === currentUserId ? (
+                          <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
+                        ) : (
+                          getUserDisplayName(post.userId)
+                        )}
+                        {post.userId === currentUserId ? (
+                          <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
+                        ) : null}{' '}
+                        · {formatCreatedAt(post.createdAt)}
+                      </Text>
+                    </View>
                     {post.userId === currentUserId &&
                     editingPostId !== post.id &&
                     postIdsWithUnsavedDraft.has(post.id) ? (
@@ -2083,7 +2032,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                           seed={displayName}
                           backgroundColor={[u?.avatarSeed ?? '']}
                           thumbnail={u?.thumbnail}
-                          size={34}
+                          size={18}
                         />
                       );
                     }}
@@ -2402,6 +2351,8 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
     overflow: 'hidden',
   },
   cardPad: { padding: 14 },
@@ -2563,14 +2514,20 @@ const styles = StyleSheet.create({
   postBtnText: { color: '#fff', fontFamily: Fonts.semiBold, fontSize: 13 },
   emptyText: { color: Colors.textMuted, fontFamily: Fonts.regular, fontSize: 14, lineHeight: 21 },
   metaText: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 12 },
-  metaPostMe: { color: Colors.going },
+  metaPostMe: { color: Colors.going, fontFamily: Fonts.semiBold },
   postMetaHeaderRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 6,
   },
   postMetaTitleColumn: { flex: 1, minWidth: 0 },
+  postMetaAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
   postDraftBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2607,24 +2564,6 @@ const styles = StyleSheet.create({
   },
   forumDraftBarHint: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, flex: 1, marginRight: 8 },
   forumDraftBarDiscard: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.notGoing },
-  editingPostBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: Colors.goingBg,
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.goingBorder,
-  },
-  editingPostBannerTitleGrow: { flex: 1, minWidth: 0 },
-  editingPostBannerActions: { flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 },
-  editingPostBannerText: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.text },
-  editingPostBannerSecondary: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.textSub },
-  editingPostBannerCancel: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accent },
   commentComposerWrap: {
     marginTop: 8,
     gap: 8,
@@ -2973,6 +2912,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
     overflow: 'hidden',
   },
   commentComposer: {

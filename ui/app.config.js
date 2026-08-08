@@ -26,6 +26,13 @@ const plugins = [
       cameraPermission: 'moijia can use the camera to add photos to events.',
     },
   ],
+  [
+    'expo-location',
+    {
+      locationWhenInUsePermission:
+        'moijia uses your location to suggest nearby places when setting an event location.',
+    },
+  ],
 ];
 if (iosUrlScheme) {
   plugins.push(['@react-native-google-signin/google-signin', { iosUrlScheme }]);

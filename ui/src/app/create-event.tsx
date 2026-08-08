@@ -32,16 +32,20 @@ import {
   localWallDateStartOfDayToUtcIso,
   localWallDateEndOfDayToUtcIso,
   isValidEventFormTimeRange,
+  endPreservingDuration,
+  formatWallDateFromUtcIso,
+  formatWallTimeHmFromUtcIso,
 } from '../utils/datetimeUtc';
 import { NavBar, Field, Toggle, formSectionTitleStyle } from '../components/ui';
 import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
 import { RecurrenceField } from '../components/RecurrenceField';
-import { buildRecurrenceRule, defaultRecurrenceFormState, type RecurrenceFormState } from '../utils/recurrence';
-import { useGroups, useCreateEvent, useAllGroupMemberColors } from '../hooks/api';
+import { buildRecurrenceRule, defaultRecurrenceFormState, parseRecurrenceToForm, type RecurrenceFormState } from '../utils/recurrence';
+import { useGroups, useCreateEvent, useUpdateEvent, useEvent, useAllGroupMemberColors } from '../hooks/api';
 import { uid } from '../utils/api-helpers';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { ResolvableImage } from '../components/ResolvableImage';
+import { GroupAvatar } from '../components/GroupAvatar';
 import { AddImageButton } from '../components/AddImageButton';
 import {
   pickDeferredCoverPhotoNative,
@@ -52,12 +56,18 @@ import {
   coverPhotoDraftDisplayUri,
   type CoverPhotoDraft,
 } from '../services/pickAndUploadImage';
-import { firstSearchParam, parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
+import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
+import { EventUpdate } from '@moijia/client';
+import Toast from 'react-native-toast-message';
+import { SERIES_SCOPE_OPTIONS, type SeriesUpdateScope } from '../utils/seriesUpdateScopeOptions';
+import { useLocationSuggestions } from '../hooks/useLocationSuggestions';
+import { LocationSuggestionCard } from '../components/LocationSuggestionCard';
+import { resolvePlaceSuggestionDetails } from '../utils/locationSuggestions';
 
 /** Stable snapshot for “dirty?” after URL + default-group hydration. */
 function serializeCreateFormBaseline(
   f: {
-    title: string;
+    name: string;
     description: string;
     groupId: string;
     startDate: string;
@@ -66,6 +76,10 @@ function serializeCreateFormBaseline(
     endTime: string;
     allDay: boolean;
     location: string;
+    /** True only after picking a Places suggestion (opens as maps link on detail). */
+    locationLinkable: boolean;
+    locationName: string;
+    locationAddress: string;
     minAttendees: string;
     maxAttendees: string;
     allowMaybe: boolean;
@@ -78,7 +92,7 @@ function serializeCreateFormBaseline(
     .map((d) => (d.kind === 'remote' ? `r:${d.url}` : `p:${d.previewUri}`))
     .join('\n');
   return JSON.stringify({
-    title: f.title,
+    name: f.name,
     description: f.description,
     groupId: f.groupId,
     startDate: f.startDate,
@@ -87,6 +101,9 @@ function serializeCreateFormBaseline(
     endTime: f.endTime,
     allDay: f.allDay,
     location: f.location,
+    locationLinkable: f.locationLinkable,
+    locationName: f.locationName,
+    locationAddress: f.locationAddress,
     minAttendees: f.minAttendees,
     maxAttendees: f.maxAttendees,
     allowMaybe: f.allowMaybe,
@@ -166,7 +183,12 @@ export default function CreateEventScreen() {
     start?: string;
     end?: string;
     returnTo?: string | string[];
+    editId?: string | string[];
+    groupId?: string | string[];
   }>();
+  const editId = firstSearchParam(calendarParams.editId);
+  const isEditing = !!editId;
+  const paramGroupId = firstSearchParam(calendarParams.groupId);
   const createReturnTo = useMemo(
     () => parseReturnToParam(firstSearchParam(calendarParams.returnTo)),
     [calendarParams.returnTo]
@@ -176,11 +198,19 @@ export default function CreateEventScreen() {
   const { data: groups = [], isFetched: groupsIsFetched } = useGroups(currentUserId ?? '');
   const { data: groupColors = {} } = useAllGroupMemberColors(currentUserId || '');
   const createEventMutation = useCreateEvent(currentUserId ?? '');
+  const updateEventMutation = useUpdateEvent(editId ?? '', currentUserId ?? '');
+  const { data: editingEvent } = useEvent(editId ?? '', currentUserId ?? '');
+  const hydratedEditRef = useRef(false);
+  const originalStartIsoRef = useRef<string | null>(null);
+  const [showSaveScopeModal, setShowSaveScopeModal] = useState(false);
+  const [seriesUpdateScope, setSeriesUpdateScope] = useState<SeriesUpdateScope>(
+    EventUpdate.seriesUpdateScope.THIS_OCCURRENCE
+  );
 
   const [form, setForm] = useState(() => {
     const t = getDefaultEventWallTimes();
     return {
-      title: '',
+      name: '',
       description: '',
       groupId: '',
       startDate: t.startDate,
@@ -189,6 +219,9 @@ export default function CreateEventScreen() {
       endTime: t.endTime,
       allDay: false,
       location: '',
+      locationLinkable: false,
+      locationName: '',
+      locationAddress: '',
       minAttendees: '1',
       maxAttendees: '',
       allowMaybe: false,
@@ -204,20 +237,110 @@ export default function CreateEventScreen() {
     endTime: '',
   });
   const [coverPhotoBusy, setCoverPhotoBusy] = useState(false);
-
-  const eventEligibleGroups = groups.filter(
-    (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin',
+  /** Create flow: pick group first, then event details. Edit always starts on details. */
+  const [createStep, setCreateStep] = useState<'group' | 'details'>(() =>
+    isEditing || !!paramGroupId ? 'details' : 'group'
   );
+
+  const eventEligibleGroups = useMemo(
+    () =>
+      groups.filter(
+        (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin',
+      ),
+    [groups]
+  );
+  const selectedGroup =
+    eventEligibleGroups.find((g) => g.id === form.groupId) ??
+    groups.find((g) => g.id === form.groupId);
+  const selectedGroupTheme = selectedGroup
+    ? getGroupColor(
+        groupColors[selectedGroup.id] || getDefaultGroupThemeFromName(selectedGroup.name)
+      )
+    : null;
 
   const [createFormBaselineSerialized, setCreateFormBaselineSerialized] = useState<string | null>(null);
 
   useEffect(() => {
-    if (eventEligibleGroups.length > 0 && !form.groupId) {
-      setForm((p) => ({ ...p, groupId: eventEligibleGroups[0].id }));
+    if (isEditing || !paramGroupId || !groupsIsFetched) return;
+    if (!eventEligibleGroups.some((g) => g.id === paramGroupId)) return;
+    setForm((p) => (p.groupId === paramGroupId ? p : { ...p, groupId: paramGroupId }));
+    setCreateStep('details');
+  }, [isEditing, paramGroupId, groupsIsFetched, eventEligibleGroups]);
+
+  useEffect(() => {
+    if (isEditing || paramGroupId || !groupsIsFetched) return;
+    if (form.groupId || createStep !== 'group') return;
+    if (eventEligibleGroups.length === 1) {
+      setForm((p) => ({ ...p, groupId: eventEligibleGroups[0]!.id }));
+      setCreateStep('details');
     }
-  }, [eventEligibleGroups, form.groupId]);
+  }, [
+    isEditing,
+    paramGroupId,
+    groupsIsFetched,
+    form.groupId,
+    createStep,
+    eventEligibleGroups,
+  ]);
+
+  useEffect(() => {
+    if (!isEditing || !editingEvent || hydratedEditRef.current) return;
+    if (!editingEvent.start || !editingEvent.end) return;
+    const startIso = String(editingEvent.start);
+    const endIso = String(editingEvent.end);
+    originalStartIsoRef.current = startIso;
+    const startDate = formatWallDateFromUtcIso(startIso);
+    const endDate = formatWallDateFromUtcIso(endIso);
+    const startTime = formatWallTimeHmFromUtcIso(startIso);
+    const endTime = formatWallTimeHmFromUtcIso(endIso);
+    const allDay = !!editingEvent.isAllDay;
+    const recurrence = parseRecurrenceToForm(
+      editingEvent.recurrenceRule,
+      localWallDateTimeToDate(startDate, startTime)
+    );
+    setForm({
+      name: editingEvent.name ?? '',
+      description: editingEvent.description ?? '',
+      groupId: editingEvent.groupId,
+      startDate,
+      startTime,
+      endDate,
+      endTime,
+      allDay,
+      location: editingEvent.location ?? '',
+      locationLinkable: !!editingEvent.locationLinkable,
+      locationName: editingEvent.locationName ?? '',
+      locationAddress: editingEvent.locationAddress ?? '',
+      minAttendees:
+        editingEvent.minAttendees != null && editingEvent.minAttendees > 0
+          ? String(editingEvent.minAttendees)
+          : '',
+      maxAttendees:
+        editingEvent.maxAttendees != null && editingEvent.maxAttendees > 0
+          ? String(editingEvent.maxAttendees)
+          : '',
+      allowMaybe: !!editingEvent.allowMaybe,
+      enableWaitlist: !!editingEvent.enableWaitlist,
+      coverPhotoDrafts: (editingEvent.coverPhotos ?? []).map((url) => ({
+        kind: 'remote' as const,
+        url,
+      })),
+      recurrence,
+    });
+    setErrors({ startDate: '', startTime: '', endDate: '', endTime: '' });
+    hydratedEditRef.current = true;
+    setCreateFormBaselineSerialized(null);
+  }, [editingEvent, isEditing]);
 
   const set = (k: string, v: any) => setForm((p) => ({ ...p, [k]: v }));
+
+  const {
+    suggestions: locationSuggestions,
+    suggesting: locationSuggesting,
+    suggestionError: locationSuggestionError,
+    panelOpen: locationSuggestionPanelOpen,
+    clearSuggestions: clearLocationSuggestions,
+  } = useLocationSuggestions(form.location);
 
   const coverPhotoFileInputRef = useRef<{ click: () => void } | null>(null);
 
@@ -306,7 +429,7 @@ export default function CreateEventScreen() {
   );
 
   const ok =
-    !!form.title.trim() &&
+    !!form.name.trim() &&
     !!form.startDate &&
     !!form.endDate &&
     !!form.groupId &&
@@ -335,8 +458,8 @@ export default function CreateEventScreen() {
     [form.startDate, form.startTime]
   );
 
-  const submit = async () => {
-    if (!ok) return;
+  const submit = async (seriesScope?: SeriesUpdateScope) => {
+    if (!ok || !currentUserId) return;
     try {
       const startIso = form.allDay
         ? localWallDateStartOfDayToUtcIso(form.startDate)
@@ -346,8 +469,26 @@ export default function CreateEventScreen() {
         : localWallDateTimeToUtcIso(form.endDate, form.endTime);
       const start = new Date(startIso);
       const end = new Date(endIso);
+      const savedStartMs = originalStartIsoRef.current
+        ? new Date(originalStartIsoRef.current).getTime()
+        : NaN;
+      const eventHasStarted =
+        isEditing && Number.isFinite(savedStartMs) && Date.now() >= savedStartMs;
 
-      if (start.getTime() < Date.now()) {
+      if (!isEditing && start.getTime() < Date.now()) {
+        const msg = 'New events cannot be scheduled in the past.';
+        if (Platform.OS === 'web') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Cannot create event', msg);
+        }
+        return;
+      }
+      if (
+        isEditing &&
+        start.getTime() < Date.now() &&
+        start.getTime() !== savedStartMs
+      ) {
         const msg = 'New events cannot be scheduled in the past.';
         if (Platform.OS === 'web') {
           window.alert(msg);
@@ -361,10 +502,6 @@ export default function CreateEventScreen() {
 
       let coverPhotos: string[] = [];
       if (form.coverPhotoDrafts.length > 0) {
-        if (!currentUserId) {
-          Alert.alert('Error', 'You must be signed in to upload photos.');
-          return;
-        }
         try {
           coverPhotos = await uploadCoverPhotoDrafts(currentUserId, form.coverPhotoDrafts);
         } catch {
@@ -372,20 +509,119 @@ export default function CreateEventScreen() {
           return;
         }
       }
-      
+
+      if (isEditing && editId) {
+        const inSeries = !!(editingEvent as { recurrenceSeriesId?: string } | undefined)
+          ?.recurrenceSeriesId?.trim();
+        const baseline = createFormBaselineSerialized
+          ? (JSON.parse(createFormBaselineSerialized) as {
+              startDate: string;
+              startTime: string;
+              endDate: string;
+              endTime: string;
+              allDay: boolean;
+            })
+          : null;
+        const timeFieldsDirty =
+          !!baseline &&
+          (form.startDate !== baseline.startDate ||
+            form.startTime !== baseline.startTime ||
+            form.endDate !== baseline.endDate ||
+            form.endTime !== baseline.endTime ||
+            form.allDay !== baseline.allDay);
+
+        if (inSeries && timeFieldsDirty && !seriesScope) {
+          setSeriesUpdateScope(EventUpdate.seriesUpdateScope.THIS_OCCURRENCE);
+          setShowSaveScopeModal(true);
+          return;
+        }
+
+        const minTrim = form.minAttendees.trim();
+        const maxTrim = form.maxAttendees.trim();
+        let minAttendees: number | null;
+        let maxAttendees: number | null;
+        if (minTrim === '') minAttendees = null;
+        else {
+          const n = parseInt(minTrim, 10);
+          if (Number.isNaN(n) || n < 0) {
+            Alert.alert('Error', 'Min attendees must be a non-negative number');
+            return;
+          }
+          minAttendees = n;
+        }
+        if (maxTrim === '') maxAttendees = null;
+        else {
+          const n = parseInt(maxTrim, 10);
+          if (Number.isNaN(n) || n < 0) {
+            Alert.alert('Error', 'Max attendees must be a non-negative number');
+            return;
+          }
+          maxAttendees = n;
+        }
+        if (minAttendees != null && maxAttendees != null && maxAttendees < minAttendees) {
+          Alert.alert('Error', 'Max attendees must be at least the minimum');
+          return;
+        }
+        const hasMaxCap = maxAttendees != null && maxAttendees > 0;
+        const finalStartIso = eventHasStarted ? String(originalStartIsoRef.current) : startIso;
+
+        await updateEventMutation.mutateAsync({
+          name: form.name.trim(),
+          description: form.description.trim(),
+          location: form.location.trim(),
+          locationLinkable: form.location.trim() ? form.locationLinkable : false,
+          locationName:
+            form.location.trim() && form.locationLinkable ? form.locationName.trim() || null : null,
+          locationAddress:
+            form.location.trim() && form.locationLinkable
+              ? form.locationAddress.trim() || null
+              : null,
+          coverPhotos,
+          start: finalStartIso,
+          end: endIso,
+          ...(eventHasStarted ? {} : { isAllDay: isAllDay || undefined }),
+          minAttendees,
+          maxAttendees,
+          enableWaitlist: hasMaxCap ? form.enableWaitlist : false,
+          allowMaybe: form.allowMaybe,
+          updatedBy: currentUserId,
+          viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          ...(inSeries && timeFieldsDirty && seriesScope
+            ? { seriesUpdateScope: seriesScope }
+            : {}),
+        });
+        Toast.show({ type: 'success', text1: 'Changes saved' });
+        setShowSaveScopeModal(false);
+        if (router.canGoBack()) {
+          router.back();
+        } else if (createReturnTo) {
+          router.replace(createReturnTo as Href);
+        } else {
+          router.replace('/(tabs)/events');
+        }
+        return;
+      }
+
       const recurrenceRule = buildRecurrenceRule(form.recurrence, start);
 
       const newEvent = {
         id: uid(),
         groupId: form.groupId,
         createdBy: currentUserId,
-        title: form.title.trim(),
+        name: form.name.trim(),
         description: form.description.trim() || undefined,
         coverPhotos,
         start: startIso,
         end: endIso,
         isAllDay: isAllDay || undefined,
         location: form.location.trim() || undefined,
+        locationLinkable: form.location.trim() ? form.locationLinkable : false,
+        locationName:
+          form.location.trim() && form.locationLinkable ? form.locationName.trim() || null : null,
+        locationAddress:
+          form.location.trim() && form.locationLinkable
+            ? form.locationAddress.trim() || null
+            : null,
         minAttendees: form.minAttendees.trim() ? parseInt(form.minAttendees, 10) : undefined,
         maxAttendees: form.maxAttendees.trim() ? parseInt(form.maxAttendees, 10) : undefined,
         enableWaitlist: form.maxAttendees.trim() ? form.enableWaitlist : undefined,
@@ -394,11 +630,11 @@ export default function CreateEventScreen() {
           ? { recurrenceRule, viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }
           : {}),
       };
-      
+
       await createEventMutation.mutateAsync(newEvent);
       router.replace(`/(tabs)/events/${newEvent.id}` as Href);
     } catch {
-      Alert.alert('Error', 'Failed to create event');
+      Alert.alert('Error', isEditing ? 'Failed to update event' : 'Failed to create event');
     }
   };
 
@@ -535,11 +771,26 @@ export default function CreateEventScreen() {
     }
     if (selectedDate) {
       const dateStr = formatLocalDateInput(selectedDate);
-      set('startDate', dateStr);
+      const shifted = endPreservingDuration({
+        prevStartDate: form.startDate,
+        prevStartTime: form.startTime,
+        prevEndDate: form.endDate,
+        prevEndTime: form.endTime,
+        nextStartDate: dateStr,
+        nextStartTime: form.startTime,
+        allDay: form.allDay,
+      });
+      const endDate = shifted?.endDate ?? form.endDate;
+      const endTime = shifted?.endTime ?? form.endTime;
+      setForm((p) => ({
+        ...p,
+        startDate: dateStr,
+        ...(shifted ? { endDate: shifted.endDate, endTime: shifted.endTime } : {}),
+      }));
       validateStartDate(dateStr);
       validateStartTime(form.startTime, dateStr, form.allDay);
-      validateEndDate(form.endDate, dateStr);
-      validateEndTime(form.endTime, form.startTime, form.endDate, dateStr, form.allDay);
+      validateEndDate(endDate, dateStr);
+      validateEndTime(endTime, form.startTime, endDate, dateStr, form.allDay);
     }
   };
 
@@ -556,11 +807,26 @@ export default function CreateEventScreen() {
   };
 
   const handleStartDateInputChange = (dateStr: string) => {
-    set('startDate', dateStr);
+    const shifted = endPreservingDuration({
+      prevStartDate: form.startDate,
+      prevStartTime: form.startTime,
+      prevEndDate: form.endDate,
+      prevEndTime: form.endTime,
+      nextStartDate: dateStr,
+      nextStartTime: form.startTime,
+      allDay: form.allDay,
+    });
+    const endDate = shifted?.endDate ?? form.endDate;
+    const endTime = shifted?.endTime ?? form.endTime;
+    setForm((p) => ({
+      ...p,
+      startDate: dateStr,
+      ...(shifted ? { endDate: shifted.endDate, endTime: shifted.endTime } : {}),
+    }));
     validateStartDate(dateStr);
     validateStartTime(form.startTime, dateStr, form.allDay);
-    validateEndDate(form.endDate, dateStr);
-    validateEndTime(form.endTime, form.startTime, form.endDate, dateStr, form.allDay);
+    validateEndDate(endDate, dateStr);
+    validateEndTime(endTime, form.startTime, endDate, dateStr, form.allDay);
   };
 
   const handleEndDateInputChange = (dateStr: string) => {
@@ -577,16 +843,46 @@ export default function CreateEventScreen() {
       const hours = String(selectedTime.getHours()).padStart(2, '0');
       const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
       const timeStr = `${hours}:${minutes}`;
-      set('startTime', timeStr);
+      const shifted = endPreservingDuration({
+        prevStartDate: form.startDate,
+        prevStartTime: form.startTime,
+        prevEndDate: form.endDate,
+        prevEndTime: form.endTime,
+        nextStartDate: form.startDate,
+        nextStartTime: timeStr,
+        allDay: form.allDay,
+      });
+      const endDate = shifted?.endDate ?? form.endDate;
+      const endTime = shifted?.endTime ?? form.endTime;
+      setForm((p) => ({
+        ...p,
+        startTime: timeStr,
+        ...(shifted ? { endDate: shifted.endDate, endTime: shifted.endTime } : {}),
+      }));
       validateStartTime(timeStr, form.startDate, form.allDay);
-      validateEndTime(form.endTime, timeStr, form.endDate, form.startDate, form.allDay);
+      validateEndTime(endTime, timeStr, endDate, form.startDate, form.allDay);
     }
   };
 
   const handleStartTimeInputChange = (timeStr: string) => {
-    set('startTime', timeStr);
+    const shifted = endPreservingDuration({
+      prevStartDate: form.startDate,
+      prevStartTime: form.startTime,
+      prevEndDate: form.endDate,
+      prevEndTime: form.endTime,
+      nextStartDate: form.startDate,
+      nextStartTime: timeStr,
+      allDay: form.allDay,
+    });
+    const endDate = shifted?.endDate ?? form.endDate;
+    const endTime = shifted?.endTime ?? form.endTime;
+    setForm((p) => ({
+      ...p,
+      startTime: timeStr,
+      ...(shifted ? { endDate: shifted.endDate, endTime: shifted.endTime } : {}),
+    }));
     validateStartTime(timeStr, form.startDate, form.allDay);
-    validateEndTime(form.endTime, timeStr, form.endDate, form.startDate, form.allDay);
+    validateEndTime(endTime, timeStr, endDate, form.startDate, form.allDay);
   };
 
   const handleEndTimeChange = (_event: unknown, selectedTime?: Date) => {
@@ -615,11 +911,26 @@ export default function CreateEventScreen() {
 
   const commitIosStartDate = () => {
     const dateStr = formatLocalDateInput(iosStartDateDraft);
-    set('startDate', dateStr);
+    const shifted = endPreservingDuration({
+      prevStartDate: form.startDate,
+      prevStartTime: form.startTime,
+      prevEndDate: form.endDate,
+      prevEndTime: form.endTime,
+      nextStartDate: dateStr,
+      nextStartTime: form.startTime,
+      allDay: form.allDay,
+    });
+    const endDate = shifted?.endDate ?? form.endDate;
+    const endTime = shifted?.endTime ?? form.endTime;
+    setForm((p) => ({
+      ...p,
+      startDate: dateStr,
+      ...(shifted ? { endDate: shifted.endDate, endTime: shifted.endTime } : {}),
+    }));
     validateStartDate(dateStr);
     validateStartTime(form.startTime, dateStr, form.allDay);
-    validateEndDate(form.endDate, dateStr);
-    validateEndTime(form.endTime, form.startTime, form.endDate, dateStr, form.allDay);
+    validateEndDate(endDate, dateStr);
+    validateEndTime(endTime, form.startTime, endDate, dateStr, form.allDay);
     setShowStartDatePicker(false);
   };
 
@@ -633,9 +944,24 @@ export default function CreateEventScreen() {
 
   const commitIosStartTime = () => {
     const timeStr = `${pad2(iosStartTimeDraft.getHours())}:${pad2(iosStartTimeDraft.getMinutes())}`;
-    set('startTime', timeStr);
+    const shifted = endPreservingDuration({
+      prevStartDate: form.startDate,
+      prevStartTime: form.startTime,
+      prevEndDate: form.endDate,
+      prevEndTime: form.endTime,
+      nextStartDate: form.startDate,
+      nextStartTime: timeStr,
+      allDay: form.allDay,
+    });
+    const endDate = shifted?.endDate ?? form.endDate;
+    const endTime = shifted?.endTime ?? form.endTime;
+    setForm((p) => ({
+      ...p,
+      startTime: timeStr,
+      ...(shifted ? { endDate: shifted.endDate, endTime: shifted.endTime } : {}),
+    }));
     validateStartTime(timeStr, form.startDate, form.allDay);
-    validateEndTime(form.endTime, timeStr, form.endDate, form.startDate, form.allDay);
+    validateEndTime(endTime, timeStr, endDate, form.startDate, form.allDay);
     setShowStartTimePicker(false);
   };
 
@@ -710,16 +1036,22 @@ export default function CreateEventScreen() {
   const hasCalendarTimePreset = !!(calStartStr && calEndStr);
   const calendarPresetHydrated = !hasCalendarTimePreset || calendarPresetAppliedRef.current;
   const groupsDataReady = !currentUserId || groupsIsFetched;
-  const groupSelectHydrated =
-    !groupsDataReady ? false : eventEligibleGroups.length === 0 ? true : !!form.groupId;
+  const groupSelectHydrated = !groupsDataReady
+    ? false
+    : isEditing
+      ? hydratedEditRef.current && !!form.groupId
+      : createStep === 'details'
+        ? !!form.groupId || eventEligibleGroups.length === 0
+        : false;
+  const editHydrated = !isEditing || hydratedEditRef.current;
 
   useLayoutEffect(() => {
     if (createFormBaselineSerialized != null) return;
-    if (!calendarPresetHydrated || !groupSelectHydrated) return;
+    if (!calendarPresetHydrated || !groupSelectHydrated || !editHydrated) return;
     setCreateFormBaselineSerialized(
       serializeCreateFormBaseline(form)
     );
-  }, [createFormBaselineSerialized, calendarPresetHydrated, groupSelectHydrated, form]);
+  }, [createFormBaselineSerialized, calendarPresetHydrated, groupSelectHydrated, editHydrated, form]);
 
   const dismiss = useCallback(() => {
     if (router.canGoBack()) {
@@ -749,24 +1081,45 @@ export default function CreateEventScreen() {
     ]);
   }, [createFormDirty, dismiss]);
 
+  const showDetailsStep = isEditing || createStep === 'details';
+  const navTitle = isEditing
+    ? 'Edit Event'
+    : showDetailsStep
+      ? 'New Event'
+      : 'Choose group';
+
+  const selectGroupForCreate = (groupId: string) => {
+    setForm((p) => ({ ...p, groupId }));
+    setCreateStep('details');
+  };
+
   return (
     <EventFormPopoverChrome onClose={requestClose}>
       <View style={styles.inner}>
-      <NavBar title="New Event" onClose={requestClose}
+      <NavBar
+        title={navTitle}
+        onClose={requestClose}
         right={
+          showDetailsStep ? (
           <TouchableOpacity
-            onPress={submit}
-            disabled={!ok || createEventMutation.isPending}
-            style={[styles.headerBtn, (!ok || createEventMutation.isPending) && styles.headerBtnDis]}
+            onPress={() => void submit()}
+            disabled={!ok || createEventMutation.isPending || updateEventMutation.isPending}
+            style={[
+              styles.headerBtn,
+              (!ok || createEventMutation.isPending || updateEventMutation.isPending) && styles.headerBtnDis,
+            ]}
           >
-            {createEventMutation.isPending ? (
+            {createEventMutation.isPending || updateEventMutation.isPending ? (
               <ActivityIndicator size="small" color={Colors.accentFg} />
             ) : (
               <Text style={[styles.headerBtnText, !ok && { color: Colors.textMuted }]} numberOfLines={1}>
-                Create
+                {isEditing ? 'Save' : 'Create'}
               </Text>
             )}
           </TouchableOpacity>
+          ) : (
+            <View style={{ width: 70 }} />
+          )
         }
       />
       <KeyboardSafeScrollView
@@ -775,26 +1128,112 @@ export default function CreateEventScreen() {
         showsVerticalScrollIndicator={false}
       >
 
+        {!showDetailsStep ? (
+          <View style={styles.groupStep}>
+            <Text style={styles.groupStepHint}>Which group is this event for?</Text>
+            {!groupsDataReady ? (
+              <ActivityIndicator color={Colors.textSub} style={{ marginTop: 24 }} />
+            ) : eventEligibleGroups.length === 0 ? (
+              <Text style={styles.groupStepEmpty}>Join a group before creating an event.</Text>
+            ) : (
+              <View style={styles.groupPickList}>
+                {eventEligibleGroups.map((g) => {
+                  const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
+                  const p = getGroupColor(userColorHex);
+                  return (
+                    <TouchableOpacity
+                      key={g.id}
+                      onPress={() => selectGroupForCreate(g.id)}
+                      style={styles.groupPickRow}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Choose ${g.name}`}
+                    >
+                      <View style={[styles.groupPickAvatarWrap, { backgroundColor: p.cal }]}>
+                        <GroupAvatar
+                          seed={g.avatarSeed}
+                          thumbnail={g.thumbnail}
+                          name={g.name}
+                          size={44}
+                        />
+                      </View>
+                      <View style={styles.groupPickText}>
+                        <Text style={styles.groupPickName} numberOfLines={1}>
+                          {g.name}
+                        </Text>
+                        {g.memberCount != null ? (
+                          <Text style={styles.groupPickMeta}>
+                            {g.memberCount} {g.memberCount === 1 ? 'member' : 'members'}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        ) : (
+          <>
         <Field label="Group" required>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {eventEligibleGroups.map((g) => {
-              const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
-              const p = getGroupColor(userColorHex);
-              const sel = form.groupId === g.id;
-              return (
-                <TouchableOpacity key={g.id} onPress={() => set('groupId', g.id)}
-                  style={[styles.groupChip, sel && { borderColor: p.dot, backgroundColor: p.row }]}>
-                  <Text style={[styles.chipText, sel && { color: p.text, fontFamily: Fonts.semiBold }]}>{g.name}</Text>
+          {selectedGroup && selectedGroupTheme ? (
+            <View
+              style={[
+                styles.selectedGroupRow,
+                {
+                  backgroundColor: selectedGroupTheme.row,
+                  borderColor: selectedGroupTheme.dot,
+                  borderWidth: StyleSheet.hairlineWidth,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.groupPickAvatarWrap,
+                  {
+                    width: 36,
+                    height: 36,
+                    borderRadius: 12,
+                    backgroundColor: selectedGroupTheme.cal,
+                  },
+                ]}
+              >
+                <GroupAvatar
+                  seed={selectedGroup.avatarSeed}
+                  thumbnail={selectedGroup.thumbnail}
+                  name={selectedGroup.name}
+                  size={36}
+                />
+              </View>
+              <Text
+                style={[styles.selectedGroupName, { color: selectedGroupTheme.text }]}
+                numberOfLines={1}
+              >
+                {selectedGroup.name}
+              </Text>
+              {!isEditing && eventEligibleGroups.length > 1 ? (
+                <TouchableOpacity
+                  onPress={() => setCreateStep('group')}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Change group"
+                >
+                  <Text style={[styles.changeGroupLink, { color: selectedGroupTheme.text }]}>
+                    Change
+                  </Text>
                 </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+              ) : null}
+            </View>
+          ) : (
+            <Text style={styles.groupStepEmpty}>No group selected</Text>
+          )}
         </Field>
 
-        <Field label="Event title" required>
+        <Field label="Event name" required>
           <TextInput
-            value={form.title}
-            onChangeText={(v) => set('title', v)}
+            value={form.name}
+            onChangeText={(v) => set('name', v)}
             placeholder="e.g. Game night"
             placeholderTextColor={Colors.textMuted}
             style={styles.input}
@@ -995,14 +1434,84 @@ export default function CreateEventScreen() {
           ) : null}
         </View>
 
-        <RecurrenceField
-          anchorDate={recurrenceAnchor}
-          value={form.recurrence}
-          onChange={(recurrence) => setForm((p) => ({ ...p, recurrence }))}
-        />
+        {!isEditing ? (
+          <RecurrenceField
+            anchorDate={recurrenceAnchor}
+            value={form.recurrence}
+            onChange={(recurrence) => setForm((p) => ({ ...p, recurrence }))}
+          />
+        ) : null}
 
         <Field label="Location">
-          <TextInput value={form.location} onChangeText={v => set('location', v)} placeholder="e.g. Central Park" placeholderTextColor={Colors.textMuted} style={styles.input} />
+          <View style={styles.locationInputWrap}>
+            <TextInput
+              value={form.location}
+              onChangeText={(v) => {
+                setForm((p) => ({
+                  ...p,
+                  location: v,
+                  locationLinkable: false,
+                  locationName: '',
+                  locationAddress: '',
+                }));
+              }}
+              placeholder="e.g. Central Park"
+              placeholderTextColor={Colors.textMuted}
+              style={[styles.input, form.location.length > 0 && styles.locationInputWithClear]}
+              autoCapitalize="words"
+            />
+            {form.location.length > 0 ? (
+              <TouchableOpacity
+                style={styles.locationClearBtn}
+                onPress={() => {
+                  setForm((p) => ({
+                    ...p,
+                    location: '',
+                    locationLinkable: false,
+                    locationName: '',
+                    locationAddress: '',
+                  }));
+                  clearLocationSuggestions();
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Clear location"
+              >
+                <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {locationSuggestionPanelOpen ? (
+            <LocationSuggestionCard
+              typed={form.location}
+              suggestions={locationSuggestions}
+              suggesting={locationSuggesting}
+              suggestionError={locationSuggestionError}
+              showAsEntered={!form.locationLinkable}
+              onPickAsEntered={(typed) => {
+                setForm((p) => ({
+                  ...p,
+                  location: typed,
+                  locationLinkable: false,
+                  locationName: '',
+                  locationAddress: '',
+                }));
+                clearLocationSuggestions();
+              }}
+              onPickSuggestion={(s) => {
+                void (async () => {
+                  const resolved = await resolvePlaceSuggestionDetails(s);
+                  setForm((p) => ({
+                    ...p,
+                    location: resolved.label,
+                    locationLinkable: true,
+                    locationName: resolved.name,
+                    locationAddress: resolved.address,
+                  }));
+                  clearLocationSuggestions();
+                })();
+              }}
+            />
+          ) : null}
         </Field>
 
         <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -1032,53 +1541,55 @@ export default function CreateEventScreen() {
           </View>
         </View>
 
-        <View style={styles.photosSection}>
-          {Platform.OS === 'web' && (
-            <input
-              ref={(el) => {
-                coverPhotoFileInputRef.current = el;
-              }}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={onCoverPhotoWebFileChange}
-            />
-          )}
-          <Text style={formSectionTitleStyle}>
-            Photos{form.coverPhotoDrafts.length > 0 ? ` · ${form.coverPhotoDrafts.length}` : ''}
-          </Text>
-          <View style={styles.photosCard}>
-            {form.coverPhotoDrafts.length > 0 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}
-                style={{ borderBottomWidth: 1, borderBottomColor: Colors.border }}
-                contentContainerStyle={{ gap: 4, padding: 10 }}>
-                {form.coverPhotoDrafts.map((d, i) => (
-                  <View key={`${i}-${coverPhotoDraftDisplayUri(d)}`} style={{ position: 'relative' }}>
-                    <ResolvableImage
-                      storedUrl={coverPhotoDraftDisplayUri(d)}
-                      style={{ width: 80, height: 80, borderRadius: Radius.lg }}
-                      resizeMode="cover"
-                    />
-                    <TouchableOpacity onPress={() => removeCoverPhotoAt(i)}
-                      style={styles.removeThumb}>
-                      <Ionicons name="close" size={11} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
-            <View style={[styles.photosToolbar, form.coverPhotoDrafts.length === 0 && { borderTopWidth: 0 }]}>
-              <AddImageButton
-                label="Add photo"
-                busy={coverPhotoBusy}
-                disabled={coverPhotoBusy || !currentUserId}
-                onTakePhoto={addCoverPhotoFromCamera}
-                onChooseFromLibrary={addCoverPhotoFromPicker}
-                onInsertLink={addCoverPhotoFromLink}
+        {!isEditing ? (
+          <View style={styles.photosSection}>
+            {Platform.OS === 'web' && (
+              <input
+                ref={(el) => {
+                  coverPhotoFileInputRef.current = el;
+                }}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={onCoverPhotoWebFileChange}
               />
+            )}
+            <Text style={formSectionTitleStyle}>
+              Photos{form.coverPhotoDrafts.length > 0 ? ` · ${form.coverPhotoDrafts.length}` : ''}
+            </Text>
+            <View style={styles.photosCard}>
+              {form.coverPhotoDrafts.length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                  style={{ borderBottomWidth: 1, borderBottomColor: Colors.border }}
+                  contentContainerStyle={{ gap: 4, padding: 10 }}>
+                  {form.coverPhotoDrafts.map((d, i) => (
+                    <View key={`${i}-${coverPhotoDraftDisplayUri(d)}`} style={{ position: 'relative' }}>
+                      <ResolvableImage
+                        storedUrl={coverPhotoDraftDisplayUri(d)}
+                        style={{ width: 80, height: 80, borderRadius: Radius.lg }}
+                        resizeMode="cover"
+                      />
+                      <TouchableOpacity onPress={() => removeCoverPhotoAt(i)}
+                        style={styles.removeThumb}>
+                        <Ionicons name="close" size={11} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+              <View style={[styles.photosToolbar, form.coverPhotoDrafts.length === 0 && { borderTopWidth: 0 }]}>
+                <AddImageButton
+                  label="Add photo"
+                  busy={coverPhotoBusy}
+                  disabled={coverPhotoBusy || !currentUserId}
+                  onTakePhoto={addCoverPhotoFromCamera}
+                  onChooseFromLibrary={addCoverPhotoFromPicker}
+                  onInsertLink={addCoverPhotoFromLink}
+                />
+              </View>
             </View>
           </View>
-        </View>
+        ) : null}
 
         <Field label="Settings">
           <View style={styles.settingsCard}>
@@ -1090,18 +1601,25 @@ export default function CreateEventScreen() {
         </Field>
 
         <TouchableOpacity
-          onPress={submit}
-          style={[styles.submitBtn, (!ok || createEventMutation.isPending) && { backgroundColor: Colors.border }]}
-          disabled={!ok || createEventMutation.isPending}
+          onPress={() => void submit()}
+          style={[
+            styles.submitBtn,
+            (!ok || createEventMutation.isPending || updateEventMutation.isPending) && {
+              backgroundColor: Colors.border,
+            },
+          ]}
+          disabled={!ok || createEventMutation.isPending || updateEventMutation.isPending}
         >
-          {createEventMutation.isPending ? (
+          {createEventMutation.isPending || updateEventMutation.isPending ? (
             <ActivityIndicator color={Colors.accentFg} />
           ) : (
             <Text style={[styles.submitBtnText, !ok && { color: Colors.textMuted }]} numberOfLines={1}>
-              Create event
+              {isEditing ? 'Save event' : 'Create event'}
             </Text>
           )}
         </TouchableOpacity>
+          </>
+        )}
       </KeyboardSafeScrollView>
 
       {Platform.OS === 'android' && showStartDatePicker && (
@@ -1241,6 +1759,74 @@ export default function CreateEventScreen() {
           </View>
         </Modal>
       ) : null}
+
+      <Modal
+        visible={showSaveScopeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (updateEventMutation.isPending) return;
+          setShowSaveScopeModal(false);
+        }}
+      >
+        <View style={styles.saveScopeOverlay}>
+          <View style={styles.saveScopeBox}>
+            <Text style={styles.saveScopeTitle}>Save changes</Text>
+            <Text style={styles.saveScopeMessage}>
+              Choose how to apply your edits to this repeating event.
+            </Text>
+            <View style={styles.saveScopeCard}>
+              {SERIES_SCOPE_OPTIONS.map((opt, i) => {
+                const sel = seriesUpdateScope === opt.key;
+                return (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={() => !updateEventMutation.isPending && setSeriesUpdateScope(opt.key)}
+                    style={[
+                      styles.saveScopeRow,
+                      i > 0 && styles.saveScopeRowBorder,
+                      sel && styles.saveScopeRowSelected,
+                    ]}
+                    activeOpacity={0.85}
+                  >
+                    <View style={[styles.saveScopeRadioOuter, sel && styles.saveScopeRadioOuterOn]}>
+                      {sel ? <View style={styles.saveScopeRadioInner} /> : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.saveScopeOptTitle}>{opt.title}</Text>
+                      <Text style={styles.saveScopeOptSub}>{opt.sub}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.saveScopeActions}>
+              <TouchableOpacity
+                onPress={() => setShowSaveScopeModal(false)}
+                style={[styles.saveScopeCancelBtn, { flex: 1 }]}
+                disabled={updateEventMutation.isPending}
+              >
+                <Text style={styles.saveScopeCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void submit(seriesUpdateScope)}
+                style={[
+                  styles.headerBtn,
+                  { flex: 1, alignItems: 'center' },
+                  updateEventMutation.isPending && styles.headerBtnDis,
+                ]}
+                disabled={updateEventMutation.isPending}
+              >
+                {updateEventMutation.isPending ? (
+                  <ActivityIndicator size="small" color={Colors.accentFg} />
+                ) : (
+                  <Text style={styles.headerBtnText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
       </View>
     </EventFormPopoverChrome>
   );
@@ -1251,8 +1837,55 @@ const styles = StyleSheet.create({
   headerBtn:     { paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.lg, backgroundColor: Colors.accent, flexShrink: 0 },
   headerBtnDis:  { backgroundColor: Colors.border },
   headerBtnText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
-  groupChip:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface },
-  chipText:      { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
+  groupStep: { gap: 12 },
+  groupStepHint: {
+    fontSize: 15,
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
+    marginBottom: 4,
+  },
+  groupStepEmpty: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+    marginTop: 12,
+  },
+  groupPickList: { gap: 8 },
+  groupPickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  groupPickAvatarWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  groupPickText: { flex: 1, minWidth: 0 },
+  groupPickName: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text },
+  groupPickMeta: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 2 },
+  selectedGroupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  selectedGroupName: { flex: 1, minWidth: 0, fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text },
+  changeGroupLink: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accent },
   input:         {
     padding: 10,
     paddingHorizontal: 14,
@@ -1264,6 +1897,21 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontFamily: Fonts.regular,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
+  },
+  locationInputWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  locationInputWithClear: {
+    paddingRight: 36,
+  },
+  locationClearBtn: {
+    position: 'absolute',
+    right: 10,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   inputError:    { borderColor: '#EF4444' },
   errorText:     { fontSize: 12, color: '#EF4444', fontFamily: Fonts.regular, marginBottom: 4 },
@@ -1402,5 +2050,101 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: Fonts.medium,
     color: Colors.text,
+  },
+  saveScopeOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  saveScopeBox: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    padding: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  saveScopeTitle: {
+    fontSize: 18,
+    fontFamily: Fonts.semiBold,
+    color: Colors.text,
+    marginBottom: 8,
+  },
+  saveScopeMessage: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
+    marginBottom: 12,
+  },
+  saveScopeCard: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  saveScopeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 12,
+    backgroundColor: Colors.surface,
+  },
+  saveScopeRowBorder: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  saveScopeRowSelected: {
+    backgroundColor: Colors.bg,
+  },
+  saveScopeRadioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  saveScopeRadioOuterOn: {
+    borderColor: Colors.accent,
+  },
+  saveScopeRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.accent,
+  },
+  saveScopeOptTitle: {
+    fontSize: 14,
+    fontFamily: Fonts.semiBold,
+    color: Colors.text,
+  },
+  saveScopeOptSub: {
+    fontSize: 12,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  saveScopeActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  saveScopeCancelBtn: {
+    paddingVertical: 12,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveScopeCancelText: {
+    fontSize: 13,
+    fontFamily: Fonts.semiBold,
+    color: Colors.textSub,
   },
 });

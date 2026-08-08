@@ -284,12 +284,20 @@ export class EventService {
     );
   }
 
-  /** Only the event host (creator) may update event fields, even if no longer a group member. */
+  /**
+   * Host may always update. Active group admins/owners may update cover photos only
+   * (see `coverPhotosOnly`). Host may update even if no longer a group member.
+   */
   private async assertCanUpdateEvent(
     event: { groupId: string; createdBy: string },
     actorId: string,
+    opts?: { coverPhotosOnly?: boolean },
   ): Promise<void> {
     if (event.createdBy === actorId) return;
+    if (opts?.coverPhotosOnly) {
+      const role = await this.getActiveMemberRole(event.groupId, actorId);
+      if (role && this.isAdminOrOwnerRole(role)) return;
+    }
     throw Object.assign(new Error('Only the event host can update this event'), { status: 403 });
   }
 
@@ -358,7 +366,7 @@ export class EventService {
   private async notifyWatchersEventScheduleOrLocation(
     eventId: string,
     groupId: string,
-    title: string,
+    name: string,
     excludeUserId: string,
     changes: {
       locChanged: boolean;
@@ -381,7 +389,7 @@ export class EventService {
       await notificationService.createForUsers(
         recipientIds,
         'Location updated',
-        `"${title}" — ${loc}`,
+        `"${name}" — ${loc}`,
         {
           type: 'location_changed',
           icon: '📍',
@@ -398,7 +406,7 @@ export class EventService {
       await notificationService.createForUsers(
         recipientIds,
         'Event time updated',
-        `"${title}" is now ${dateStr} at ${timeStr}`,
+        `"${name}" is now ${dateStr} at ${timeStr}`,
         {
           type: 'event_time_changed',
           icon: '🕐',
@@ -553,12 +561,28 @@ export class EventService {
 
     const baseScalars = {
       groupId: eventData.groupId,
-      title: eventData.title,
+      name: eventData.name,
       description: eventData.description ?? null,
       location:
         eventData.location == null || String(eventData.location).trim() === ''
           ? null
           : String(eventData.location).trim(),
+      locationLinkable:
+        eventData.location == null || String(eventData.location).trim() === ''
+          ? false
+          : Boolean(eventData.locationLinkable),
+      locationName:
+        eventData.location == null || String(eventData.location).trim() === '' || !eventData.locationLinkable
+          ? null
+          : eventData.locationName == null || String(eventData.locationName).trim() === ''
+            ? null
+            : String(eventData.locationName).trim(),
+      locationAddress:
+        eventData.location == null || String(eventData.location).trim() === '' || !eventData.locationLinkable
+          ? null
+          : eventData.locationAddress == null || String(eventData.locationAddress).trim() === ''
+            ? null
+            : String(eventData.locationAddress).trim(),
       minAttendees: eventData.minAttendees ?? null,
       maxAttendees: eventData.maxAttendees ?? null,
       enableWaitlist: eventData.enableWaitlist ?? false,
@@ -660,7 +684,7 @@ export class EventService {
     await notificationService.createForUsers(
       members.map((m) => m.userId).filter((uid) => uid !== createdBy),
       'New Event Created',
-      `${event.title} on ${dateStr} at ${timeStr}`,
+      `${event.name} on ${dateStr} at ${timeStr}`,
       {
         type: 'event_created',
         icon: '📅',
@@ -685,7 +709,7 @@ export class EventService {
       select: {
         groupId: true,
         createdBy: true,
-        title: true,
+        name: true,
         start: true,
         end: true,
         isAllDay: true,
@@ -698,7 +722,12 @@ export class EventService {
     if (!existing) {
       throw Object.assign(new Error('Event not found'), { status: 404 });
     }
-    await this.assertCanUpdateEvent(existing, updatedBy);
+    const scalarFieldUpdates = Object.values(eventData).some((v) => v !== undefined);
+    const coverPhotosOnly =
+      coverPhotos !== undefined &&
+      !scalarFieldUpdates &&
+      rsvpDeadline === undefined;
+    await this.assertCanUpdateEvent(existing, updatedBy, { coverPhotosOnly });
 
     const seriesId = existing.recurrenceSeriesId;
     const scope = resolveSeriesUpdateScope(seriesId, seriesUpdateScope);
@@ -799,7 +828,33 @@ export class EventService {
         s == null || (typeof s === 'string' && String(s).trim() === '')
           ? null
           : String(s).trim();
+      if (updateData.location == null) {
+        updateData.locationLinkable = false;
+        updateData.locationName = null;
+        updateData.locationAddress = null;
+      } else if (eventData.locationLinkable !== undefined) {
+        updateData.locationLinkable = Boolean(eventData.locationLinkable);
+      }
+    } else if (eventData.locationLinkable !== undefined) {
+      updateData.locationLinkable = Boolean(eventData.locationLinkable);
     }
+
+    const normalizeOptionalText = (v: unknown): string | null => {
+      if (v == null) return null;
+      const t = String(v).trim();
+      return t === '' ? null : t;
+    };
+    if (eventData.locationName !== undefined) {
+      updateData.locationName = normalizeOptionalText(eventData.locationName);
+    }
+    if (eventData.locationAddress !== undefined) {
+      updateData.locationAddress = normalizeOptionalText(eventData.locationAddress);
+    }
+    if (updateData.locationLinkable === false) {
+      updateData.locationName = null;
+      updateData.locationAddress = null;
+    }
+
     if (updateData.description !== undefined) {
       const s = updateData.description;
       updateData.description =
@@ -847,9 +902,26 @@ export class EventService {
 
     if (appliesSeriesBulk) {
       const seriesPatch: Record<string, unknown> = { updatedBy };
-      if (eventData.title !== undefined) seriesPatch.title = eventData.title;
+      if (eventData.name !== undefined) seriesPatch.name = eventData.name;
       if (eventData.description !== undefined) seriesPatch.description = updateData.description;
       if (eventData.location !== undefined) seriesPatch.location = updateData.location;
+      if (eventData.locationLinkable !== undefined || eventData.location !== undefined) {
+        seriesPatch.locationLinkable = updateData.locationLinkable;
+      }
+      if (
+        eventData.locationName !== undefined ||
+        eventData.location !== undefined ||
+        eventData.locationLinkable !== undefined
+      ) {
+        seriesPatch.locationName = updateData.locationName ?? null;
+      }
+      if (
+        eventData.locationAddress !== undefined ||
+        eventData.location !== undefined ||
+        eventData.locationLinkable !== undefined
+      ) {
+        seriesPatch.locationAddress = updateData.locationAddress ?? null;
+      }
       if (eventData.minAttendees !== undefined) seriesPatch.minAttendees = eventData.minAttendees;
       if (eventData.maxAttendees !== undefined) seriesPatch.maxAttendees = eventData.maxAttendees;
       if (eventData.enableWaitlist !== undefined) seriesPatch.enableWaitlist = eventData.enableWaitlist;
@@ -869,9 +941,12 @@ export class EventService {
         }
       }
       for (const k of [
-        'title',
+        'name',
         'description',
         'location',
+        'locationLinkable',
+        'locationName',
+        'locationAddress',
         'minAttendees',
         'maxAttendees',
         'enableWaitlist',
@@ -959,7 +1034,7 @@ export class EventService {
       void this.notifyWatchersEventScheduleOrLocation(
         id,
         event.groupId,
-        event.title,
+        event.name,
         updatedBy,
         { locChanged, timeChanged, location: event.location, start: event.start, end: event.end }
       ).catch(() => undefined);
@@ -1183,7 +1258,7 @@ export class EventService {
 
       if (event && user) {
         const watcherIds = await this.getUserIdsWatchingEvent(eventId);
-        const body = `${user.displayName} is going to ${event.title}`;
+        const body = `${user.displayName} is going to ${event.name}`;
         for (const uid of watcherIds) {
           if (uid === inputUserId) continue;
           await notificationService
@@ -1289,7 +1364,7 @@ export class EventService {
           .createForUser(
             rsvp.userId,
             'Promoted from Waitlist',
-            `You've been moved from waitlist to going for ${event.title}`,
+            `You've been moved from waitlist to going for ${event.name}`,
             {
               type: 'waitlist_promotion',
               icon: '🎉',
@@ -1388,7 +1463,7 @@ export class EventService {
 
   /** Notify newly @mentioned group members on an event comment. Returns resolved recipient ids. */
   private async notifyEventCommentMentions(params: {
-    event: { id: string; title: string; groupId: string };
+    event: { id: string; name: string; groupId: string };
     authorId: string;
     authorDisplayName: string;
     text: string | undefined | null;
@@ -1449,7 +1524,7 @@ export class EventService {
       params.commentSnippet.length > 160
         ? `${params.commentSnippet.slice(0, 157)}…`
         : params.commentSnippet;
-    const mentionBody = `${params.authorDisplayName} mentioned you in a comment on "${params.event.title}": ${snippet}`;
+    const mentionBody = `${params.authorDisplayName} mentioned you in a comment on "${params.event.name}": ${snippet}`;
 
     for (const uid of mentionRecipients) {
       await notificationService
@@ -1532,7 +1607,7 @@ export class EventService {
 
       // Everyone watching the event gets "New Comment" except the commenter and anyone already notified via @mention
       const watcherIds = await this.getUserIdsWatchingEvent(eventId);
-      const commentBody = `${user.displayName} ${commentSnippet} on ${event.title}`;
+      const commentBody = `${user.displayName} ${commentSnippet} on ${event.name}`;
       for (const uid of watcherIds) {
         if (uid === input.userId) continue;
         if (mentionRecipients.has(uid)) continue;
@@ -1753,7 +1828,7 @@ export class EventService {
   ): Promise<EventTimeSuggestion> {
     const event = await prisma.event.findUnique({
       where: { id: eventId },
-      select: { groupId: true, createdBy: true, title: true },
+      select: { groupId: true, createdBy: true, name: true },
     });
     if (!event) {
       throw Object.assign(new Error('Event not found'), { status: 404 });
@@ -1781,7 +1856,7 @@ export class EventService {
           .createForUser(
             event.createdBy,
             'Suggested time change',
-            `${suggester.displayName} suggested ${startStr} for "${event.title}"`,
+            `${suggester.displayName} suggested ${startStr} for "${event.name}"`,
             {
               type: 'time_suggestion',
               icon: '🕐',
@@ -1856,7 +1931,7 @@ export class EventService {
     void this.notifyWatchersEventScheduleOrLocation(
       eventId,
       updated.groupId,
-      updated.title,
+      updated.name,
       actorId,
       {
         locChanged: false,
@@ -1912,13 +1987,16 @@ export class EventService {
       groupId: event.groupId,
       createdBy: event.createdBy,
       updatedBy: event.updatedBy,
-      title: event.title,
+      name: event.name,
       description: event.description,
       coverPhotos: event.coverPhotos.map((p: any) => p.photoUrl),
       start: event.start,
       end: event.end,
       isAllDay: event.isAllDay,
       location: event.location,
+      locationLinkable: event.locationLinkable ?? true,
+      locationName: event.locationName ?? null,
+      locationAddress: event.locationAddress ?? null,
       minAttendees: event.minAttendees,
       maxAttendees: event.maxAttendees,
       enableWaitlist: event.enableWaitlist,

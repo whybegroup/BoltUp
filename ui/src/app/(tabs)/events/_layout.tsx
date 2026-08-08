@@ -48,11 +48,13 @@ function EventsTabLayoutInner() {
           }}
         />
       </View>
-      <CreateOrJoinButton
-        userId={currentUserId}
-        eventEligibleGroupCount={eventEligibleGroupCount}
-        mode="event"
-      />
+      {(optimisticAllEvents || subpage.kind === 'all-events') ? (
+        <CreateOrJoinButton
+          userId={currentUserId}
+          eventEligibleGroupCount={eventEligibleGroupCount}
+          mode="event"
+        />
+      ) : null}
     </View>
   );
 }

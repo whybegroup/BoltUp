@@ -47,11 +47,13 @@ function PollsTabLayoutInner() {
           }}
         />
       </View>
-      <CreateOrJoinButton
-        userId={currentUserId}
-        eventEligibleGroupCount={eventEligibleGroupCount}
-        mode="poll"
-      />
+      {!chromePollId ? (
+        <CreateOrJoinButton
+          userId={currentUserId}
+          eventEligibleGroupCount={eventEligibleGroupCount}
+          mode="poll"
+        />
+      ) : null}
     </View>
   );
 }

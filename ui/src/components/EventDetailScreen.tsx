@@ -7,7 +7,6 @@ import {
   type ChangeEvent,
   type ComponentProps,
   type ComponentRef,
-  type ReactNode,
   type RefObject,
 } from 'react';
 import {
@@ -97,6 +96,9 @@ import {
   uploadUrlToDownloadUrl,
 } from '../services/pickAndUploadImage';
 import { useResolvedImageUrls } from '../hooks/useResolvedImageUrls';
+import { useLocationSuggestions } from '../hooks/useLocationSuggestions';
+import { LocationSuggestionCard } from './LocationSuggestionCard';
+import { resolvePlaceSuggestionDetails } from '../utils/locationSuggestions';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 import {
   ALL_EVENTS_HREF,
@@ -107,6 +109,7 @@ import {
   type GroupsTabNavCallbacks,
 } from '../utils/tabBreadcrumbNav';
 import { buildGroupDetailUrl } from '../utils/breadcrumbUrl';
+import * as Clipboard from 'expo-clipboard';
 import Toast from 'react-native-toast-message';
 import {
   formatWallDateFromUtcIso,
@@ -115,6 +118,7 @@ import {
   localWallDateStartOfDayToUtcIso,
   localWallDateEndOfDayToUtcIso,
   isValidEventFormTimeRange,
+  endPreservingDuration,
 } from '../utils/datetimeUtc';
 import { SERIES_SCOPE_OPTIONS, type SeriesUpdateScope } from '../utils/seriesUpdateScopeOptions';
 
@@ -162,69 +166,6 @@ function webDetailTimeInputStyle(errored: boolean): Record<string, string | numb
     minWidth: 0,
     width: '100%',
   };
-}
-
-const EVENT_COVER_THUMB = 80;
-const EVENT_COVER_THUMB_GAP = 4;
-
-// ── Photo Carousel ───────────────────────────────────────────────────────────
-function PhotoCarousel({
-  photos,
-  urlMap,
-  onPhotoPress,
-  canRemove,
-  onRemoveAt,
-  leadingItem,
-}: {
-  photos: string[];
-  urlMap: Map<string, string>;
-  onPhotoPress: (url: string, index: number) => void;
-  canRemove?: boolean;
-  onRemoveAt?: (index: number) => void;
-  leadingItem?: ReactNode;
-}) {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={{ marginBottom: 10 }}
-      contentContainerStyle={{
-        gap: EVENT_COVER_THUMB_GAP,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-      }}
-    >
-      {leadingItem ? <View style={{ width: EVENT_COVER_THUMB }}>{leadingItem}</View> : null}
-      {photos.map((item, index) => (
-        <View key={`${item}-${index}`} style={{ width: EVENT_COVER_THUMB, position: 'relative' }}>
-          <TouchableOpacity onPress={() => onPhotoPress(item, index)} activeOpacity={0.9}>
-            <ResolvableImage
-              storedUrl={item}
-              urlMap={urlMap}
-              style={{
-                width: EVENT_COVER_THUMB,
-                height: EVENT_COVER_THUMB,
-                borderRadius: Radius.lg,
-                backgroundColor: Colors.bg,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: Colors.border,
-              }}
-              resizeMode="cover"
-            />
-          </TouchableOpacity>
-          {canRemove && onRemoveAt ? (
-            <TouchableOpacity
-              onPress={() => onRemoveAt(index)}
-              style={styles.carouselRemoveThumb}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="close" size={11} color="#fff" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ))}
-    </ScrollView>
-  );
 }
 
 // ── Comment Photo Gallery (inline version) ───────────────────────────────────
@@ -303,8 +244,9 @@ function DescText({ text }: { text: string }) {
 function CommentMentionText({ text, style }: { text: string; style?: StyleProp<TextStyle> }) {
   const MENTION_RE = /(?:^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]+)/g;
   const URL_RE = /https?:\/\/[^\s]+/g;
+  const lines = text.split('\n');
 
-  const renderLine = (line: string, lineKey: number) => {
+  const renderLine = (line: string, lineKey: number, isLast: boolean) => {
     type Raw = { start: number; end: number; kind: 'url' | 'mention' };
     const raw: Raw[] = [];
     let m: RegExpExecArray | null;
@@ -350,14 +292,14 @@ function CommentMentionText({ text, style }: { text: string; style?: StyleProp<T
     return (
       <Text key={lineKey}>
         {parts}
-        {'\n'}
+        {isLast ? null : '\n'}
       </Text>
     );
   };
 
   return (
     <Text style={style}>
-      {text.split('\n').map((line, i) => renderLine(line, i))}
+      {lines.map((line, i) => renderLine(line, i, i === lines.length - 1))}
     </Text>
   );
 }
@@ -628,13 +570,12 @@ export function EventDetailScreen({
     const top = Math.max(12, reactionQuickPickerAnchor.y - cardHeight - 8);
     return { top, left };
   }, [reactionQuickPickerAnchor]);
-  const [draftTitle, setDraftTitle] = useState('');
+  const [draftName, setDraftName] = useState('');
   const [draftDesc, setDraftDesc] = useState('');
   const [draftLocation, setDraftLocation] = useState('');
-  const [locationSuggestions, setLocationSuggestions] = useState<
-    { id: string; label: string }[]
-  >([]);
-  const [locationSuggesting, setLocationSuggesting] = useState(false);
+  const [draftLocationLinkable, setDraftLocationLinkable] = useState(false);
+  const [draftLocationName, setDraftLocationName] = useState('');
+  const [draftLocationAddress, setDraftLocationAddress] = useState('');
   const [draftMinAttendees, setDraftMinAttendees] = useState('');
   const [draftMaxAttendees, setDraftMaxAttendees] = useState('');
   const [draftAllowMaybe, setDraftAllowMaybe] = useState(false);
@@ -699,58 +640,73 @@ export function EventDetailScreen({
       await Linking.openURL(googleWebUrl);
       return;
     }
-
     Alert.alert('Open location in maps', query, [
-      { text: 'Cancel', style: 'cancel' },
       { text: 'Apple Maps', onPress: () => void openApple() },
       { text: 'Google Maps', onPress: () => void openGoogle() },
+      { text: 'Cancel', style: 'cancel' },
     ]);
   }, []);
 
-  useEffect(() => {
-    const query = draftLocation.trim();
-    if (query.length < 3) {
-      setLocationSuggestions([]);
-      setLocationSuggesting(false);
-      return;
+  const copyLocationToClipboard = useCallback(async (text: string) => {
+    const value = text.trim();
+    if (!value) return;
+    try {
+      await Clipboard.setStringAsync(value);
+      Toast.show({ type: 'success', text1: 'Address copied' });
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not copy address' });
     }
+  }, []);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(async () => {
-      try {
-        setLocationSuggesting(true);
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(query)}`,
-          {
-            signal: controller.signal,
-            headers: { 'Accept-Language': 'en' },
-          }
-        );
-        if (!res.ok) throw new Error(`Location lookup failed (${res.status})`);
-        const rows = (await res.json()) as Array<{ place_id?: number; display_name?: string }>;
-        const next = rows
-          .map((r, i) => ({
-            id: String(r.place_id ?? `${query}-${i}`),
-            label: (r.display_name ?? '').trim(),
-          }))
-          .filter((r) => !!r.label);
-        setLocationSuggestions(next);
-      } catch {
-        if (!controller.signal.aborted) {
-          setLocationSuggestions([]);
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setLocationSuggesting(false);
-        }
+  const resolveLocationCopyText = useCallback(
+    (ev: {
+      location?: string | null;
+      locationName?: string | null;
+      locationAddress?: string | null;
+    }) => {
+      const name = (ev.locationName ?? '').trim();
+      const address = (ev.locationAddress ?? '').trim();
+      const label = (ev.location ?? '').trim();
+      // Full label is name + street + city when saved from Places.
+      if (label) return label;
+      if (name && address) {
+        return address.toLowerCase().startsWith(name.toLowerCase())
+          ? address
+          : `${name}, ${address}`;
       }
-    }, 260);
+      return address || name;
+    },
+    []
+  );
 
-    return () => {
-      clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [draftLocation]);
+  const resolveLocationAddressLine = useCallback(
+    (ev: {
+      location?: string | null;
+      locationName?: string | null;
+      locationAddress?: string | null;
+    }) => {
+      const name = (ev.locationName ?? '').trim();
+      const address = (ev.locationAddress ?? '').trim();
+      const label = (ev.location ?? '').trim();
+      let fromLabel = '';
+      if (label && name && label.toLowerCase().startsWith(name.toLowerCase())) {
+        fromLabel = label.slice(name.length).replace(/^[\s,–—-]+/u, '').trim();
+      }
+      const candidates = [address, fromLabel].filter((c) => c.length > 0);
+      if (candidates.length === 0) return '';
+      // Prefer the candidate that includes a street number.
+      return candidates.find((c) => /\d/.test(c)) || candidates[0]!;
+    },
+    []
+  );
+
+  const {
+    suggestions: locationSuggestions,
+    suggesting: locationSuggesting,
+    suggestionError: locationSuggestionError,
+    panelOpen: locationSuggestionPanelOpen,
+    clearSuggestions: clearLocationSuggestions,
+  } = useLocationSuggestions(draftLocation, editingEvent);
 
   useEffect(() => {
     if (!showTimeSuggestModal || !ev?.start || !ev?.end) return;
@@ -765,9 +721,12 @@ export function EventDetailScreen({
 
   useEffect(() => {
     if (!ev?.id || !ev.start || !ev.end) return;
-    setDraftTitle(ev.title ?? '');
+    setDraftName(ev.name ?? '');
     setDraftDesc(ev.description ?? '');
     setDraftLocation(ev.location ?? '');
+    setDraftLocationLinkable(!!ev.locationLinkable);
+    setDraftLocationName(ev.locationName ?? '');
+    setDraftLocationAddress(ev.locationAddress ?? '');
     setDraftStartDate(formatWallDateFromUtcIso(ev.start as string));
     setDraftStartTime(formatWallTimeHmFromUtcIso(ev.start as string));
     setDraftEndDate(formatWallDateFromUtcIso(ev.end as string));
@@ -788,9 +747,12 @@ export function EventDetailScreen({
     }
   }, [
     ev?.id,
-    ev?.title,
+    ev?.name,
     ev?.description,
     ev?.location,
+    ev?.locationLinkable,
+    ev?.locationName,
+    ev?.locationAddress,
     ev?.start,
     ev?.end,
     ev?.isAllDay,
@@ -843,15 +805,21 @@ export function EventDetailScreen({
   const detailsDirty = useMemo(() => {
     if (!ev || !currentUserId || !group || !editingEvent) return false;
     if (ev.createdBy !== currentUserId) return false;
-    const t = (ev.title ?? '').trim();
+    const t = (ev.name ?? '').trim();
     const d = (ev.description ?? '').trim();
     const l = (ev.location ?? '').trim();
+    const linkable = !!ev.locationLinkable;
+    const locName = (ev.locationName ?? '').trim();
+    const locAddr = (ev.locationAddress ?? '').trim();
     const minB = ev.minAttendees != null && ev.minAttendees > 0 ? String(ev.minAttendees) : '';
     const maxB = ev.maxAttendees != null && ev.maxAttendees > 0 ? String(ev.maxAttendees) : '';
     return (
-      draftTitle.trim() !== t ||
+      draftName.trim() !== t ||
       draftDesc.trim() !== d ||
       draftLocation.trim() !== l ||
+      draftLocationLinkable !== linkable ||
+      draftLocationName.trim() !== locName ||
+      draftLocationAddress.trim() !== locAddr ||
       draftMinAttendees.trim() !== minB ||
       draftMaxAttendees.trim() !== maxB ||
       draftAllowMaybe !== !!ev.allowMaybe ||
@@ -863,9 +831,12 @@ export function EventDetailScreen({
     group,
     currentUserId,
     editingEvent,
-    draftTitle,
+    draftName,
     draftDesc,
     draftLocation,
+    draftLocationLinkable,
+    draftLocationName,
+    draftLocationAddress,
     draftMinAttendees,
     draftMaxAttendees,
     draftAllowMaybe,
@@ -883,8 +854,23 @@ export function EventDetailScreen({
 
   const handleDetailStartDateChange = useCallback((_e: unknown, selectedDate?: Date) => {
     if (Platform.OS === 'android') setShowDetailStartDatePicker(false);
-    if (selectedDate) setDraftStartDate(formatLocalDateInput(selectedDate));
-  }, []);
+    if (!selectedDate) return;
+    const dateStr = formatLocalDateInput(selectedDate);
+    const shifted = endPreservingDuration({
+      prevStartDate: draftStartDate,
+      prevStartTime: draftStartTime,
+      prevEndDate: draftEndDate,
+      prevEndTime: draftEndTime,
+      nextStartDate: dateStr,
+      nextStartTime: draftStartTime,
+      allDay: draftAllDay,
+    });
+    setDraftStartDate(dateStr);
+    if (shifted) {
+      setDraftEndDate(shifted.endDate);
+      setDraftEndTime(shifted.endTime);
+    }
+  }, [draftStartDate, draftStartTime, draftEndDate, draftEndTime, draftAllDay]);
 
   const handleDetailEndDateChange = useCallback((_e: unknown, selectedDate?: Date) => {
     if (Platform.OS === 'android') setShowDetailEndDatePicker(false);
@@ -893,12 +879,59 @@ export function EventDetailScreen({
 
   const handleDetailStartTimeChange = useCallback((_e: unknown, selectedTime?: Date) => {
     if (Platform.OS === 'android') setShowDetailStartTimePicker(false);
-    if (selectedTime) {
-      const hours = String(selectedTime.getHours()).padStart(2, '0');
-      const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
-      setDraftStartTime(`${hours}:${minutes}`);
+    if (!selectedTime) return;
+    const hours = String(selectedTime.getHours()).padStart(2, '0');
+    const minutes = String(selectedTime.getMinutes()).padStart(2, '0');
+    const timeStr = `${hours}:${minutes}`;
+    const shifted = endPreservingDuration({
+      prevStartDate: draftStartDate,
+      prevStartTime: draftStartTime,
+      prevEndDate: draftEndDate,
+      prevEndTime: draftEndTime,
+      nextStartDate: draftStartDate,
+      nextStartTime: timeStr,
+      allDay: draftAllDay,
+    });
+    setDraftStartTime(timeStr);
+    if (shifted) {
+      setDraftEndDate(shifted.endDate);
+      setDraftEndTime(shifted.endTime);
     }
-  }, []);
+  }, [draftStartDate, draftStartTime, draftEndDate, draftEndTime, draftAllDay]);
+
+  const applyDraftStartDate = useCallback((dateStr: string) => {
+    const shifted = endPreservingDuration({
+      prevStartDate: draftStartDate,
+      prevStartTime: draftStartTime,
+      prevEndDate: draftEndDate,
+      prevEndTime: draftEndTime,
+      nextStartDate: dateStr,
+      nextStartTime: draftStartTime,
+      allDay: draftAllDay,
+    });
+    setDraftStartDate(dateStr);
+    if (shifted) {
+      setDraftEndDate(shifted.endDate);
+      setDraftEndTime(shifted.endTime);
+    }
+  }, [draftStartDate, draftStartTime, draftEndDate, draftEndTime, draftAllDay]);
+
+  const applyDraftStartTime = useCallback((timeStr: string) => {
+    const shifted = endPreservingDuration({
+      prevStartDate: draftStartDate,
+      prevStartTime: draftStartTime,
+      prevEndDate: draftEndDate,
+      prevEndTime: draftEndTime,
+      nextStartDate: draftStartDate,
+      nextStartTime: timeStr,
+      allDay: draftAllDay,
+    });
+    setDraftStartTime(timeStr);
+    if (shifted) {
+      setDraftEndDate(shifted.endDate);
+      setDraftEndTime(shifted.endTime);
+    }
+  }, [draftStartDate, draftStartTime, draftEndDate, draftEndTime, draftAllDay]);
 
   const handleDetailEndTimeChange = useCallback((_e: unknown, selectedTime?: Date) => {
     if (Platform.OS === 'android') setShowDetailEndTimePicker(false);
@@ -1229,12 +1262,17 @@ export function EventDetailScreen({
   const canEdit = ev.createdBy === currentUserId;
   const isInProgress =
     evStart.getTime() <= Date.now() && Date.now() < evEnd.getTime();
-  /** Title and start fields locked while the event is running; after it ends, only description + photos stay editable. */
-  const canEditTitle = canEdit && editingEvent && !isPast && !isInProgress;
+  /** Name and start fields locked while the event is running; after it ends, only description + photos stay editable. */
+  const canEditName = canEdit && editingEvent && !isPast && !isInProgress;
   const canEditStartFields = canEdit && editingEvent && !isPast && !isInProgress;
   const canEditLive = canEdit && editingEvent && !isPast;
-  /** Host may edit description and cover photos even after the event has ended (while in edit mode). */
-  const canEditDescriptionAndPhotos = canEdit && editingEvent;
+  /** Host may edit description even after the event has ended (while in edit mode). */
+  const canEditDescription = canEdit && editingEvent;
+  const isGroupAdminOrOwner =
+    group.ownerId === currentUserId || (group.adminIds ?? []).includes(currentUserId ?? '');
+  /** Event creator or group admins/owners may manage cover photos anytime (not tied to edit mode). */
+  const canEditPhotos =
+    !!currentUserId && (ev.createdBy === currentUserId || isGroupAdminOrOwner);
   function clearPendingAfterSuccessfulSave() {
     pendingAfterSuccessfulSaveRef.current = null;
   }
@@ -1348,9 +1386,12 @@ export function EventDetailScreen({
   const pendingTimeSuggestions = timeSuggestions.filter((s) => s.status === 'pending');
 
   const resetDetailsDrafts = () => {
-    setDraftTitle(ev.title ?? '');
+    setDraftName(ev.name ?? '');
     setDraftDesc(ev.description ?? '');
     setDraftLocation(ev.location ?? '');
+    setDraftLocationLinkable(!!ev.locationLinkable);
+    setDraftLocationName(ev.locationName ?? '');
+    setDraftLocationAddress(ev.locationAddress ?? '');
     if (ev.start && ev.end) {
       setDraftStartDate(formatWallDateFromUtcIso(ev.start as string));
       setDraftStartTime(formatWallTimeHmFromUtcIso(ev.start as string));
@@ -1403,11 +1444,11 @@ export function EventDetailScreen({
       }
       return;
     }
-    const title = draftTitle.trim();
-    if (!title) {
+    const name = draftName.trim();
+    if (!name) {
       clearPendingAfterSuccessfulSave();
-      if (Platform.OS === 'web') window.alert('Event title is required');
-      else Alert.alert('Error', 'Event title is required');
+      if (Platform.OS === 'web') window.alert('Event name is required');
+      else Alert.alert('Error', 'Event name is required');
       return;
     }
     if (!detailTimeRangeValid) {
@@ -1499,9 +1540,18 @@ export function EventDetailScreen({
         return;
       }
       await updateEventMutation.mutateAsync({
-        title,
+        name,
         description: draftDesc.trim(),
         location: draftLocation.trim(),
+        locationLinkable: draftLocation.trim() ? draftLocationLinkable : false,
+        locationName:
+          draftLocation.trim() && draftLocationLinkable
+            ? draftLocationName.trim() || null
+            : null,
+        locationAddress:
+          draftLocation.trim() && draftLocationLinkable
+            ? draftLocationAddress.trim() || null
+            : null,
         start: startIso,
         end: endIso,
         ...(eventHasStarted ? {} : { isAllDay: isAllDaySingle || undefined }),
@@ -1537,10 +1587,10 @@ export function EventDetailScreen({
       void executeDetailSave();
       return;
     }
-    if (!draftTitle.trim()) {
+    if (!draftName.trim()) {
       clearPendingAfterSuccessfulSave();
-      if (Platform.OS === 'web') window.alert('Event title is required');
-      else Alert.alert('Error', 'Event title is required');
+      if (Platform.OS === 'web') window.alert('Event name is required');
+      else Alert.alert('Error', 'Event name is required');
       return;
     }
     if (!detailTimeRangeValid) {
@@ -1606,11 +1656,9 @@ export function EventDetailScreen({
     }
   };
 
-  const coverPhotosForDisplay = canEditDescriptionAndPhotos
+  const coverPhotosForDisplay = canEditPhotos
     ? localCoverPhotos
     : (displayEv.coverPhotos ?? []);
-  const showEventPhotosSection =
-    coverPhotosForDisplay.length > 0 || canEditDescriptionAndPhotos;
 
   const persistCoverPhotos = async (next: string[]) => {
     if (!currentUserId) return;
@@ -1620,8 +1668,21 @@ export function EventDetailScreen({
     });
   };
 
+  const addCoverPhoto = async (url: string) => {
+    if (!currentUserId || !canEditPhotos) return;
+    const prev = localCoverPhotos;
+    const next = [...prev, url];
+    setLocalCoverPhotos(next);
+    try {
+      await persistCoverPhotos(next);
+    } catch {
+      setLocalCoverPhotos(prev);
+      Alert.alert('Error', 'Failed to add photo');
+    }
+  };
+
   const removeCoverPhotoAt = async (index: number) => {
-    if (!currentUserId || !canEditDescriptionAndPhotos) return;
+    if (!currentUserId || !canEditPhotos) return;
     const prev = localCoverPhotos;
     const next = prev.filter((_, j) => j !== index);
     setLocalCoverPhotos(next);
@@ -1634,40 +1695,22 @@ export function EventDetailScreen({
   };
 
   const addCoverPhotoFromPicker = async () => {
-    if (!currentUserId || !canEditDescriptionAndPhotos || coverPhotoBusy) return;
+    if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
       const url = await pickAndUploadCoverPhoto(currentUserId);
-      if (!url) return;
-      const prev = localCoverPhotos;
-      const next = [...prev, url];
-      setLocalCoverPhotos(next);
-      try {
-        await persistCoverPhotos(next);
-      } catch {
-        setLocalCoverPhotos(prev);
-        Alert.alert('Error', 'Failed to add photo');
-      }
+      if (url) await addCoverPhoto(url);
     } finally {
       setCoverPhotoBusy(false);
     }
   };
 
   const addCoverPhotoFromCamera = async () => {
-    if (!currentUserId || !canEditDescriptionAndPhotos || coverPhotoBusy) return;
+    if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
       const url = await takeAndUploadCoverPhoto(currentUserId);
-      if (!url) return;
-      const prev = localCoverPhotos;
-      const next = [...prev, url];
-      setLocalCoverPhotos(next);
-      try {
-        await persistCoverPhotos(next);
-      } catch {
-        setLocalCoverPhotos(prev);
-        Alert.alert('Error', 'Failed to add photo');
-      }
+      if (url) await addCoverPhoto(url);
     } finally {
       setCoverPhotoBusy(false);
     }
@@ -1824,8 +1867,23 @@ export function EventDetailScreen({
           <Ionicons
             name={effectiveWatching ? 'eye' : 'eye-off-outline'}
             size={22}
-            color={effectiveWatching ? Colors.accent : Colors.textSub}
+            color={Colors.text}
           />
+        </TouchableOpacity>
+      ) : null}
+      {canEdit ? (
+        <TouchableOpacity
+          onPress={() =>
+            router.push(
+              withReturnTo(`/create-event?editId=${encodeURIComponent(eventId)}`, pathname)
+            )
+          }
+          style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Edit event"
+        >
+          <Ionicons name="create-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
       ) : null}
       {canDeleteEventLive ? (
@@ -1838,77 +1896,13 @@ export function EventDetailScreen({
           <Ionicons name="trash-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
       ) : null}
-      {canEdit ? (
-        <>
-          {editingEvent && detailsDirty ? (
-            <>
-              <TouchableOpacity
-                onPress={resetDetailsDrafts}
-                disabled={updateEventMutation.isPending}
-                style={[
-                  isPageVariant ? styles.pageEventIconBtn : modalTopBarStyles.trailingIconTap,
-                  updateEventMutation.isPending && { opacity: 0.45 },
-                  !isPageVariant && { marginRight: 8 },
-                ]}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Reset event changes"
-              >
-                <Ionicons name="refresh-outline" size={20} color={Colors.textSub} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={onDetailSavePress}
-                disabled={
-                  updateEventMutation.isPending ||
-                  (!isPast && (!draftTitle.trim() || !detailTimeRangeValid))
-                }
-                style={[
-                  isPageVariant ? styles.pageEventIconBtn : modalTopBarStyles.trailingIconTap,
-                  (updateEventMutation.isPending ||
-                    (!isPast && (!draftTitle.trim() || !detailTimeRangeValid))) && { opacity: 0.45 },
-                  !isPageVariant && { marginRight: 8 },
-                ]}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Save event changes"
-              >
-                {updateEventMutation.isPending ? (
-                  <ActivityIndicator size="small" color={Colors.textSub} />
-                ) : (
-                  <Ionicons name="save-outline" size={22} color={Colors.textSub} />
-                )}
-              </TouchableOpacity>
-            </>
-          ) : null}
-          <TouchableOpacity
-            onPress={
-              editingEvent
-                ? requestExitEventEdit
-                : () => {
-                    resetDetailsDrafts();
-                    setEditingEvent(true);
-                  }
-            }
-            style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={editingEvent ? 'Stop editing event' : 'Edit event'}
-          >
-            <Ionicons
-              name={editingEvent ? 'close' : 'create-outline'}
-              size={20}
-              color={Colors.textSub}
-            />
-          </TouchableOpacity>
-        </>
-      ) : null}
     </>
   );
 
   const sheetBody = (
     <View style={styles.safe}>
       {!isPageVariant ? (
-        <View style={modalTopBarStyles.bar}>
+        <View style={[modalTopBarStyles.bar, { backgroundColor: p.row, borderBottomColor: p.label }]}>
           <TouchableOpacity
             onPress={requestClose}
             style={modalTopBarStyles.closeButton}
@@ -1989,33 +1983,35 @@ export function EventDetailScreen({
 
           <View style={styles.eventMainCardWrap}>
             <View style={styles.eventMainCard}>
+          {isPageVariant ? (
+            <View style={[styles.pageEventToolbar, { backgroundColor: p.row }]}>
+              {eventToolbar}
+            </View>
+          ) : null}
           <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-            {isPageVariant ? (
-              <View style={styles.pageEventToolbar}>{eventToolbar}</View>
-            ) : null}
-            {canEditTitle ? (
-              <View style={styles.eventTitleField}>
+            {canEditName ? (
+              <View style={styles.eventNameField}>
                 <Text style={formSectionTitleStyle}>
-                  Event title
+                  Event name
                   <Text style={styles.requiredMark} accessibilityLabel="required">
                     {' '}
                     *
                   </Text>
                 </Text>
                 <TextInput
-                  value={draftTitle}
-                  onChangeText={setDraftTitle}
+                  value={draftName}
+                  onChangeText={setDraftName}
                   placeholder="e.g. Saturday soccer"
                   placeholderTextColor={Colors.textMuted}
-                  style={styles.eventTitleInput}
+                  style={styles.eventNameInput}
                   autoCapitalize="sentences"
                   autoCorrect
                 />
               </View>
             ) : (
-              <Text style={styles.eventTitle}>{displayEv.title}</Text>
+              <Text style={styles.eventName}>{displayEv.name}</Text>
             )}
-            {canEditDescriptionAndPhotos ? (
+            {canEditDescription ? (
               <View style={styles.eventDescField}>
                 <Text style={formSectionTitleStyle}>Description</Text>
                 <View style={styles.eventDescBoxEdit}>
@@ -2045,58 +2041,6 @@ export function EventDetailScreen({
               </View>
             ) : null}
           </View>
-
-          {/* Photos */}
-          {showEventPhotosSection ? (
-            <View style={{ marginTop: 10 }}>
-              <View style={{ paddingHorizontal: 16 }}>
-                <Text style={formSectionTitleStyle}>
-                  Photos{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
-                </Text>
-              </View>
-              {coverPhotosForDisplay.length > 0 || canEditDescriptionAndPhotos ? (
-                <PhotoCarousel
-                  photos={coverPhotosForDisplay}
-                  urlMap={resolvedImageMap}
-                  canRemove={canEditDescriptionAndPhotos}
-                  onRemoveAt={(i) => void removeCoverPhotoAt(i)}
-                  leadingItem={
-                    canEditDescriptionAndPhotos ? (
-                      <AddImageButton
-                        tile
-                        triggerIconName="camera-outline"
-                        label="Add photo"
-                        busy={coverPhotoBusy}
-                        disabled={coverPhotoBusy}
-                        onTakePhoto={addCoverPhotoFromCamera}
-                        onChooseFromLibrary={addCoverPhotoFromPicker}
-                        onInsertLink={async (url) => {
-                          if (!url.trim()) return;
-                          const prev = localCoverPhotos;
-                          const next = [...prev, url.trim()];
-                          setLocalCoverPhotos(next);
-                          try {
-                            await persistCoverPhotos(next);
-                          } catch {
-                            setLocalCoverPhotos(prev);
-                            Alert.alert('Error', 'Failed to add photo');
-                          }
-                        }}
-                      />
-                    ) : null
-                  }
-                  onPhotoPress={(url, index) =>
-                    setLightbox({
-                      urls: coverPhotosForDisplay,
-                      index,
-                      name: getUserSafe(ev.createdBy).displayName,
-                      ts: new Date(ev.createdAt),
-                    })
-                  }
-                />
-              ) : null}
-            </View>
-          ) : null}
 
           <View style={{ paddingHorizontal: 16 }}>
             {/* Info rows */}
@@ -2134,7 +2078,7 @@ export function EventDetailScreen({
                                     value={draftStartDate}
                                     min={formatLocalDateInput(new Date())}
                                     onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                                      setDraftStartDate(e.target.value)
+                                      applyDraftStartDate(e.target.value)
                                     }
                                     style={webDetailTimeInputStyle(false)}
                                   />
@@ -2159,7 +2103,7 @@ export function EventDetailScreen({
                                       type="time"
                                       value={draftStartTime}
                                       onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                                        setDraftStartTime(e.target.value)
+                                        applyDraftStartTime(e.target.value)
                                       }
                                       style={webDetailTimeInputStyle(false)}
                                     />
@@ -2320,59 +2264,108 @@ export function EventDetailScreen({
                   iconAccessibilityLabel="Search location in maps"
                 >
                   <View>
-                    <TextInput
-                      value={draftLocation}
-                      onChangeText={setDraftLocation}
-                      placeholder="Location"
-                      placeholderTextColor={Colors.textMuted}
-                      style={styles.eventLocationInput}
-                      autoCapitalize="words"
-                    />
-                    {locationSuggesting ? (
-                      <Text style={styles.locationSuggestionHint}>Searching locations…</Text>
-                    ) : null}
-                    {locationSuggestions.length > 0 ? (
-                      <View style={styles.locationSuggestionCard}>
-                        {locationSuggestions.map((s, idx) => (
-                          <TouchableOpacity
-                            key={s.id}
-                            onPress={() => {
-                              setDraftLocation(s.label);
-                              setLocationSuggestions([]);
-                            }}
-                            style={[
-                              styles.locationSuggestionRow,
-                              idx < locationSuggestions.length - 1 && styles.locationSuggestionRowBorder,
-                            ]}
-                            activeOpacity={0.75}
-                          >
-                            <Ionicons name="location-outline" size={14} color={Colors.textMuted} />
-                            <Text style={styles.locationSuggestionText} numberOfLines={2}>
-                              {s.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
+                    <View style={styles.eventLocationInputWrap}>
+                      <TextInput
+                        value={draftLocation}
+                        onChangeText={(v) => {
+                          setDraftLocation(v);
+                          setDraftLocationLinkable(false);
+                          setDraftLocationName('');
+                          setDraftLocationAddress('');
+                        }}
+                        placeholder="Location"
+                        placeholderTextColor={Colors.textMuted}
+                        style={[
+                          styles.eventLocationInput,
+                          draftLocation.length > 0 && styles.eventLocationInputWithClear,
+                        ]}
+                        autoCapitalize="words"
+                      />
+                      {draftLocation.length > 0 ? (
+                        <TouchableOpacity
+                          style={styles.eventLocationClearBtn}
+                          onPress={() => {
+                            setDraftLocation('');
+                            setDraftLocationLinkable(false);
+                            setDraftLocationName('');
+                            setDraftLocationAddress('');
+                            clearLocationSuggestions();
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="Clear location"
+                        >
+                          <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    {locationSuggestionPanelOpen ? (
+                      <LocationSuggestionCard
+                        typed={draftLocation}
+                        suggestions={locationSuggestions}
+                        suggesting={locationSuggesting}
+                        suggestionError={locationSuggestionError}
+                        showAsEntered={!draftLocationLinkable}
+                        onPickAsEntered={(typed) => {
+                          setDraftLocation(typed);
+                          setDraftLocationLinkable(false);
+                          setDraftLocationName('');
+                          setDraftLocationAddress('');
+                          clearLocationSuggestions();
+                        }}
+                        onPickSuggestion={(s) => {
+                          void (async () => {
+                            const resolved = await resolvePlaceSuggestionDetails(s);
+                            setDraftLocation(resolved.label);
+                            setDraftLocationLinkable(true);
+                            setDraftLocationName(resolved.name);
+                            setDraftLocationAddress(resolved.address);
+                            clearLocationSuggestions();
+                          })();
+                        }}
+                      />
                     ) : null}
                   </View>
                 </InfoRowSlot>
               ) : (
                 <InfoRowSlot
                   ionicon="location-outline"
-                  onIconPress={
-                    displayEv.location?.trim()
+                  onPress={
+                    displayEv.location?.trim() && displayEv.locationLinkable
                       ? () => void openLocationInMaps(displayEv.location!.trim())
                       : undefined
                   }
-                  iconAccessibilityLabel="Open location in maps"
+                  onLongPress={
+                    displayEv.location?.trim()
+                      ? () => void copyLocationToClipboard(resolveLocationCopyText(displayEv))
+                      : undefined
+                  }
+                  accessibilityLabel={
+                    displayEv.locationLinkable
+                      ? 'Open location in maps. Long press to copy address.'
+                      : 'Location. Long press to copy address.'
+                  }
                 >
                   {displayEv.location?.trim() ? (
-                    <TouchableOpacity
-                      onPress={() => void openLocationInMaps(displayEv.location!.trim())}
-                      activeOpacity={0.75}
-                    >
-                      <Text style={styles.locationLinkText}>{displayEv.location.trim()}</Text>
-                    </TouchableOpacity>
+                    displayEv.locationLinkable &&
+                    (displayEv.locationName?.trim() || displayEv.locationAddress?.trim()) ? (
+                      (() => {
+                        const addressLine = resolveLocationAddressLine(displayEv);
+                        return (
+                          <View style={styles.locationPlaceBlock}>
+                            <Text style={styles.locationPlaceName} numberOfLines={1} ellipsizeMode="tail">
+                              {(displayEv.locationName ?? '').trim() || displayEv.location.trim()}
+                            </Text>
+                            {addressLine ? (
+                              <Text style={styles.locationPlaceAddress} numberOfLines={2} ellipsizeMode="tail">
+                                {addressLine}
+                              </Text>
+                            ) : null}
+                          </View>
+                        );
+                      })()
+                    ) : (
+                      <Text style={styles.locationPlainText}>{displayEv.location.trim()}</Text>
+                    )
                   ) : (
                     <Text style={{ color: Colors.textMuted }}>None</Text>
                   )}
@@ -2504,6 +2497,82 @@ export function EventDetailScreen({
             ) : null}
           </View>
             </View>
+          </View>
+        </View>
+
+        <View style={[styles.eventScrollInset, styles.eventSectionGap]}>
+          <Text style={styles.eventSectionLabel}>
+            Photos{coverPhotosForDisplay.length > 0 ? ` · ${coverPhotosForDisplay.length}` : ''}
+          </Text>
+          <View style={styles.eventMainCard}>
+            {coverPhotosForDisplay.length > 0 || canEditPhotos ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{
+                  borderBottomWidth: canEditPhotos ? StyleSheet.hairlineWidth : 0,
+                  borderBottomColor: Colors.border,
+                }}
+                contentContainerStyle={{ gap: 4, paddingVertical: 10, paddingHorizontal: 16 }}
+              >
+                {canEditPhotos ? (
+                  <AddImageButton
+                    tile
+                    triggerIconName="camera-outline"
+                    label="Add photo"
+                    busy={coverPhotoBusy}
+                    disabled={coverPhotoBusy}
+                    onTakePhoto={addCoverPhotoFromCamera}
+                    onChooseFromLibrary={addCoverPhotoFromPicker}
+                    onInsertLink={async (url) => {
+                      if (!url.trim()) return;
+                      await addCoverPhoto(url.trim());
+                    }}
+                  />
+                ) : null}
+                {coverPhotosForDisplay.map((uri, i) => (
+                  <View key={`${uri}-${i}`} style={{ position: 'relative' }}>
+                    <TouchableOpacity
+                      onPress={() =>
+                        setLightbox({
+                          urls: coverPhotosForDisplay,
+                          index: i,
+                          name: getUserSafe(ev.createdBy).displayName,
+                          ts: new Date(ev.createdAt),
+                        })
+                      }
+                      activeOpacity={0.9}
+                    >
+                      <ResolvableImage
+                        storedUrl={uri}
+                        urlMap={resolvedImageMap}
+                        style={{
+                          width: 80,
+                          height: 80,
+                          borderRadius: Radius.lg,
+                          backgroundColor: Colors.bg,
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: Colors.border,
+                        }}
+                        resizeMode="cover"
+                      />
+                    </TouchableOpacity>
+                    {canEditPhotos ? (
+                      <TouchableOpacity
+                        onPress={() => void removeCoverPhotoAt(i)}
+                        style={styles.carouselRemoveThumb}
+                      >
+                        <Ionicons name="close" size={11} color="#fff" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.photosEmptyBody}>
+                <Text style={styles.photosEmptyText}>No photos</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -2764,7 +2833,7 @@ export function EventDetailScreen({
                 seed={displayName}
                 backgroundColor={[users[userId]?.avatarSeed ?? '']}
                 thumbnail={users[userId]?.thumbnail}
-                size={34}
+                size={18}
               />
             )}
             renderCommentBody={(tc) => {
@@ -3423,31 +3492,59 @@ function InfoRowSlot({
   ionicon,
   children,
   onIconPress,
+  onPress,
+  onLongPress,
   iconAccessibilityLabel,
+  accessibilityLabel,
 }: {
   ionicon: React.ComponentProps<typeof Ionicons>['name'];
   children: React.ReactNode;
   onIconPress?: () => void;
+  onPress?: () => void;
+  onLongPress?: () => void;
   iconAccessibilityLabel?: string;
+  accessibilityLabel?: string;
 }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      {onIconPress ? (
-        <TouchableOpacity
-          onPress={onIconPress}
-          style={styles.infoIconHit}
-          accessibilityRole="button"
-          accessibilityLabel={iconAccessibilityLabel ?? 'Open in maps'}
-          activeOpacity={0.75}
-        >
-          <Ionicons name={ionicon} size={20} color={Colors.textSub} style={{ width: 22 }} />
-        </TouchableOpacity>
-      ) : (
-        <Ionicons name={ionicon} size={20} color={Colors.textSub} style={{ width: 22 }} />
-      )}
-      <View style={{ flex: 1, minWidth: 0 }}>{children}</View>
-    </View>
+  const icon = onIconPress ? (
+    <TouchableOpacity
+      onPress={onIconPress}
+      style={styles.infoIconHit}
+      accessibilityRole="button"
+      accessibilityLabel={iconAccessibilityLabel ?? 'Open in maps'}
+      activeOpacity={0.75}
+    >
+      <Ionicons name={ionicon} size={20} color={Colors.textSub} style={{ width: 22 }} />
+    </TouchableOpacity>
+  ) : (
+    <Ionicons name={ionicon} size={20} color={Colors.textSub} style={{ width: 22 }} />
   );
+
+  const body = (
+    <>
+      {icon}
+      <View style={{ flex: 1, minWidth: 0 }}>{children}</View>
+    </>
+  );
+
+  if (onPress || onLongPress) {
+    return (
+      <Pressable
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={350}
+        style={({ pressed }) => [
+          { flexDirection: 'row', alignItems: 'center', gap: 10 },
+          pressed && onPress ? { opacity: 0.7 } : null,
+        ]}
+        accessibilityRole={onPress ? 'button' : undefined}
+        accessibilityLabel={accessibilityLabel}
+      >
+        {body}
+      </Pressable>
+    );
+  }
+
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>{body}</View>;
 }
 
 function InfoRow({ ionicon, children }: { ionicon: React.ComponentProps<typeof Ionicons>['name']; children: React.ReactNode }) {
@@ -3710,6 +3807,9 @@ const styles = StyleSheet.create({
     gap: 4,
     flexShrink: 0,
     justifyContent: 'flex-end',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minHeight: 48,
   },
   pageEventIconBtn: {
     width: 40,
@@ -3882,7 +3982,7 @@ const styles = StyleSheet.create({
   eventScrollContent: { flexGrow: 1, backgroundColor: Colors.bg, paddingBottom: 8 },
   eventBlock:       { backgroundColor: 'transparent' },
   eventMainCardWrap:{ marginHorizontal: 20, marginBottom: 4 },
-  eventMainCard:    { backgroundColor: Colors.surface, borderRadius: Radius['2xl'], overflow: 'hidden' },
+  eventMainCard:    { backgroundColor: Colors.surface, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.borderStrong, overflow: 'hidden' },
   eventScrollInset: { marginHorizontal: 20, marginBottom: 4 },
   eventSectionGap:  { marginTop: 14 },
   eventSectionLabel: {
@@ -3894,6 +3994,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   eventTogglePad:   { paddingHorizontal: 16 },
+  photosEmptyBody: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  photosEmptyText: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+  },
   commentsEmptyInsideCard: { paddingVertical: 28, paddingHorizontal: 16, alignItems: 'center', gap: 8 },
   modalInProgressBanner: {
     paddingHorizontal: 20,
@@ -3948,10 +4058,10 @@ const styles = StyleSheet.create({
     width: '90%',
     height: '80%',
   },
-  eventTitleField: { marginBottom: 2 },
+  eventNameField: { marginBottom: 2 },
   requiredMark: { color: Colors.todayRed, fontFamily: Fonts.semiBold },
-  eventTitle:       { fontSize: 21, fontFamily: Fonts.extraBold, color: Colors.text, lineHeight: 28, marginBottom: 4 },
-  eventTitleInput:  {
+  eventName:       { fontSize: 21, fontFamily: Fonts.extraBold, color: Colors.text, lineHeight: 28, marginBottom: 4 },
+  eventNameInput:  {
     width: '100%',
     minHeight: 40,
     paddingVertical: Platform.OS === 'ios' ? 6 : 4,
@@ -4029,49 +4139,46 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
   },
+  eventLocationInputWrap: {
+    position: 'relative',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  eventLocationInputWithClear: {
+    paddingRight: 28,
+  },
+  eventLocationClearBtn: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   infoIconHit: {
     width: 24,
     height: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  locationLinkText: {
+  locationPlainText: {
     fontSize: 14,
-    fontFamily: Fonts.medium,
-    color: '#2563EB',
-    textDecorationLine: 'underline',
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
     lineHeight: 20,
   },
-  locationSuggestionHint: {
-    marginTop: 6,
-    fontSize: 12,
-    color: Colors.textMuted,
-    fontFamily: Fonts.regular,
+  locationPlaceBlock: {
+    gap: 2,
   },
-  locationSuggestionCard: {
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.md,
-    overflow: 'hidden',
-    backgroundColor: Colors.bg,
-  },
-  locationSuggestionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-  },
-  locationSuggestionRowBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.border,
-  },
-  locationSuggestionText: {
-    flex: 1,
-    fontSize: 13,
+  locationPlaceName: {
+    fontSize: 14,
     color: Colors.textSub,
+    lineHeight: 20,
+  },
+  locationPlaceAddress: {
+    fontSize: 13,
     fontFamily: Fonts.regular,
+    color: Colors.textMuted,
     lineHeight: 18,
   },
   detailCapacityRow: {
@@ -4165,7 +4272,7 @@ const styles = StyleSheet.create({
   },
   attendRowBorderTop: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
+    borderTopColor: Colors.borderStrong,
   },
   attendRowSummary: {
     flexDirection: 'row',
@@ -4354,6 +4461,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
     overflow: 'hidden',
   },
   commentReactionQuickPickerRoot: {

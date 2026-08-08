@@ -356,10 +356,10 @@ export function ThreadedCommentsSection({
             }}
           >
             <View style={styles.commentRow}>
-              {renderAvatar(comment.userId, displayName)}
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <View style={styles.commentHeaderRow}>
-                  <View style={styles.commentHeaderTitleCluster}>
+              <View style={styles.commentHeaderRow}>
+                <View style={styles.commentHeaderTitleCluster}>
+                  <View style={styles.commentAuthorRow}>
+                    {renderAvatar(comment.userId, displayName)}
                     <Text
                       numberOfLines={1}
                       ellipsizeMode="tail"
@@ -368,58 +368,59 @@ export function ThreadedCommentsSection({
                       <Text style={[styles.commentName, styles.commentNameMe]}>
                         {`${displayName} (me)`}
                       </Text>
-                      {' '}
                       <Text style={styles.commentTimeInline}>
+                        {' · '}
                         {formatCommentTime(comment.createdAt)}
                       </Text>
                     </Text>
                   </View>
                 </View>
-                {(() => {
-                  const editParentRaw =
-                    commentEditParentId === null
-                      ? null
-                      : comments.find((x) => x.id === commentEditParentId) ?? null;
-                  const editParent =
-                    editParentRaw &&
-                    editingComment &&
-                    toTimestamp(editParentRaw.createdAt) > toTimestamp(editingComment.createdAt)
-                      ? null
-                      : editParentRaw;
-                  const hasReplyTarget =
-                    supportsEditReplyParent && !!(commentEditParentId && editParent);
+              </View>
+              {(() => {
+                const editParentRaw =
+                  commentEditParentId === null
+                    ? null
+                    : comments.find((x) => x.id === commentEditParentId) ?? null;
+                const editParent =
+                  editParentRaw &&
+                  editingComment &&
+                  toTimestamp(editParentRaw.createdAt) > toTimestamp(editingComment.createdAt)
+                    ? null
+                    : editParentRaw;
+                const hasReplyTarget =
+                  supportsEditReplyParent && !!(commentEditParentId && editParent);
 
-                  return (
-                    <View ref={commentEditMountRef} collapsable={false}>
-                      {hasReplyTarget ? (
-                        <View style={styles.commentEditReplyComposer}>
-                          <View style={styles.composerReplyPreviewRow}>
-                            <View style={[styles.replyQuoteStrip, styles.composerReplyQuoteStrip]}>
-                              <Ionicons
-                                name="return-down-forward"
-                                size={14}
-                                color={Colors.textMuted}
-                                style={{ marginTop: 2 }}
-                              />
-                              <View style={{ flex: 1, minWidth: 0 }}>
-                                <Text style={styles.replyQuoteAuthor} numberOfLines={1}>
-                                  {getUserDisplayName(editParent!.userId)}
-                                </Text>
-                                <Text style={styles.replyQuotePreview} numberOfLines={2}>
-                                  {editParent!.body || '(no text)'}
-                                </Text>
-                              </View>
+                return (
+                  <View ref={commentEditMountRef} collapsable={false}>
+                    {hasReplyTarget ? (
+                      <View style={styles.commentEditReplyComposer}>
+                        <View style={styles.composerReplyPreviewRow}>
+                          <View style={[styles.replyQuoteStrip, styles.composerReplyQuoteStrip]}>
+                            <Ionicons
+                              name="return-down-forward"
+                              size={14}
+                              color={Colors.textMuted}
+                              style={{ marginTop: 2 }}
+                            />
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <Text style={styles.replyQuoteAuthor} numberOfLines={1}>
+                                {getUserDisplayName(editParent!.userId)}
+                              </Text>
+                              <Text style={styles.replyQuotePreview} numberOfLines={2}>
+                                {editParent!.body || '(no text)'}
+                              </Text>
                             </View>
-                            <TouchableOpacity
-                              onPress={() => onCommentEditParentIdChange(null)}
-                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                              accessibilityLabel="Clear reply target"
-                            >
-                              <Ionicons name="close" size={20} color={Colors.textMuted} />
-                            </TouchableOpacity>
                           </View>
+                          <TouchableOpacity
+                            onPress={() => onCommentEditParentIdChange(null)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityLabel="Clear reply target"
+                          >
+                            <Ionicons name="close" size={20} color={Colors.textMuted} />
+                          </TouchableOpacity>
                         </View>
-                      ) : null}
+                      </View>
+                    ) : null}
                       {supportsEditReplyParent && commentEditParentId && !editParent ? (
                         <Text style={styles.commentEditStaleHint}>
                           Reply target unavailable — tap Reply on an earlier comment to attach this edit
@@ -483,7 +484,6 @@ export function ThreadedCommentsSection({
                     </View>
                   );
                 })()}
-              </View>
             </View>
             {children.map((child) => renderCommentNode(child, level + 1))}
           </View>
@@ -510,10 +510,10 @@ export function ThreadedCommentsSection({
                 ]}
               />
             ) : null}
-            {renderAvatar(comment.userId, displayName)}
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <View style={styles.commentHeaderRow}>
-                <View style={styles.commentHeaderTitleCluster}>
+            <View style={styles.commentHeaderRow}>
+              <View style={styles.commentHeaderTitleCluster}>
+                <View style={styles.commentAuthorRow}>
+                  {renderAvatar(comment.userId, displayName)}
                   <Text
                     numberOfLines={1}
                     ellipsizeMode="tail"
@@ -522,107 +522,107 @@ export function ThreadedCommentsSection({
                     <Text style={[styles.commentName, isMine && styles.commentNameMe]}>
                       {isMine ? `${displayName} (me)` : displayName}
                     </Text>
-                    {' '}
                     <Text style={styles.commentTimeInline}>
+                      {' · '}
                       {formatCommentTime(comment.createdAt)}
                     </Text>
                   </Text>
                 </View>
-                {isMine || (comment.body ?? '').trim().length > 0 ? (
-                  <TouchableOpacity
-                    ref={(node) => {
-                      commentMenuButtonRefs.current[comment.id] = node;
-                    }}
-                    onPress={() => openCommentMenu(comment.id)}
-                    style={styles.commentMenuBtn}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    accessibilityLabel="Comment options"
-                  >
-                    <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
-                  </TouchableOpacity>
-                ) : null}
               </View>
-              {repliedTo ? (
-                <CommentReplyQuote
-                  onPress={() => jumpToComment(repliedTo.id)}
-                  author={getUserDisplayName(repliedTo.userId)}
-                  preview={repliedTo.body || '(no text)'}
-                  containerStyle={styles.replyQuoteStrip}
-                  pressedStyle={styles.replyQuotePressed}
-                  authorStyle={styles.replyQuoteAuthor}
-                  previewStyle={styles.replyQuotePreview}
-                  accessibilityLabel="Jump to replied comment"
-                />
-              ) : null}
-              {renderCommentBody ? (
-                renderCommentBody(comment)
-              ) : (
-                <Text style={styles.commentText}>{comment.body}</Text>
-              )}
-              {comment.reactions.length > 0 ? (
-                <View style={styles.reactionChipsRow}>
-                  {comment.reactions.map((entry) => (
-                    <TouchableOpacity
-                      key={`${comment.id}-existing-${entry.emoji}`}
-                      style={styles.reactionChip}
-                      onPress={() => onToggleReaction(comment.id, entry.emoji)}
-                      onLongPress={() =>
-                        onReactionChipLongPress?.({
-                          emoji: entry.emoji,
-                          userIds: entry.userIds,
-                        })
-                      }
-                    >
-                      <View style={styles.reactionChipInner}>
-                        <ReactionEmojiGlyph emoji={entry.emoji} size={17} />
-                        <Text style={styles.reactionChipCount}>{entry.count}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : null}
-              <View style={styles.reactionRow}>
+              {isMine || (comment.body ?? '').trim().length > 0 ? (
                 <TouchableOpacity
                   ref={(node) => {
-                    reactionButtonRefs.current[`comment:${comment.id}`] = node;
+                    commentMenuButtonRefs.current[comment.id] = node;
                   }}
-                  style={styles.iconActionBtn}
-                  onPress={() => onOpenReactionQuickPicker(comment.id)}
-                  onLongPress={() => onOpenReactionQuickPicker(comment.id)}
-                  accessibilityLabel="Add reaction"
-                  activeOpacity={0.75}
+                  onPress={() => openCommentMenu(comment.id)}
+                  style={styles.commentMenuBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Comment options"
                 >
-                  <Ionicons name="happy-outline" size={15} color={Colors.textSub} />
+                  <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.iconActionBtn}
-                  onPress={() => {
-                    if (commentEdit) {
-                      if (commentEdit.commentId === comment.id) return;
-                      const invalid = invalidReplyParentIds(commentEdit.commentId, comments);
-                      const editing =
-                        commentsById.get(commentEdit.commentId) ??
-                        comments.find((x) => x.id === commentEdit.commentId) ??
-                        null;
-                      const isFutureParent =
-                        !!editing &&
-                        toTimestamp(comment.createdAt) > toTimestamp(editing.createdAt);
-                      if (!invalid.has(comment.id) && !isFutureParent) {
-                        onCommentEditParentIdChange(comment.id);
-                      }
-                      return;
+              ) : null}
+            </View>
+            {repliedTo ? (
+              <CommentReplyQuote
+                onPress={() => jumpToComment(repliedTo.id)}
+                author={getUserDisplayName(repliedTo.userId)}
+                preview={repliedTo.body || '(no text)'}
+                containerStyle={styles.replyQuoteStrip}
+                pressedStyle={styles.replyQuotePressed}
+                authorStyle={styles.replyQuoteAuthor}
+                previewStyle={styles.replyQuotePreview}
+                accessibilityLabel="Jump to replied comment"
+              />
+            ) : null}
+            {renderCommentBody ? (
+              renderCommentBody(comment)
+            ) : (
+              <Text style={styles.commentText}>{comment.body}</Text>
+            )}
+            {comment.reactions.length > 0 ? (
+              <View style={styles.reactionChipsRow}>
+                {comment.reactions.map((entry) => (
+                  <TouchableOpacity
+                    key={`${comment.id}-existing-${entry.emoji}`}
+                    style={styles.reactionChip}
+                    onPress={() => onToggleReaction(comment.id, entry.emoji)}
+                    onLongPress={() =>
+                      onReactionChipLongPress?.({
+                        emoji: entry.emoji,
+                        userIds: entry.userIds,
+                      })
                     }
-                    onReplyTargetChange(comment.id);
-                  }}
-                >
-                  <Ionicons
-                    name="return-up-forward-outline"
-                    size={15}
-                    color={Colors.textSub}
-                  />
-                  <Text style={styles.iconActionText}>Reply</Text>
-                </TouchableOpacity>
+                  >
+                    <View style={styles.reactionChipInner}>
+                      <ReactionEmojiGlyph emoji={entry.emoji} size={17} />
+                      <Text style={styles.reactionChipCount}>{entry.count}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
               </View>
+            ) : null}
+            <View style={styles.reactionRow}>
+              <TouchableOpacity
+                ref={(node) => {
+                  reactionButtonRefs.current[`comment:${comment.id}`] = node;
+                }}
+                style={styles.iconActionBtn}
+                onPress={() => onOpenReactionQuickPicker(comment.id)}
+                onLongPress={() => onOpenReactionQuickPicker(comment.id)}
+                accessibilityLabel="Add reaction"
+                activeOpacity={0.75}
+              >
+                <Ionicons name="happy-outline" size={15} color={Colors.textSub} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconActionBtn}
+                onPress={() => {
+                  if (commentEdit) {
+                    if (commentEdit.commentId === comment.id) return;
+                    const invalid = invalidReplyParentIds(commentEdit.commentId, comments);
+                    const editing =
+                      commentsById.get(commentEdit.commentId) ??
+                      comments.find((x) => x.id === commentEdit.commentId) ??
+                      null;
+                    const isFutureParent =
+                      !!editing &&
+                      toTimestamp(comment.createdAt) > toTimestamp(editing.createdAt);
+                    if (!invalid.has(comment.id) && !isFutureParent) {
+                      onCommentEditParentIdChange(comment.id);
+                    }
+                    return;
+                  }
+                  onReplyTargetChange(comment.id);
+                }}
+              >
+                <Ionicons
+                  name="return-up-forward-outline"
+                  size={15}
+                  color={Colors.textSub}
+                />
+                <Text style={styles.iconActionText}>Reply</Text>
+              </TouchableOpacity>
             </View>
           </View>
           {children.map((child) => renderCommentNode(child, level + 1))}
@@ -1133,8 +1133,6 @@ const styles = StyleSheet.create({
     color: Colors.textSub,
   },
   commentRow: {
-    flexDirection: 'row',
-    gap: 12,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -1156,18 +1154,24 @@ const styles = StyleSheet.create({
     minWidth: 0,
     marginRight: 4,
   },
-  commentHeaderInlineRoot: {
-    width: '100%',
+  commentAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
   },
-  commentName: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.text },
+  commentHeaderInlineRoot: {
+    flex: 1,
+    minWidth: 0,
+  },
+  commentName: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.text },
   commentNameMe: { color: Colors.going },
   commentMenuBtn: { padding: 2 },
   commentTimeInline: {
-    fontSize: 11,
+    fontSize: 12,
     color: Colors.textMuted,
     fontFamily: Fonts.regular,
     flexShrink: 0,
-    paddingLeft: 6,
   },
   commentText: { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, lineHeight: 20 },
   replyQuoteStrip: {
@@ -1218,10 +1222,13 @@ const styles = StyleSheet.create({
   iconActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingVertical: 5,
-    paddingHorizontal: 6,
-    borderRadius: Radius.md,
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: Radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
   },
   iconActionText: { fontSize: 12, fontFamily: Fonts.medium, color: Colors.textSub },
 });
