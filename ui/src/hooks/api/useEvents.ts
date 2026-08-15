@@ -8,6 +8,7 @@ import {
   type EventTimeSuggestionInput,
 } from '@moijia/client';
 import { queryKeys } from '../../config/queryClient';
+import { retryUnlessNotFound } from '../../utils/apiErrors';
 
 interface EventFilters {
   userId: string;
@@ -44,6 +45,7 @@ export function useEvent(id: string, userId: string) {
     queryFn: () => EventsService.getEvent(id, userId),
     enabled: !!id && !!userId,
     staleTime: 0,
+    retry: retryUnlessNotFound,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     refetchOnReconnect: true,

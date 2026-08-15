@@ -1,28 +1,21 @@
-import { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
-import { type Href } from 'expo-router';
-import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors } from '../constants/theme';
 import { useGroup } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { GroupDetailView } from './GroupDetailView';
 import { GroupScopeNavProvider } from './groupScope/GroupScopeNavContext';
+import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 
 export type EventGroupDetailViewProps = {
   groupId: string;
 };
 
 export function EventGroupDetailView({ groupId }: EventGroupDetailViewProps) {
-  const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
 
-  const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError } = useGroup(groupId, currentUserId ?? '');
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/events');
-    }
-  }, [isError, group?.membershipStatus, router]);
+  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/events');
 
   if (!group) {
     return null;

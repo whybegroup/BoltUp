@@ -29,6 +29,7 @@ import {
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { UserAvatar } from './UserAvatar';
+import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 
 export type GroupMembersViewProps = {
   groupId: string;
@@ -38,7 +39,7 @@ export function GroupMembersView({ groupId }: GroupMembersViewProps) {
   const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
 
-  const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
   const { data: users = [], refetch: refetchUsers } = useUsers();
   const { data: groupMembers = [], refetch: refetchGroupMembers } = useGroupMembers(
     groupId,
@@ -97,11 +98,7 @@ export function GroupMembersView({ groupId }: GroupMembersViewProps) {
     [membersMap, usersMap]
   );
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/groups');
-    }
-  }, [isError, group?.membershipStatus, router]);
+  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/groups');
 
   useEffect(() => {
     if (group?.membershipStatus === 'pending') {

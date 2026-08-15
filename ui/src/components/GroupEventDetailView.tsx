@@ -7,6 +7,7 @@ import { useGroup } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { EventDetailScreen } from './EventDetailScreen';
 import { useGroupScopeNav } from './groupScope/GroupScopeNavContext';
+import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 
 export type GroupEventDetailViewProps = {
   groupId: string;
@@ -27,18 +28,19 @@ export function GroupEventDetailView({
   // Detect if we're in Events tab context
   const isInEventsTab = pathname.includes('/(tabs)/events/group') || pathname.includes('/events/group');
 
-  const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError } = useGroup(groupId, currentUserId ?? '');
 
   const fetchEventsForGroup =
     !!currentUserId &&
     !!group &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace(isInEventsTab ? '/(tabs)/events' : '/(tabs)/groups');
-    }
-  }, [isError, group?.membershipStatus, router, isInEventsTab]);
+  useMissingGroupRedirect(
+    isError,
+    groupError,
+    group?.membershipStatus,
+    isInEventsTab ? '/(tabs)/events' : '/(tabs)/groups'
+  );
 
   useEffect(() => {
     if (group?.membershipStatus === 'pending') {

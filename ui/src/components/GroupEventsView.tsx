@@ -24,6 +24,7 @@ import { filterEventsForList } from '../utils/eventListFilters';
 import { withReturnTo } from '../utils/navigationReturn';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { parseFromEventId, buildGroupEventDetailUrl } from '../utils/breadcrumbUrl';
+import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 
 export type GroupEventsViewProps = {
   groupId: string;
@@ -42,7 +43,7 @@ export function GroupEventsView({ groupId }: GroupEventsViewProps) {
   // Get fromEventId to preserve across navigation
   const fromEventId = parseFromEventId(searchParams);
 
-  const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
   const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(
     currentUserId || ''
   );
@@ -74,11 +75,7 @@ export function GroupEventsView({ groupId }: GroupEventsViewProps) {
     filterState.endMode !== 'allTime'
   );
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/groups');
-    }
-  }, [isError, group?.membershipStatus, router]);
+  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/groups');
 
   useEffect(() => {
     if (group?.membershipStatus === 'pending') {

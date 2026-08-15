@@ -6,6 +6,7 @@ import { Colors } from '../constants/theme';
 import { useGroup } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { PollsListScreen } from './PollsListScreen';
+import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 
 export type GroupPollsViewProps = {
   groupId: string;
@@ -15,18 +16,14 @@ export function GroupPollsView({ groupId }: GroupPollsViewProps) {
   const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
 
-  const { data: group, isError } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError } = useGroup(groupId, currentUserId ?? '');
 
   const fetchPollsForGroup =
     !!currentUserId &&
     !!group &&
     (group.membershipStatus === 'member' || group.membershipStatus === 'admin');
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/groups');
-    }
-  }, [isError, group?.membershipStatus, router]);
+  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/groups');
 
   useEffect(() => {
     if (group?.membershipStatus === 'pending') {

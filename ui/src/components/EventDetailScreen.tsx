@@ -97,6 +97,10 @@ import {
 } from '../services/pickAndUploadImage';
 import { useResolvedImageUrls } from '../hooks/useResolvedImageUrls';
 import { useLocationSuggestions } from '../hooks/useLocationSuggestions';
+import {
+  isMissingQueryError,
+  useMissingResourceAlert,
+} from '../hooks/useMissingResourceAlert';
 import { LocationSuggestionCard } from './LocationSuggestionCard';
 import { resolvePlaceSuggestionDetails } from '../utils/locationSuggestions';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
@@ -366,7 +370,7 @@ export function EventDetailScreen({
   const { userId: currentUserId } = useCurrentUserContext();
   const isPageVariant = variant === 'events' || variant === 'groups';
 
-  const { data: ev, refetch: refetchEvent } = useEvent(
+  const { data: ev, isError: eventIsError, error: eventError, refetch: refetchEvent } = useEvent(
     eventId || '',
     currentUserId ?? ''
   );
@@ -374,6 +378,9 @@ export function EventDetailScreen({
     ev?.groupId || '',
     currentUserId ?? ''
   );
+
+  const eventGone = !!eventId && isMissingQueryError(eventIsError, eventError);
+  useMissingResourceAlert('event', eventGone, dismiss);
 
   const { data: allUsers = [], refetch: refetchUsers } = useUsers();
   const { data: memberColorData, refetch: refetchMemberColor } = useGroupMemberColor(

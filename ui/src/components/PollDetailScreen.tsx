@@ -40,6 +40,10 @@ import {
 } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import {
+  isMissingQueryError,
+  useMissingResourceAlert,
+} from '../hooks/useMissingResourceAlert';
 import Toast from 'react-native-toast-message';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 import {
@@ -929,7 +933,7 @@ export function PollDetailScreen({
   const id = pollId;
   const returnToParsed = useMemo(() => parseReturnToParam(returnToParam ?? undefined), [returnToParam]);
   const { userId } = useCurrentUserContext();
-  const { data: poll, isLoading, isError, refetch: refetchPoll } = usePoll(id ?? '', userId ?? '');
+  const { data: poll, isLoading, isError, error: pollError, refetch: refetchPoll } = usePoll(id ?? '', userId ?? '');
   const { data: results, refetch: refetchResults } = usePollResults(id ?? '', userId ?? '', {
     enabled: !isError,
   });
@@ -1165,6 +1169,12 @@ export function PollDetailScreen({
     }
     router.replace('/(tabs)/events');
   };
+
+  useMissingResourceAlert(
+    'poll',
+    !!id && isMissingQueryError(isError, pollError),
+    dismiss
+  );
 
   const onDeletePoll = useCallback(() => {
     if (!id || !userId) return;

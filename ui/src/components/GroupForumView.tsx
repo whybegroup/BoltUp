@@ -28,6 +28,11 @@ import { useCommentQuickReactions } from '../hooks/useCommentQuickReactions';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import {
+  isMissingQueryError,
+  useMissingGroupRedirect,
+  useMissingResourceAlert,
+} from '../hooks/useMissingResourceAlert';
+import {
   useGroup,
   useGroupPosts,
   useUsers,
@@ -373,9 +378,14 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   /** Draft reply parent while editing; `null` = top-level comment. */
   const [commentEditParentId, setCommentEditParentId] = useState<string | null>(null);
 
-  const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
   const { data: allUsers = [], refetch: refetchUsers } = useUsers();
-  const { data: posts = [], isLoading: postsLoading, refetch: refetchPosts } = useGroupPosts(
+  const {
+    data: posts = [],
+    isLoading: postsLoading,
+    isFetched: postsFetched,
+    refetch: refetchPosts,
+  } = useGroupPosts(
     groupId,
     currentUserId ?? ''
   );
@@ -391,17 +401,24 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const { data: commentQuickReactions = [...DEFAULT_COMMENT_QUICK_REACTIONS_LIST] } =
     useCommentQuickReactions(currentUserId);
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/groups');
-    }
-  }, [group, isError, router]);
+  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/groups');
 
   useEffect(() => {
     if (group?.membershipStatus === 'pending') {
       router.replace(`/(tabs)/groups/${groupId}` as Href);
     }
   }, [group?.membershipStatus, groupId, router]);
+
+  const postGone =
+    !!focusPostId &&
+    !!group &&
+    !isMissingQueryError(isError, groupError) &&
+    postsFetched &&
+    !postsLoading &&
+    !posts.some((p) => p.id === focusPostId);
+  useMissingResourceAlert('post', postGone, () => {
+    if (router.canGoBack()) router.back();
+  });
 
   useEffect(() => {
     if (!focusPostId) return;

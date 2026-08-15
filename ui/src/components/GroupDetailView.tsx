@@ -36,6 +36,7 @@ import {
 } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { GroupAvatar } from './GroupAvatar';
@@ -196,7 +197,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
 
   const { userId: currentUserId } = useCurrentUserContext();
 
-  const { data: group, isError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
+  const { data: group, isError, error: groupError, refetch: refetchGroup } = useGroup(groupId, currentUserId ?? '');
   const { data: memberColorData, refetch: refetchMemberColor } = useGroupMemberColor(
     groupId,
     currentUserId ?? ''
@@ -327,11 +328,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     ]);
   }, [profileDirty]);
 
-  useEffect(() => {
-    if (isError || (group && group.membershipStatus === 'none')) {
-      router.replace('/(tabs)/groups');
-    }
-  }, [isError, group?.membershipStatus, router]);
+  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/groups');
   const [showLeave,   setShowLeave]   = useState(false);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
