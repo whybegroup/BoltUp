@@ -2,80 +2,47 @@
 
 REST API for moijia - A social event planning platform for groups.
 
-## OnPrem
+## EC2
 
 ```bash
 brew install caddy
 ```
 
 ```bash
-sudo cat >> /opt/homebrew/etc/Caddyfile << EOF
-api.danielbyun.com {
-        tls /opt/homebrew/etc/moijia-api.pem /opt/homebrew/etc/moijia-api-privkey.pem
-        reverse_proxy 127.0.0.1:3000
+sudo cat > /home/linuxbrew/.linuxbrew/etc/Caddyfile << EOF
+api.moijia.com {
+  tls /home/ec2-user/Moijia/secrets/certificate_body.pem /home/ec2-user/Moijia/secrets/certificate_private_key.pem
+  reverse_proxy 127.0.0.1:3000
 }
 
-moijia.danielbyun.com {
-        tls /opt/homebrew/etc/moijia-ui.pem /opt/homebrew/etc/moijia-ui-privkey.pem
-        reverse_proxy 127.0.0.1:8081
+moijia.com {
+  tls /home/ec2-user/Moijia/secrets/certificate_body.pem /home/ec2-user/Moijia/secrets/certificate_private_key.pem
+  root * /home/ec2-user/Moijia/ui/dist
+  handle /.well-known/apple-app-site-association {
+    header Content-Type application/json
+    file_server
+  }
+  handle /.well-known/assetlinks.json {
+    header Content-Type application/json
+    file_server
+  }
+  handle {
+    try_files {path} /index.html
+    file_server
+  }
 }
-EOF
+
+http://moijia.com {
+  redir https://moijia.com{uri} permanent
+}
+
+http://api.moijia.com {
+  redir https://api.moijia.com{uri} permanent
+}
 ```
 
 ```bash
 brew services start caddy
-```
-
-## EC2
-
-```bash
-scp ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub ubuntu@ec2:~/.ssh
-```
-
-```bash
-sudo apt update
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https vim
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt update
-sudo apt install -y caddy
-```
-
-```bash
-sudo cat >> /etc/caddy/Caddyfile << EOF
-# The Caddyfile is an easy way to configure your Caddy web server.
-#
-# Unless the file starts with a global options block, the first
-# uncommented line is always the address of your site.
-#
-# To use your own domain name (with automatic HTTPS), first make
-# sure your domain's A/AAAA DNS records are properly pointed to
-# this machine's public IP, then replace ":80" below with your
-# domain name.
-
-api.danielbyun.com {
-        # Set this path to your site's directory.
-        root * /usr/share/caddy
-
-        # Enable the static file server.
-        file_server
-
-        # Another common task is to set up a reverse proxy:
-        reverse_proxy 127.0.0.1:3000
-
-        # Or serve a PHP site through php-fpm:
-        # php_fastcgi localhost:9000
-}
-
-# Refer to the Caddy docs for more information:
-# https://caddyserver.com/docs/caddyfile
-EOF
-```
-
-```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-sudo systemctl status caddy
 ```
 
 ```bash

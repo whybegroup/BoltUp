@@ -5,5 +5,28 @@ api.moijia.com {
 
 moijia.com {
         tls /home/ec2-user/Moijia/secrets/certificate_body.pem /home/ec2-user/Moijia/secrets/certificate_private_key.pem
-        reverse_proxy 127.0.0.1:8081
+        root * /home/ec2-user/Moijia/ui/dist
+
+        handle /.well-known/apple-app-site-association {
+                header Content-Type application/json
+                file_server
+        }
+
+        handle /.well-known/assetlinks.json {
+                header Content-Type application/json
+                file_server
+        }
+
+        handle {
+                try_files {path} /index.html
+                file_server
+        }
+}
+
+http://moijia.com {
+        redir https://moijia.com{uri} permanent
+}
+
+http://api.moijia.com {
+        redir https://api.moijia.com{uri} permanent
 }

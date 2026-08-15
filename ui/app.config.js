@@ -46,7 +46,7 @@ module.exports = {
     orientation: 'portrait',
     icon: './assets/favicon.png',
     scheme: 'moijia',
-    userInterfaceStyle: 'light',
+    userInterfaceStyle: 'dark',
     splash: {
       image: './assets/favicon.png',
       backgroundColor: '#FAFAF9',
@@ -55,7 +55,7 @@ module.exports = {
     ios: {
       supportsTablet: false,
       bundleIdentifier: 'com.moijia.moijia',
-      associatedDomains: ['applinks:moijia.com'],
+      associatedDomains: ['applinks:moijia.com', 'applinks:moijia.com?mode=developer'],
     },
     android: {
       adaptiveIcon: {

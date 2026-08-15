@@ -13,7 +13,6 @@ import {
   DMSans_500Medium,
   DMSans_700Bold,
 } from '@expo-google-fonts/dm-sans';
-import { FiraCode_700Bold } from '@expo-google-fonts/fira-code';
 import * as SplashScreen from 'expo-splash-screen';
 import { Provider as ReduxProvider } from 'react-redux';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -109,7 +108,6 @@ export default function RootLayout() {
     DMSans_400Regular,
     DMSans_500Medium,
     DMSans_700Bold,
-    FiraCode_700Bold,
   });
 
   useEffect(() => {

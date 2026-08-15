@@ -497,19 +497,34 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   };
 
   const shareInvite = async () => {
+    const title = `Join ${group.name} on Moijia`;
     const message = `Join the ${group.name} group on Moijia!\n${inviteLink}`;
+    const copyFallback = async () => {
+      await Clipboard.setStringAsync(inviteLink).catch(() => {});
+      Toast.show({ type: 'success', text1: 'Invite link copied' });
+    };
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && 'share' in navigator) {
-        await navigator.share({ title: group.name, text: message, url: inviteLink });
+      if (Platform.OS === 'web') {
+        const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+        if (nav && typeof nav.share === 'function') {
+          try {
+            await nav.share({ title, text: message, url: inviteLink });
+            return;
+          } catch (e: any) {
+            if (e?.name === 'AbortError') return;
+          }
+        }
+        await copyFallback();
         return;
       }
       await Share.share(
         Platform.OS === 'ios'
           ? { url: inviteLink, message: `Join the ${group.name} group on Moijia!` }
-          : { message: `Join the ${group.name} group on Moijia!\n${inviteLink}`, title: group.name }
+          : { message, title },
       );
-    } catch {
-      // User dismissed the share sheet
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      await copyFallback();
     }
   };
 
@@ -1192,8 +1207,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
         <TouchableOpacity
           style={[styles.inviteSheetRow, !(isAdmin || isOwner) && styles.inviteSheetRowLast]}
           onPress={() => {
-            setInviteSheetOpen(false);
-            shareInvite();
+            void shareInvite().finally(() => setInviteSheetOpen(false));
           }}
         >
           <Ionicons name="share-outline" size={22} color="#d4d4d8" />
