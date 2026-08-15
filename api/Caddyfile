@@ -1,0 +1,9 @@
+api.moijia.com {
+        tls /home/ec2-user/Moijia/secrets/certificate_body.pem /home/ec2-user/Moijia/secrets/certificate_private_key.pem
+        reverse_proxy 127.0.0.1:3000
+}
+
+moijia.com {
+        tls /home/ec2-user/Moijia/secrets/certificate_body.pem /home/ec2-user/Moijia/secrets/certificate_private_key.pem
+        reverse_proxy 127.0.0.1:8081
+}

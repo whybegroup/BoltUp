@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "expo start",
+    "start": "nohup serve -s dist -l 8081 > ui.log 2>&1 &",
+    "build": "expo export --platform web",
     "android": "expo run:android",
     "android:build": "cd android && ./gradlew assembleRelease",
     "android:build:debug": "cd android && ./gradlew assembleDebug",
