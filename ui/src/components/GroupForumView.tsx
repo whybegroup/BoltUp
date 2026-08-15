@@ -1,5 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef, memo } from 'react';
-import type { ComponentProps, Dispatch, SetStateAction } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,7 +17,6 @@ import {
 import { type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons } from '@expo/vector-icons';
-import Markdown from 'react-native-markdown-display';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import { COMMENT_REACTION_EMOJIS } from '../constants/commentReactionEmojis';
@@ -55,9 +53,9 @@ import {
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { AddImageButton } from './AddImageButton';
+import { ForumPostMarkdownBody, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import { type GroupPost, type GroupPostComment, type GroupScoped } from '@moijia/client';
 import { CommentMentionInput } from './CommentMentionInput';
-import { MentionText } from './MentionText';
 import {
   computeMentionUserIdsForPost,
   type MentionMemberRow,
@@ -92,15 +90,6 @@ export type GroupForumViewProps = {
   /** When set with focusPostId, expand comments and highlight this comment. */
   focusCommentId?: string;
 };
-
-type ForumPostImageLightboxState = {
-  urls: string[];
-  index: number;
-  alts?: string[];
-  ownerName?: string;
-  ownerAvatarSeed?: string | null;
-  ownerThumbnail?: string | null;
-} | null;
 
 type ForumComposerChannel = 'new' | 'edit';
 
@@ -1633,40 +1622,42 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
           </View>
         ) : null}
         <View style={styles.attachToolbarRow}>
-          <AddImageButton
-            iconOnly
-            label="Add photo"
-            triggerIconName="camera-outline"
-            optionsModalTitle="Add photo"
-            linkModalTitle="Photo URL"
-            disabled={isUploadingAttachment}
-            busy={isUploadingAttachment}
-            onTakePhoto={() => void takePhotoAndAddComposerPhoto(channel)}
-            onChooseFromLibrary={() => void uploadComposerPhoto(channel)}
-            onInsertLink={async (url) => {
-              addComposerPhotoFor(channel, url.trim());
-            }}
-          />
+          <View style={styles.attachToolbarLeftActions}>
+            <AddImageButton
+              iconOnly
+              label="Add photo"
+              triggerIconName="camera-outline"
+              optionsModalTitle="Add photo"
+              linkModalTitle="Photo URL"
+              disabled={isUploadingAttachment}
+              busy={isUploadingAttachment}
+              onTakePhoto={() => void takePhotoAndAddComposerPhoto(channel)}
+              onChooseFromLibrary={() => void uploadComposerPhoto(channel)}
+              onInsertLink={async (url) => {
+                addComposerPhotoFor(channel, url.trim());
+              }}
+            />
+            <TouchableOpacity
+              style={[styles.attachFileBtn, isUploadingAttachment && styles.postBtnDisabled]}
+              onPress={() => void attachFileToComposer(channel)}
+              disabled={isUploadingAttachment}
+              accessibilityLabel="Attach file"
+            >
+              <Ionicons name="attach-outline" size={16} color={Colors.textSub} />
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
-            style={[styles.attachFileBtn, isUploadingAttachment && styles.postBtnDisabled]}
-            onPress={() => void attachFileToComposer(channel)}
-            disabled={isUploadingAttachment}
-            accessibilityLabel="Attach file"
+            style={[styles.postBtn, (!canSubmit || submitBusy) && styles.postBtnDisabled]}
+            onPress={() => void (isNew ? submitNewPost() : submitEditPost())}
+            disabled={!canSubmit || submitBusy}
           >
-            <Ionicons name="attach-outline" size={16} color={Colors.textSub} />
+            {submitBusy ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.postBtnText}>{isNew ? 'Post' : 'Save changes'}</Text>
+            )}
           </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={[styles.postBtn, (!canSubmit || submitBusy) && styles.postBtnDisabled]}
-          onPress={() => void (isNew ? submitNewPost() : submitEditPost())}
-          disabled={!canSubmit || submitBusy}
-        >
-          {submitBusy ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.postBtnText}>{isNew ? 'Post' : 'Save changes'}</Text>
-          )}
-        </TouchableOpacity>
       </>
     );
   };
@@ -2377,6 +2368,12 @@ const styles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 6,
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  attachToolbarLeftActions: {
+    flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
@@ -2521,7 +2518,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   postBtn: {
-    alignSelf: 'flex-start',
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: Radius.lg,
@@ -2675,14 +2671,6 @@ const styles = StyleSheet.create({
   postOptionsLabelDanger: { color: Colors.notGoing },
   readMoreBtn: { alignSelf: 'flex-start', marginTop: 4 },
   readMoreText: { fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
-  inlineImage: {
-    width: '100%',
-    height: 180,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.border,
-  },
-  markdownParagraphColumn: { flexDirection: 'column', alignItems: 'stretch' },
-  markdownImageWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
   groupPhotoLightbox: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.93)',
@@ -3157,81 +3145,4 @@ const styles = StyleSheet.create({
   commentMeta: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 4 },
   commentBody: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.text, lineHeight: 20 },
   postMentionInputWrap: { alignSelf: 'stretch', width: '100%' },
-  mentionInBody: { color: Colors.accent, fontFamily: Fonts.semiBold },
-});
-
-type ForumPostMarkdownBodyProps = {
-  markdownBody: string;
-  markdownStyles: NonNullable<ComponentProps<typeof Markdown>['style']>;
-  posterDisplayName: string;
-  ownerAvatarSeed: string | null;
-  ownerThumbnail: string | null;
-  setImageLightbox: Dispatch<SetStateAction<ForumPostImageLightboxState>>;
-};
-
-const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
-  markdownBody,
-  markdownStyles,
-  posterDisplayName,
-  ownerAvatarSeed,
-  ownerThumbnail,
-  setImageLightbox,
-}: ForumPostMarkdownBodyProps) {
-  const rules = useMemo(
-    () => ({
-      paragraph: (node: any, children: any, _parent: any, mdStyles: any) => (
-        <View key={node.key} style={[mdStyles._VIEW_SAFE_paragraph, styles.markdownParagraphColumn]}>
-          {children}
-        </View>
-      ),
-      text: (node: any, _children: any, _parent: any, mdStyles: any, inheritedStyles: Record<string, unknown> = {}) => {
-        const content = typeof node.content === 'string' ? node.content : '';
-        return (
-          <MentionText
-            key={node.key}
-            text={content}
-            style={[inheritedStyles, mdStyles.text]}
-            mentionStyle={styles.mentionInBody}
-          />
-        );
-      },
-      image: (node: any, _children: any, _parent: any, _mdStyles: any) => {
-        const rawSrc = node.attributes?.src;
-        const src = typeof rawSrc === 'string' ? rawSrc.trim() : '';
-        if (!src) return null;
-        const alt = typeof node.attributes?.alt === 'string' ? node.attributes.alt : '';
-        return (
-          <View key={node.key} style={styles.markdownImageWrap}>
-            <TouchableOpacity
-              activeOpacity={0.9}
-              onPress={() =>
-                setImageLightbox({
-                  urls: [src],
-                  index: 0,
-                  alts: [alt],
-                  ownerName: posterDisplayName,
-                  ownerAvatarSeed,
-                  ownerThumbnail,
-                })
-              }
-            >
-              <ResolvableImage storedUrl={src} style={styles.inlineImage} resizeMode="cover" />
-            </TouchableOpacity>
-          </View>
-        );
-      },
-    }),
-    [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox]
-  );
-
-  const onLinkPress = useCallback((url: string) => {
-    Linking.openURL(uploadUrlToDownloadUrl(url));
-    return false;
-  }, []);
-
-  return (
-    <Markdown style={markdownStyles} mergeStyle rules={rules} onLinkPress={onLinkPress}>
-      {markdownBody}
-    </Markdown>
-  );
 });

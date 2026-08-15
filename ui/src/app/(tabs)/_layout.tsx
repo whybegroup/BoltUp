@@ -1,12 +1,29 @@
 import type { ReactNode } from 'react';
-import { Tabs } from 'expo-router';
+import { useCallback } from 'react';
+import { Tabs, usePathname, type Href } from 'expo-router';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Fonts } from '../../constants/theme';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
+import { useAppRouter as useRouter } from '../../hooks/useAppRouter';
 import { UserAvatar } from '../../components/UserAvatar';
 import { EventsCalendarGlyph, GroupsPeopleGlyph } from '../../components/TabScreenIcons';
+
+type TabName = 'groups' | 'events' | 'polls' | 'posts' | 'profile';
+
+const TAB_ROOT_HREF: Record<TabName, Href> = {
+  groups: '/(tabs)/groups',
+  events: '/(tabs)/events',
+  polls: '/(tabs)/polls',
+  posts: '/(tabs)/posts',
+  profile: '/(tabs)/profile',
+};
+
+function isTabRoot(tab: TabName, pathname: string): boolean {
+  const normalized = pathname.replace(/^\/\(tabs\)/, '') || '/';
+  return normalized === `/${tab}`;
+}
 
 /** Renders in React Navigation's label slot (full tab width), not inside the ~31px icon wrapper. */
 function TabBarLabel({
@@ -68,6 +85,21 @@ function TabBarGlyph({
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const { user: me } = useCurrentUserContext();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  const tabRootListeners = useCallback(
+    (tab: TabName) =>
+      ({ navigation }: { navigation: { isFocused: () => boolean } }) => ({
+        tabPress: (e: { preventDefault: () => void }) => {
+          if (!navigation.isFocused()) return;
+          if (isTabRoot(tab, pathname)) return;
+          e.preventDefault();
+          router.replace(TAB_ROOT_HREF[tab]);
+        },
+      }),
+    [pathname, router]
+  );
 
   const tabBarLabelFn = (props: { focused: boolean; color: string; children: string }) => (
     <TabBarLabel focused={props.focused} color={props.color}>
@@ -94,6 +126,7 @@ export default function TabLayout() {
     >
       <Tabs.Screen
         name="groups"
+        listeners={tabRootListeners('groups')}
         options={{
           title: 'Groups',
           tabBarIcon: ({ focused }) => (
@@ -106,6 +139,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="events"
+        listeners={tabRootListeners('events')}
         options={{
           title: 'Events',
           tabBarIcon: ({ focused }) => (
@@ -118,6 +152,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="polls"
+        listeners={tabRootListeners('polls')}
         options={{
           title: 'Polls',
           tabBarIcon: ({ focused }) => (
@@ -135,7 +170,27 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="posts"
+        listeners={tabRootListeners('posts')}
+        options={{
+          title: 'Posts',
+          tabBarIcon: ({ focused }) => (
+            <TabBarGlyph
+              focused={focused}
+              iconNode={
+                <Ionicons
+                  name="newspaper-outline"
+                  size={20}
+                  color={focused ? Colors.text : Colors.textMuted}
+                />
+              }
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
+        listeners={tabRootListeners('profile')}
         options={{
           title: 'Profile',
           tabBarIcon: ({ focused }) => <TabBarGlyph focused={focused} isAvatar user={me} />,
