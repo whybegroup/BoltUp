@@ -10,7 +10,8 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  Dimensions,
+  Share,
+  Image,
 } from 'react-native';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import * as Clipboard from 'expo-clipboard';
@@ -19,7 +20,7 @@ import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../utils/helpers';
-import { formSectionTitleStyle, Avatar } from './ui';
+import { formSectionTitleStyle, Avatar, Sheet } from './ui';
 import {
   useGroup,
   useUsers,
@@ -38,7 +39,6 @@ import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Path, Rect } from 'react-native-svg';
 import { GroupAvatar } from './GroupAvatar';
 import { AvatarPickerModal } from './AvatarPickerModal';
 import { UserAvatar } from './UserAvatar';
@@ -60,6 +60,7 @@ import {
   buildGroupSettingsUrl,
 } from '../utils/breadcrumbUrl';
 import { withReturnTo } from '../utils/navigationReturn';
+import { groupInviteLink } from '../utils/inviteLink';
 
 const AVATAR_SIZE = 56;
 
@@ -333,7 +334,8 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
-  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
+  const [inviteCodeCopied, setInviteCodeCopied] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [avatarSeedDraft, setAvatarSeedDraft] = useState('');
   const [avatarThumbnailDraft, setAvatarThumbnailDraft] = useState<string | null>(null);
@@ -480,11 +482,35 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
 
   const canSeeInviteCode = group.membershipStatus === 'member' || group.membershipStatus === 'admin';
   const inviteCode = canSeeInviteCode ? (group.inviteCode ?? '').trim() : '';
+  const inviteLink = inviteCode ? groupInviteLink(inviteCode) : '';
 
   const copyInviteCode = async () => {
     await Clipboard.setStringAsync(inviteCode).catch(() => {});
-    setInviteCopied(true);
-    setTimeout(() => setInviteCopied(false), 2000);
+    setInviteCodeCopied(true);
+    Toast.show({ type: 'success', text1: 'Invite code copied' });
+    setTimeout(() => setInviteCodeCopied(false), 2000);
+  };
+
+  const copyInviteLink = async () => {
+    await Clipboard.setStringAsync(inviteLink).catch(() => {});
+    Toast.show({ type: 'success', text1: 'Invite link copied' });
+  };
+
+  const shareInvite = async () => {
+    const message = `Join the ${group.name} group on Moijia!\n${inviteLink}`;
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && 'share' in navigator) {
+        await navigator.share({ title: group.name, text: message, url: inviteLink });
+        return;
+      }
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { url: inviteLink, message: `Join the ${group.name} group on Moijia!` }
+          : { message: `Join the ${group.name} group on Moijia!\n${inviteLink}`, title: group.name }
+      );
+    } catch {
+      // User dismissed the share sheet
+    }
   };
 
   const confirmRegenerateInviteCode = () => {
@@ -778,6 +804,17 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                 </View>
               )}
               <View style={styles.groupProfileTrailing}>
+                {!isPending && inviteCode ? (
+                  <TouchableOpacity
+                    onPress={() => setInviteSheetOpen(true)}
+                    style={styles.groupProfileEditBtn}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Invite people"
+                  >
+                    <Ionicons name="person-add-outline" size={20} color={Colors.text} />
+                  </TouchableOpacity>
+                ) : null}
                 {canEditMain ? (
                   <View style={styles.groupProfileEditActions}>
                     <TouchableOpacity
@@ -911,47 +948,6 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
             )}
           </View>
 
-          {!isPending && inviteCode ? (
-            <View style={[styles.inviteSection, styles.inviteSectionInset]}>
-              <View style={[styles.inviteRow, { borderTopWidth: 1, borderTopColor: Colors.border, paddingVertical: 4 }]}>
-                <Text style={styles.inviteLabel}>Invite code</Text>
-                <View style={styles.inviteValueRow}>
-                  {(isAdmin || isOwner) && (
-                    <TouchableOpacity
-                      onPress={confirmRegenerateInviteCode}
-                      disabled={regenerateInviteCodeMutation.isPending || !currentUserId}
-                      style={styles.regenerateInviteIconBtn}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityLabel="Generate new invite code"
-                    >
-                      {regenerateInviteCodeMutation.isPending ? (
-                        <ActivityIndicator size="small" color={Colors.textMuted} />
-                      ) : (
-                        <Ionicons name="refresh-outline" size={20} color={Colors.textMuted} />
-                      )}
-                    </TouchableOpacity>
-                  )}
-                  <Text style={styles.inviteValue}>{inviteCode}</Text>
-                  <TouchableOpacity
-                    onPress={copyInviteCode}
-                    style={styles.copyIconBtn}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <View style={styles.copyIconWrap}>
-                      {inviteCopied ? (
-                        <Ionicons name="checkmark" size={18} color={Colors.going} />
-                      ) : (
-                        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={Colors.textMuted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                          <Rect x="9" y="9" width="13" height="13" rx="2" />
-                          <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                        </Svg>
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          ) : null}
           </View>
         </View>
 
@@ -1149,6 +1145,84 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
         }}
         isSaving={updateGroup.isPending}
       />
+
+      <Sheet
+        visible={inviteSheetOpen}
+        onClose={() => setInviteSheetOpen(false)}
+        variant="dark"
+        dimBackdrop={false}
+        dragToDismiss
+      >
+        <View style={styles.inviteSheetHeader}>
+          <Image
+            source={require('../../assets/favicon.png')}
+            style={styles.inviteSheetLogo}
+            accessibilityLabel="Moijia"
+          />
+          <Text style={styles.inviteSheetTitle}>Share {group.name}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.invitePreviewCodeWrap}
+          onPress={copyInviteCode}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Copy invite code"
+        >
+          <View style={{ width: 20 }} />
+          <Text style={styles.invitePreviewCode}>{inviteCode}</Text>
+          <Ionicons
+            name={inviteCodeCopied ? 'checkmark' : 'copy-outline'}
+            size={20}
+            color={inviteCodeCopied ? Colors.going : '#d4d4d8'}
+          />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.inviteSheetRow}
+          onPress={() => {
+            setInviteSheetOpen(false);
+            copyInviteLink();
+          }}
+        >
+          <Ionicons name="link-outline" size={22} color="#d4d4d8" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.inviteSheetRowTitle}>Copy invite link</Text>
+            <Text style={styles.inviteSheetRowDesc}>Opens the app and requests to join this group</Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.inviteSheetRow, !(isAdmin || isOwner) && styles.inviteSheetRowLast]}
+          onPress={() => {
+            setInviteSheetOpen(false);
+            shareInvite();
+          }}
+        >
+          <Ionicons name="share-outline" size={22} color="#d4d4d8" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.inviteSheetRowTitle}>More share options</Text>
+            <Text style={styles.inviteSheetRowDesc}>Share with another app on this device</Text>
+          </View>
+        </TouchableOpacity>
+        {(isAdmin || isOwner) ? (
+          <TouchableOpacity
+            style={[styles.inviteSheetRow, styles.inviteSheetRowLast]}
+            disabled={regenerateInviteCodeMutation.isPending || !currentUserId}
+            onPress={() => {
+              setInviteSheetOpen(false);
+              confirmRegenerateInviteCode();
+            }}
+          >
+            {regenerateInviteCodeMutation.isPending ? (
+              <ActivityIndicator size="small" color="#d4d4d8" />
+            ) : (
+              <Ionicons name="refresh-outline" size={22} color="#d4d4d8" />
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.inviteSheetRowTitle}>Regenerate code</Text>
+              <Text style={styles.inviteSheetRowDesc}>Replace the current invite code</Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+      </Sheet>
 
       {/* Leave confirm */}
       {showLeave && (
@@ -1391,21 +1465,54 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   groupThumb:       { width: AVATAR_SIZE, height: AVATAR_SIZE, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  inviteSection:    { marginTop: 0, paddingBottom: 0 },
-  inviteSectionInset: { paddingHorizontal: 16, paddingBottom: 16 },
-  inviteRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  inviteLabel:      { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, opacity: 0.65 },
-  inviteValueRow:   { flexDirection: 'row', alignItems: 'center', gap: 0, flexWrap: 'wrap' },
-  inviteValue:      { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, opacity: 0.65 },
-  regenerateInviteIconBtn: {
-    width: 28,
-    height: 28,
+  inviteSheetHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 12,
+    marginBottom: 14,
+    marginTop: 4,
   },
-  copyIconBtn:      { padding: 4 },
-  copyIconWrap:     { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  copyIconText:     { fontSize: 16, fontFamily: Fonts.bold },
+  inviteSheetLogo: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+  },
+  inviteSheetTitle: {
+    flex: 1,
+    fontSize: 20,
+    fontFamily: Fonts.regular,
+    color: '#f5f5f7',
+  },
+  invitePreviewCodeWrap: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3a3a3c',
+    borderRadius: Radius.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    gap: 10,
+  },
+  invitePreviewCode: {
+    flex: 1,
+    fontSize: 22,
+    fontFamily: Fonts.extraBold,
+    color: '#f5f5f7',
+    letterSpacing: 3,
+    textAlign: 'center',
+  },
+  inviteSheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.12)',
+  },
+  inviteSheetRowLast: { borderBottomWidth: 0 },
+  inviteSheetRowTitle: { fontSize: 15, fontFamily: Fonts.medium, color: '#f5f5f7' },
+  inviteSheetRowDesc: { fontSize: 12, fontFamily: Fonts.regular, color: 'rgba(255,255,255,0.55)', marginTop: 2 },
   card:             {
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],

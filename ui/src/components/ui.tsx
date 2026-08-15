@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useGuardedPress } from '../hooks/useGuardedPress';
 import {
   View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle,
   Modal, TextInput, Platform, Pressable,
   type TextStyle,
 } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -235,6 +237,8 @@ interface SheetProps {
   variant?: 'light' | 'dark';
   /** When false, backdrop stays transparent (popover-style). Default true. */
   dimBackdrop?: boolean;
+  /** Drag the handle down to dismiss. */
+  dragToDismiss?: boolean;
 }
 export function Sheet({
   visible,
@@ -242,6 +246,7 @@ export function Sheet({
   children,
   variant = 'light',
   dimBackdrop = true,
+  dragToDismiss = false,
 }: SheetProps) {
   const insets = useSafeAreaInsets();
   const isDark = variant === 'dark';
@@ -250,22 +255,59 @@ export function Sheet({
     : isDark
       ? styles.sheetOverlayDark
       : styles.sheetOverlay;
+  const dragY = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) dragY.value = 0;
+  }, [visible, dragY]);
+
+  const close = () => onClose();
+
+  const pan = Gesture.Pan()
+    .enabled(dragToDismiss)
+    .activeOffsetY(8)
+    .failOffsetX([-24, 24])
+    .onUpdate((e) => {
+      dragY.value = Math.max(0, e.translationY);
+    })
+    .onEnd((e) => {
+      const shouldClose = e.translationY > 80 || e.velocityY > 900;
+      if (shouldClose) {
+        dragY.value = withTiming(480, { duration: 180 }, (finished) => {
+          if (finished) runOnJS(close)();
+        });
+      } else {
+        dragY.value = withSpring(0, { damping: 20, stiffness: 220 });
+      }
+    });
+
+  const sheetAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: dragY.value }],
+  }));
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardFormRoot style={overlayStyle}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />
-        <View
-          style={[
-            isDark ? styles.sheetContainerDark : styles.sheetContainer,
-            { paddingBottom: insets.bottom + 16 },
-          ]}
-        >
-          <View style={isDark ? styles.sheetHandleDark : styles.sheetHandle} />
-          <KeyboardSafeScrollView showsVerticalScrollIndicator={false}>
-            {children}
-          </KeyboardSafeScrollView>
-        </View>
-      </KeyboardFormRoot>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <KeyboardFormRoot style={overlayStyle}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />
+          <Animated.View
+            style={[
+              isDark ? styles.sheetContainerDark : styles.sheetContainer,
+              { paddingBottom: insets.bottom + 16 },
+              sheetAnimStyle,
+            ]}
+          >
+            <GestureDetector gesture={pan}>
+              <View style={isDark ? styles.sheetHandleHitDark : styles.sheetHandleHit} accessibilityLabel="Drag to close">
+                <View style={isDark ? styles.sheetHandleDark : styles.sheetHandle} />
+              </View>
+            </GestureDetector>
+            <KeyboardSafeScrollView showsVerticalScrollIndicator={false}>
+              {children}
+            </KeyboardSafeScrollView>
+          </Animated.View>
+        </KeyboardFormRoot>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -417,10 +459,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     overflow: 'hidden',
   },
+  sheetHandleHit: {
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  sheetHandleHitDark: {
+    alignItems: 'center',
+    paddingTop: 8,
+    paddingBottom: 10,
+  },
   sheetHandle: {
     width: 32, height: 3, borderRadius: 2,
     backgroundColor: Colors.border, alignSelf: 'center',
-    marginTop: 10, marginBottom: 4,
   },
   sheetHandleDark: {
     alignSelf: 'center',
@@ -428,8 +479,6 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: 'rgba(255,255,255,0.28)',
-    marginTop: 8,
-    marginBottom: 10,
   },
   sectionLabel: {
     fontSize: 11, fontFamily: Fonts.semiBold,

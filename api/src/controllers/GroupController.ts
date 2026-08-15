@@ -254,7 +254,7 @@ export class GroupController extends Controller {
   @SuccessResponse('200', 'OK')
   public async joinByInviteCode(
     @Body() body: { inviteCode: string; userId: string }
-  ): Promise<{ success: boolean; groupName: string; status: 'joined' | 'pending' }> {
+  ): Promise<{ success: boolean; groupId: string; groupName: string; status: 'joined' | 'pending' }> {
     if (!body?.inviteCode?.trim()) {
       this.setStatus(400);
       throw new Error('inviteCode is required');

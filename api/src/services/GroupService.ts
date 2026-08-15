@@ -1115,13 +1115,13 @@ export class GroupService {
 
   /**
    * Join a group by invite code. If requireApprovalToJoin is false, membership is immediate; otherwise pending.
-   * Returns groupName and status for UI feedback.
+   * Returns groupId, groupName, and status for UI feedback.
    */
   public async joinByInviteCode(
     inviteCode: string,
     userId: string
-  ): Promise<{ groupName: string; status: 'joined' | 'pending' }> {
-    // Extract code from URL (e.g. moijia.app/join/ABC123) or use as-is
+  ): Promise<{ groupId: string; groupName: string; status: 'joined' | 'pending' }> {
+    // Extract code from URL (e.g. moijia.com/join/ABC123) or use as-is
     let raw = inviteCode.trim();
     const joinMatch = raw.match(/\/join\/([A-Za-z0-9]+)/i);
     if (joinMatch) raw = joinMatch[1];
@@ -1139,9 +1139,14 @@ export class GroupService {
     const wasPending = existing?.status === 'pending';
     await this.joinGroup(group.id, userId);
     if (wasActive || wasPending) {
-      return { groupName: group.name, status: wasActive ? 'joined' : 'pending' };
+      return {
+        groupId: group.id,
+        groupName: group.name,
+        status: wasActive ? 'joined' : 'pending',
+      };
     }
     return {
+      groupId: group.id,
       groupName: group.name,
       status: group.requireApprovalToJoin ? 'pending' : 'joined',
     };

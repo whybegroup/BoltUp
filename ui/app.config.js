@@ -55,6 +55,7 @@ module.exports = {
     ios: {
       supportsTablet: false,
       bundleIdentifier: 'com.moijia.moijia',
+      associatedDomains: ['applinks:moijia.com'],
     },
     android: {
       adaptiveIcon: {

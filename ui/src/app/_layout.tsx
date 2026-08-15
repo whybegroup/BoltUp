@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Stack, useSegments } from 'expo-router';
+import { Stack, useSegments, usePathname, useGlobalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { StatusBar } from 'expo-status-bar';
 import { AppState, Platform } from 'react-native';
@@ -13,6 +13,7 @@ import {
   DMSans_500Medium,
   DMSans_700Bold,
 } from '@expo-google-fonts/dm-sans';
+import { FiraCode_700Bold } from '@expo-google-fonts/fira-code';
 import * as SplashScreen from 'expo-splash-screen';
 import { Provider as ReduxProvider } from 'react-redux';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -23,12 +24,15 @@ import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { CurrentUserProvider } from '../contexts/CurrentUserContext';
 import { PushNotificationsRegistrar } from '../components/PushNotificationsRegistrar';
 import { NavigationGuardReset } from '../components/NavigationGuardReset';
+import { firstSearchParam, parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
   const { user, loading } = useAuth();
   const segments = useSegments();
+  const pathname = usePathname();
+  const searchParams = useGlobalSearchParams<{ returnTo?: string | string[] }>();
   const router = useRouter();
 
   useEffect(() => {
@@ -41,14 +45,16 @@ function RootLayoutNav() {
     // Small delay to ensure navigation is ready
     const timeout = setTimeout(() => {
       if (!user && !inAuthGroup) {
-        router.replace('/login');
+        const returnPath = pathname && pathname !== '/' ? pathname : undefined;
+        router.replace(returnPath ? withReturnTo('/login', returnPath) : '/login');
       } else if (user && inAuthGroup) {
-        router.replace('/(tabs)/events');
+        const returnTo = parseReturnToParam(firstSearchParam(searchParams.returnTo));
+        router.replace((returnTo ?? '/(tabs)/events') as Href);
       }
     }, 100);
 
     return () => clearTimeout(timeout);
-  }, [user, loading, segments, router]);
+  }, [user, loading, segments, router, pathname, searchParams.returnTo]);
 
   // Always mount Stack — returning null here unmounts the navigator and can trigger
   // "Rendered fewer hooks than expected" in expo-router / React Navigation during sign-out.
@@ -91,6 +97,7 @@ function RootLayoutNav() {
           contentStyle: { backgroundColor: 'transparent' },
         }}
       />
+      <Stack.Screen name="join/[code]" />
       <Stack.Screen name="groups/[id]" />
     </Stack>
     </>
@@ -102,6 +109,7 @@ export default function RootLayout() {
     DMSans_400Regular,
     DMSans_500Medium,
     DMSans_700Bold,
+    FiraCode_700Bold,
   });
 
   useEffect(() => {

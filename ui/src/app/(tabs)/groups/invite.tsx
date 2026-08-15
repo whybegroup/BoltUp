@@ -11,6 +11,7 @@ import { KeyboardSafeScrollView } from '../../../components/KeyboardSafeScrollVi
 import { useGroup } from '../../../hooks/api';
 import { usePullToRefresh } from '../../../hooks/usePullToRefresh';
 import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
+import { groupInviteLink } from '../../../utils/inviteLink';
 
 export default function GroupInviteScreen() {
   const { id }    = useLocalSearchParams<{ id: string }>();
@@ -29,8 +30,8 @@ export default function GroupInviteScreen() {
     return null;
   }
 
-  const inviteCode = group.id.toUpperCase().slice(0, 6);
-  const inviteLink = `https://moijia.app/join/${group.id}`;
+  const inviteCode = (group.inviteCode ?? '').trim() || group.id.toUpperCase().slice(0, 6);
+  const inviteLink = groupInviteLink(inviteCode);
 
   const copyLink = async () => {
     await Clipboard.setStringAsync(inviteLink);
@@ -47,12 +48,12 @@ export default function GroupInviteScreen() {
   };
 
   const shareIMessage = () => {
-      Linking.openURL(`sms:?body=${encodeURIComponent(`Join ${group.name} on moijia!\n\n${inviteLink}`)}`);
+      Linking.openURL(`sms:?body=${encodeURIComponent(`Join the ${group.name} group on Moijia!\n\n${inviteLink}`)}`);
   };
 
   const shareEmail = () => {
     Linking.openURL(
-      `mailto:?subject=${encodeURIComponent(`Join ${group.name} on moijia`)}&body=${encodeURIComponent(`You're invited!\n\n${inviteLink}`)}`
+      `mailto:?subject=${encodeURIComponent(`Join the ${group.name} group on Moijia!`)}&body=${encodeURIComponent(`You're invited!\n\n${inviteLink}`)}`
     );
   };
 
