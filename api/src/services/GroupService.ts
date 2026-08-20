@@ -1132,33 +1132,19 @@ export class GroupService {
     if (!group || group.deletedAt) {
       throw new Error('Invalid invite code');
     }
-    const existing = await prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId: group.id, userId } },
-    });
-    const wasActive = existing?.status === 'active';
-    const wasPending = existing?.status === 'pending';
-    await this.joinGroup(group.id, userId);
-    if (wasActive || wasPending) {
-      return {
-        groupId: group.id,
-        groupName: group.name,
-        status: wasActive ? 'joined' : 'pending',
-      };
-    }
-    return {
-      groupId: group.id,
-      groupName: group.name,
-      status: group.requireApprovalToJoin ? 'pending' : 'joined',
-    };
+    return this.joinGroup(group.id, userId);
   }
 
   /**
    * Join a group. If requireApprovalToJoin is false, membership is immediate; otherwise pending.
    */
-  public async joinGroup(groupId: string, userId: string): Promise<void> {
+  public async joinGroup(
+    groupId: string,
+    userId: string
+  ): Promise<{ groupId: string; groupName: string; status: 'joined' | 'pending' }> {
     const group = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group || group.deletedAt) {
-      throw new Error('Group not found');
+      throw Object.assign(new Error('Group not found'), { status: 404 });
     }
 
     const existing = await prisma.groupMember.findUnique({
@@ -1167,27 +1153,40 @@ export class GroupService {
       },
     });
     if (existing) {
-      if (existing.status === 'active') return; // Already a member
-      if (existing.status === 'pending') return; // Request already sent
+      if (existing.status === 'active') {
+        return { groupId, groupName: group.name, status: 'joined' };
+      }
+      if (existing.status === 'pending') {
+        return { groupId, groupName: group.name, status: 'pending' };
+      }
       if (existing.status === 'rejected') {
         const status = group.requireApprovalToJoin ? 'pending' : 'active';
         await prisma.groupMember.update({
           where: { groupId_userId: { groupId, userId } },
           data: { status },
         });
-        return;
-      }
-    } else {
-      const status = group.requireApprovalToJoin ? 'pending' : 'active';
-      await prisma.groupMember.create({
-        data: {
+        return {
           groupId,
-          userId,
-          role: 'member',
-          status,
-        },
-      });
+          groupName: group.name,
+          status: status === 'active' ? 'joined' : 'pending',
+        };
+      }
     }
+
+    const status = group.requireApprovalToJoin ? 'pending' : 'active';
+    await prisma.groupMember.create({
+      data: {
+        groupId,
+        userId,
+        role: 'member',
+        status,
+      },
+    });
+    return {
+      groupId,
+      groupName: group.name,
+      status: status === 'active' ? 'joined' : 'pending',
+    };
   }
 
   /**

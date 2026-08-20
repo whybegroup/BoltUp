@@ -10,7 +10,7 @@ import {
   Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker from './AppDateTimePicker';
 import { usePathname, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Colors, Fonts, Radius } from '../constants/theme';

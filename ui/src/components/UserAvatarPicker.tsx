@@ -2,7 +2,8 @@ import { type MutableRefObject } from 'react';
 import { View, Text, useWindowDimensions } from 'react-native';
 import { Colors, Fonts } from '../constants/theme';
 import { UserAvatar } from './UserAvatar';
-import ColorPicker, { ColorFormatsObject, HueSlider, OpacitySlider, Panel1 } from 'reanimated-color-picker';
+import { type ColorFormatsObject } from 'reanimated-color-picker';
+import { HsvaColorPicker } from './HsvaColorPicker';
 import type { PendingAvatarFile } from '../services/pickAndUploadImage';
 import { AvatarThumbnailField } from './AvatarThumbnailField';
 
@@ -61,15 +62,7 @@ export function UserAvatarPicker({
         <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>
           Choose background color
         </Text>
-        <ColorPicker
-          style={{ width: '100%' }}
-          value={pickerValue}
-          onCompleteJS={onChangeBackgroundColor}
-        >
-          <Panel1 />
-          <HueSlider />
-          <OpacitySlider />
-        </ColorPicker>
+        <HsvaColorPicker value={pickerValue} onComplete={onChangeBackgroundColor} />
       </View>
       <View
         style={{

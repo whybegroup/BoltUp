@@ -11,7 +11,7 @@ import {
   useGroupMemberNotifPrefs,
   useUpdateGroupMemberNotifPrefs,
 } from '../hooks/api';
-import ColorPicker, { Panel1, HueSlider, OpacitySlider } from 'reanimated-color-picker';
+import { HsvaColorPicker } from './HsvaColorPicker';
 
 const REMINDER_OPTIONS = ['Never', '1 hour before', '1 day before', '1 week before'] as const;
 
@@ -61,11 +61,10 @@ export function GroupMemberThemeAndNotifications({ groupId, userId, groupName }:
         </TouchableOpacity>
         {themeExpanded ? (
           <View style={styles.colorPickerWrap}>
-            <ColorPicker style={{ width: '100%' }} value={userColorHex} onCompleteJS={({ hex }) => void updateMemberColor.mutateAsync(hex)}>
-              <Panel1 />
-              <HueSlider />
-              <OpacitySlider />
-            </ColorPicker>
+            <HsvaColorPicker
+              value={userColorHex}
+              onComplete={({ hex }) => void updateMemberColor.mutateAsync(hex)}
+            />
             <Text style={styles.hexReadout}>{userColorHex.toUpperCase()}</Text>
           </View>
         ) : null}

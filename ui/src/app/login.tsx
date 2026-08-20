@@ -1,8 +1,23 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Platform, TextInput } from 'react-native';
-import { KeyboardFormRoot, KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
+import {
+  View,
+  Text,
+  Image,
+  ImageBackground,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  TextInput,
+  useWindowDimensions,
+  Modal,
+  Pressable,
+  Keyboard,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { signInWithGoogle, signInWithEmail, signUpWithEmail } from '../config/firebase';
+import { signInWithGoogle, signInWithEmail, signUpWithEmail, sendPasswordReset } from '../config/firebase';
 import { googleIosClientId, googleWebClientId } from '../config/googleAuth';
 import { signInWithGoogleIdTokenNative } from '../config/googleSignIn';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
@@ -22,6 +37,8 @@ function authErrorMessage(code: string | undefined): string | undefined {
     'auth/operation-not-allowed': 'Email/password sign-in is not enabled. Contact support.',
     'auth/popup-closed-by-user': 'Sign-in was cancelled',
     'auth/popup-blocked': 'Pop-up was blocked. Please allow pop-ups for this site.',
+    'auth/missing-email': 'Please enter your email address.',
+    'auth/too-many-requests': 'Too many attempts. Please try again later.',
   };
   return map[code];
 }
@@ -37,7 +54,8 @@ function nativeGoogleSignInHint(err: unknown): string | undefined {
 }
 
 export default function LoginScreen() {
-  const [mode, setMode] = useState<AuthMode>('signin');
+  const { width, height } = useWindowDimensions();
+  const [emailMode, setEmailMode] = useState<AuthMode | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -50,13 +68,47 @@ export default function LoginScreen() {
     else Alert.alert('Error', msg);
   };
 
+  const openEmail = (mode: AuthMode) => {
+    setEmailMode(mode);
+    setError('');
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  const closeEmail = () => {
+    if (loading) return;
+    setEmailMode(null);
+    setError('');
+  };
+
+  const handleForgotPassword = async () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      showError('Please enter your email address.');
+      return;
+    }
+    setError('');
+    setLoading(true);
+    try {
+      await sendPasswordReset(trimmedEmail);
+      const msg =
+        'If an account exists for that email, you will get a reset link shortly. Check spam, and use Continue with Google if you signed up with Google.';
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Check your email', msg);
+    } catch (err: any) {
+      showError(authErrorMessage(err?.code) ?? err?.message ?? 'Failed to send reset email');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleEmailAuth = async () => {
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password) {
       showError('Please enter email and password');
       return;
     }
-    if (mode === 'signup') {
+    if (emailMode === 'signup') {
       if (password.length < 6) {
         showError('Password must be at least 6 characters');
         return;
@@ -69,7 +121,7 @@ export default function LoginScreen() {
     setError('');
     setLoading(true);
     try {
-      if (mode === 'signup') {
+      if (emailMode === 'signup') {
         await signUpWithEmail(trimmedEmail, password);
       } else {
         await signInWithEmail(trimmedEmail, password);
@@ -137,156 +189,275 @@ export default function LoginScreen() {
     (!!googleWebClientId && (Platform.OS !== 'ios' || !!googleIosClientId));
 
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardFormRoot keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}>
-        <KeyboardSafeScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.header}>
-            <View style={styles.logoContainer}>
-              <Text style={styles.logo}>⚡</Text>
-            </View>
-            <Text style={styles.appName}>moijia</Text>
-            <Text style={styles.tagline}>Connect, plan, and hang out with your crew</Text>
-          </View>
-
-          <View style={styles.form}>
-            <View style={styles.toggleRow}>
-              <TouchableOpacity
-                onPress={() => { setMode('signin'); setError(''); }}
-                style={[styles.toggleBtn, mode === 'signin' && styles.toggleBtnActive]}
-              >
-                <Text style={[styles.toggleText, mode === 'signin' && styles.toggleTextActive]}>Sign in</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => { setMode('signup'); setError(''); }}
-                style={[styles.toggleBtn, mode === 'signup' && styles.toggleBtnActive]}
-              >
-                <Text style={[styles.toggleText, mode === 'signup' && styles.toggleTextActive]}>Sign up</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              placeholder="Email"
-              placeholderTextColor={Colors.textMuted}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              style={styles.input}
-              editable={!loading}
-            />
-            <TextInput
-              placeholder="Password"
-              placeholderTextColor={Colors.textMuted}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              style={styles.input}
-              editable={!loading}
-            />
-            {mode === 'signup' && (
-              <TextInput
-                placeholder="Confirm password"
-                placeholderTextColor={Colors.textMuted}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                style={styles.input}
-                editable={!loading}
-              />
+    <ImageBackground
+      source={require('../../assets/splash.png')}
+      style={[styles.container, { width, height }]}
+      resizeMode="cover"
+    >
+      <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
+        <View style={[styles.actions, { paddingTop: height * 0.48 }]}>
+          <TouchableOpacity
+            style={[styles.googleButton, (loading || !googleReady) && styles.buttonDisabled]}
+            onPress={handleGoogleSignIn}
+            disabled={loading || !googleReady}
+            activeOpacity={0.8}
+          >
+            {loading && !emailMode ? (
+              <ActivityIndicator color={Colors.text} />
+            ) : (
+              <>
+                <View style={styles.googleIcon}>
+                  <Text style={styles.googleIconText}>G</Text>
+                </View>
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
+              </>
             )}
+          </TouchableOpacity>
 
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-            <TouchableOpacity
-              style={[styles.emailButton, loading && styles.buttonDisabled]}
-              onPress={handleEmailAuth}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              {loading ? (
-                <ActivityIndicator color={Colors.accentFg} />
-              ) : (
-                <Text style={styles.emailButtonText}>{mode === 'signup' ? 'Create account' : 'Sign in'}</Text>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <TouchableOpacity
-              style={[styles.googleButton, (loading || !googleReady) && styles.buttonDisabled]}
-              onPress={handleGoogleSignIn}
-              disabled={loading || !googleReady}
-              activeOpacity={0.8}
-            >
-              <View style={styles.googleIcon}>
-                <Text style={styles.googleIconText}>G</Text>
-              </View>
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
-            </TouchableOpacity>
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
           </View>
+
+          <TouchableOpacity
+            style={[styles.emailButton, loading && styles.buttonDisabled]}
+            onPress={() => openEmail('signin')}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.emailButtonText}>Log in with email</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => openEmail('signup')}
+            disabled={loading}
+            activeOpacity={0.7}
+            style={loading && styles.buttonDisabled}
+          >
+            <Text style={styles.signupLink}>Sign up with email</Text>
+          </TouchableOpacity>
 
           <Text style={styles.disclaimer}>
             By continuing, you agree to our Terms of Service and Privacy Policy
           </Text>
-        </KeyboardSafeScrollView>
-      </KeyboardFormRoot>
-    </SafeAreaView>
+        </View>
+      </SafeAreaView>
+
+      <Modal
+        visible={emailMode != null}
+        transparent
+        animationType="slide"
+        onRequestClose={closeEmail}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.modalDismiss}
+            onPress={closeEmail}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          />
+          <View style={styles.modalCard}>
+            <Pressable style={styles.modalCardPress} onPress={Keyboard.dismiss}>
+            <View style={styles.modalTopBar}>
+              <TouchableOpacity
+                onPress={closeEmail}
+                disabled={loading}
+                style={styles.closeButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
+                <Ionicons name="close" size={22} color={Colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBrand}>
+              <Image
+                source={require('../../assets/favicon.png')}
+                style={styles.modalLogo}
+                accessibilityLabel="moijia"
+              />
+              <Text style={styles.sheetTitle}>
+                {emailMode === 'signup' ? 'Sign up' : 'Log in'}
+              </Text>
+            </View>
+
+            <View style={styles.sheetForm}>
+              <Text style={styles.fieldLabel}>Email</Text>
+              <TextInput
+                placeholder="Email"
+                placeholderTextColor={Colors.textMuted}
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                style={styles.input}
+                editable={!loading}
+              />
+              <Text style={styles.fieldLabel}>Password</Text>
+              <TextInput
+                placeholder="Password"
+                placeholderTextColor={Colors.textMuted}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                style={styles.input}
+                editable={!loading}
+              />
+              {emailMode === 'signup' && (
+                <>
+                  <Text style={styles.fieldLabel}>Confirm password</Text>
+                  <TextInput
+                    placeholder="Confirm password"
+                    placeholderTextColor={Colors.textMuted}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry
+                    style={styles.input}
+                    editable={!loading}
+                  />
+                </>
+              )}
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+              <TouchableOpacity
+                style={[styles.emailButton, loading && styles.buttonDisabled]}
+                onPress={handleEmailAuth}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                {loading ? (
+                  <ActivityIndicator color={Colors.accentFg} />
+                ) : (
+                  <Text style={styles.emailButtonText}>
+                    {emailMode === 'signup' ? 'Sign up' : 'Log in'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {emailMode === 'signin' && (
+                <TouchableOpacity
+                  onPress={handleForgotPassword}
+                  disabled={loading}
+                  activeOpacity={0.7}
+                  style={loading && styles.buttonDisabled}
+                >
+                  <Text style={styles.inlineLink}>Forgot password?</Text>
+                </TouchableOpacity>
+              )}
+
+              {emailMode === 'signin' ? (
+                <Text style={styles.footerPrompt}>
+                  Do not have an account yet?{' '}
+                  <Text
+                    style={styles.footerLink}
+                    onPress={() => openEmail('signup')}
+                  >
+                    Sign up
+                  </Text>
+                </Text>
+              ) : (
+                <Text style={styles.footerPrompt}>
+                  Already have an account?{' '}
+                  <Text
+                    style={styles.footerLink}
+                    onPress={() => openEmail('signin')}
+                  >
+                    Log in
+                  </Text>
+                </Text>
+              )}
+            </View>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.bg,
+    backgroundColor: '#FAFAF9',
   },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 24,
-    paddingTop: 40,
-    paddingBottom: 40,
+  safe: {
+    top: 100,
   },
-  header: {
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 32,
-  },
-  form: {
+  actions: {
+    paddingHorizontal: 24,
+    paddingBottom: 24,
     gap: 12,
-    marginBottom: 24,
   },
-  toggleRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  toggleBtn: {
+  modalRoot: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: Radius.lg,
+    backgroundColor: 'transparent',
+    justifyContent: 'flex-end',
+  },
+  modalDismiss: {
+    flex: 1,
+  },
+  modalCard: {
+    height: '92%',
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 24,
+  },
+  modalCardPress: {
+    flex: 1,
+  },
+  modalTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.surface,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  toggleBtnActive: {
-    borderColor: Colors.text,
-    backgroundColor: Colors.text,
+  modalBrand: {
+    alignItems: 'center',
+    marginBottom: 24,
+    gap: 8,
   },
-  toggleText: {
+  modalLogo: {
+    width: 64,
+    height: 64,
+  },
+  modalWordmark: {
+    fontSize: 22,
+    fontFamily: Fonts.extraBold,
+    color: Colors.text,
+    letterSpacing: -0.4,
+  },
+  sheetTitle: {
+    fontSize: 28,
+    fontFamily: Fonts.extraBold,
+    color: Colors.text,
+    textAlign: 'center',
+    letterSpacing: -0.6,
+    marginTop: 4,
+  },
+  sheetForm: {
+    gap: 10,
+    paddingBottom: 8,
+  },
+  fieldLabel: {
     fontSize: 14,
     fontFamily: Fonts.semiBold,
-    color: Colors.textSub,
-  },
-  toggleTextActive: {
-    color: Colors.accentFg,
+    color: Colors.text,
+    marginTop: 4,
   },
   input: {
     paddingVertical: 14,
@@ -310,11 +481,37 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     backgroundColor: Colors.accent,
     alignItems: 'center',
+    marginTop: 8,
   },
   emailButtonText: {
     fontSize: 16,
     fontFamily: Fonts.semiBold,
     color: Colors.accentFg,
+  },
+  signupLink: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+  },
+  inlineLink: {
+    fontSize: 14,
+    fontFamily: Fonts.semiBold,
+    color: '#2d668b',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  footerPrompt: {
+    paddingTop: 4,
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  footerLink: {
+    fontFamily: Fonts.semiBold,
+    color: '#2d668b',
   },
   divider: {
     flexDirection: 'row',
@@ -330,36 +527,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: Fonts.regular,
     color: Colors.textMuted,
-  },
-  logoContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: Colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-    ...Shadows.lg,
-  },
-  logo: {
-    fontSize: 56,
-  },
-  appName: {
-    fontSize: 36,
-    fontFamily: Fonts.extraBold,
-    color: Colors.text,
-    letterSpacing: -1,
-  },
-  tagline: {
-    fontSize: 16,
-    fontFamily: Fonts.regular,
-    color: Colors.textSub,
-    textAlign: 'center',
-    maxWidth: 280,
-    lineHeight: 24,
-  },
-  buttonContainer: {
-    gap: 16,
   },
   googleButton: {
     flexDirection: 'row',
@@ -403,5 +570,6 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     textAlign: 'center',
     lineHeight: 18,
+    marginTop: 8,
   },
 });

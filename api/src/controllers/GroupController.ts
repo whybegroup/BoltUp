@@ -277,6 +277,32 @@ export class GroupController extends Controller {
   }
 
   /**
+   * Join a group by id (from a shared event, poll, or post link)
+   * @summary Join or request to join a group
+   */
+  @Post('{id}/join')
+  @SuccessResponse('200', 'OK')
+  public async joinGroup(
+    @Path() id: string,
+    @Body() body: { userId: string }
+  ): Promise<{ success: boolean; groupId: string; groupName: string; status: 'joined' | 'pending' }> {
+    if (!body?.userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    try {
+      const result = await this.groupService.joinGroup(id, body.userId);
+      this.setStatus(200);
+      return { success: true, ...result };
+    } catch (e: any) {
+      if (e?.status === 404) {
+        throw httpError(404, e?.message || 'Group not found');
+      }
+      throw e;
+    }
+  }
+
+  /**
    * Leave a group
    * @summary Remove the current user from the group. Owner cannot leave.
    */

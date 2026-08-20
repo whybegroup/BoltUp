@@ -27,6 +27,7 @@ import { LocalUploadService } from './LocalUploadService';
 import { normalizeRecurrenceRule } from '../utils/recurrenceRuleValidate';
 import { listOccurrenceStartsForRule } from '../utils/recurrenceTruncate';
 import { utcInstantFromClient } from '../utils/utcInstantFromClient';
+import { notGroupMemberError } from '../utils/notGroupMemberError';
 import { seriesOccurrenceStartEndFromForm } from '../utils/seriesOccurrenceScheduleFromForm';
 
 const prisma = new PrismaClient();
@@ -341,7 +342,7 @@ export class EventService {
 
     if (!event) return null;
     if (userId && !(await this.userCanReadEvent(event, userId))) {
-      return null;
+      throw await notGroupMemberError(prisma, event.groupId, userId);
     }
     let recurrenceSeriesMemberCount: number | undefined;
     if (event.recurrenceSeriesId) {

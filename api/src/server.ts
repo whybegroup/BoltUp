@@ -50,7 +50,11 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
   const status = err.status || 500;
   const message = err.message || 'Internal Server Error';
-  res.status(status).json({ error: message });
+  const extra =
+    err.body && typeof err.body === 'object' && !Array.isArray(err.body)
+      ? err.body
+      : {};
+  res.status(status).json({ error: message, ...extra });
 });
 
 // 404 handler

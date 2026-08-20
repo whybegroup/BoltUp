@@ -20,6 +20,7 @@ import { usePathname, type Href } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { GroupsService, type GroupPost } from '@moijia/client';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { shareFromModal, sharePost } from '../utils/shareContent';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { queryKeys } from '../config/queryClient';
 import { COMMENT_THREAD_OPTIONS_MENU_WIDTH } from './ThreadedCommentsSection';
@@ -32,7 +33,7 @@ import {
   useGroups,
   useNotifications,
   useAllGroupMemberColors,
-  useGroupPosts,
+  useGroupPostsForGroups,
   useUsers,
 } from '../hooks/api';
 import { useCreateGroupPost } from '../hooks/api/useGroupPosts';
@@ -165,7 +166,10 @@ export function PostsListScreen() {
   );
   const { data: allUsers = [], refetch: refetchUsers } = useUsers();
   
-  const groups = allGroups.filter(g => g.membershipStatus === 'member' || g.membershipStatus === 'admin');
+  const groups = useMemo(
+    () => allGroups.filter((g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin'),
+    [allGroups],
+  );
   
   // Filter state
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
@@ -193,11 +197,8 @@ export function PostsListScreen() {
   const postMenuButtonRefs = useRef<Record<string, View | null>>({});
   const queryClient = useQueryClient();
 
-  // Fetch posts from all groups
-  const groupPostsQueries = groups.map(g => 
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useGroupPosts(g.id, currentUserId ?? '')
-  );
+  const groupIds = useMemo(() => groups.map((g) => g.id), [groups]);
+  const groupPostsQueries = useGroupPostsForGroups(groupIds, currentUserId ?? '');
 
   // Combine all posts from all groups
   const allPosts = useMemo(() => {
@@ -212,7 +213,7 @@ export function PostsListScreen() {
     return posts.sort((a, b) => 
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [groups, ...groupPostsQueries.map(q => q.data)]);
+  }, [groups, groupPostsQueries]);
 
   const { refreshControl } = usePullToRefresh([
     refetchGroups,
@@ -734,7 +735,6 @@ export function PostsListScreen() {
                 splitStoredPostBody(post.body || '');
               const joined = markdownSource.trim();
               const isEditing = editingPostId === post.id;
-              const canManage = canManagePost(post);
               
               return (
                 <View key={post.id} style={[styles.card, { marginBottom: 14 }]}>
@@ -768,19 +768,17 @@ export function PostsListScreen() {
                           <View style={[styles.postGroupDot, { backgroundColor: p.dot }]} />
                         </View>
                       </View>
-                      {canManage ? (
-                        <TouchableOpacity
-                          ref={(node) => {
-                            postMenuButtonRefs.current[post.id] = node;
-                          }}
-                          onPress={() => openPostMenu(post)}
-                          style={styles.postMenuBtn}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                          accessibilityLabel="Post options"
-                        >
-                          <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
-                        </TouchableOpacity>
-                      ) : null}
+                      <TouchableOpacity
+                        ref={(node) => {
+                          postMenuButtonRefs.current[post.id] = node;
+                        }}
+                        onPress={() => openPostMenu(post)}
+                        style={styles.postMenuBtn}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Post options"
+                      >
+                        <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
+                      </TouchableOpacity>
                     </View>
                     {isEditing ? (
                       <>
@@ -1089,7 +1087,7 @@ export function PostsListScreen() {
         </View>
       </Modal>
 
-      {postMenuTarget && postMenuPopoverLayout && (canEditMenuPost || canDeleteMenuPost) ? (
+      {postMenuTarget && postMenuPopoverLayout ? (
         <Modal
           visible
           transparent
@@ -1115,6 +1113,23 @@ export function PostsListScreen() {
               pointerEvents="box-none"
             >
               <View style={styles.postOptionsCard}>
+                <TouchableOpacity
+                  style={[
+                    styles.postOptionsRow,
+                    !canEditMenuPost && !canDeleteMenuPost && styles.postOptionsRowLast,
+                  ]}
+                  onPress={() => {
+                    const { postId, groupId } = postMenuTarget;
+                    const groupName = groups.find((g) => g.id === groupId)?.name;
+                    shareFromModal(
+                      () => setPostMenuTarget(null),
+                      () => sharePost(groupId, postId, groupName),
+                    );
+                  }}
+                >
+                  <Ionicons name="share-outline" size={20} color={Colors.text} />
+                  <Text style={styles.postOptionsLabel}>Share</Text>
+                </TouchableOpacity>
                 {canEditMenuPost ? (
                   <TouchableOpacity
                     style={[styles.postOptionsRow, !canDeleteMenuPost && styles.postOptionsRowLast]}

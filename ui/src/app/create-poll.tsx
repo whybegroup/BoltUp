@@ -21,7 +21,7 @@ import {
   Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker from '../components/AppDateTimePicker';
 import { useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import Toast from 'react-native-toast-message';

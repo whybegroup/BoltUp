@@ -9,7 +9,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker from './AppDateTimePicker';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';

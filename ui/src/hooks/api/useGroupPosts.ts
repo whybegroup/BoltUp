@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   GroupsService,
   type GroupPost,
@@ -12,6 +12,16 @@ export function useGroupPosts(groupId: string, userId: string) {
     queryKey: queryKeys.groups.posts(groupId, userId),
     queryFn: () => GroupsService.getGroupPosts(groupId, userId),
     enabled: !!groupId && !!userId,
+  });
+}
+
+export function useGroupPostsForGroups(groupIds: string[], userId: string) {
+  return useQueries({
+    queries: groupIds.map((groupId) => ({
+      queryKey: queryKeys.groups.posts(groupId, userId),
+      queryFn: () => GroupsService.getGroupPosts(groupId, userId),
+      enabled: !!groupId && !!userId,
+    })),
   });
 }
 

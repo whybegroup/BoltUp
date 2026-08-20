@@ -82,7 +82,7 @@ import { useCommentQuickReactions } from '../hooks/useCommentQuickReactions';
 import { uid, getNoResponseIds } from '../utils/api-helpers';
 import type { CommentInput, EventDetailed, GroupScoped, RSVP, User } from '@moijia/client';
 import { RSVPInput, MembershipStatus, EventUpdate } from '@moijia/client';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker from './AppDateTimePicker';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { ResolvableImage } from './ResolvableImage';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
@@ -101,6 +101,8 @@ import {
   isMissingQueryError,
   useMissingResourceAlert,
 } from '../hooks/useMissingResourceAlert';
+import { parseNotGroupMemberError } from '../utils/apiErrors';
+import { useShareLinkJoinPrompt } from '../hooks/useShareLinkJoinPrompt';
 import { LocationSuggestionCard } from './LocationSuggestionCard';
 import { resolvePlaceSuggestionDetails } from '../utils/locationSuggestions';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
@@ -125,6 +127,7 @@ import {
   endPreservingDuration,
 } from '../utils/datetimeUtc';
 import { SERIES_SCOPE_OPTIONS, type SeriesUpdateScope } from '../utils/seriesUpdateScopeOptions';
+import { shareEvent } from '../utils/shareContent';
 
 /** Must match API soft-delete text when an admin removes someone else's comment */
 const COMMENT_DELETED_BY_ADMIN_MSG = 'This message was deleted by admin';
@@ -381,6 +384,16 @@ export function EventDetailScreen({
 
   const eventGone = !!eventId && isMissingQueryError(eventIsError, eventError);
   useMissingResourceAlert('event', eventGone, dismiss);
+  const eventJoinInfo = eventIsError ? parseNotGroupMemberError(eventError) : null;
+  useShareLinkJoinPrompt({
+    kind: 'event',
+    userId: currentUserId,
+    joinInfo: eventJoinInfo,
+    onDismiss: dismiss,
+    onJoined: () => {
+      void refetchEvent();
+    },
+  });
 
   const { data: allUsers = [], refetch: refetchUsers } = useUsers();
   const { data: memberColorData, refetch: refetchMemberColor } = useGroupMemberColor(
@@ -1859,6 +1872,15 @@ export function EventDetailScreen({
 
   const eventToolbar = (
     <>
+      <TouchableOpacity
+        onPress={() => void shareEvent(eventId, displayEv.name)}
+        style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Share event"
+      >
+        <Ionicons name="share-outline" size={20} color={Colors.text} />
+      </TouchableOpacity>
       {currentUserId ? (
         <TouchableOpacity
           onPress={toggleEventWatch}

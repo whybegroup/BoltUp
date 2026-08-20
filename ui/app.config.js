@@ -13,6 +13,20 @@ const plugins = [
   'expo-font',
   'expo-web-browser',
   [
+    'expo-build-properties',
+    {
+      ios: {
+        extraPods: [
+          { name: 'GoogleUtilities', modular_headers: true },
+          { name: 'GoogleDataTransport', modular_headers: true },
+          { name: 'nanopb', modular_headers: true },
+          { name: 'PromisesObjC', modular_headers: true },
+        ],
+      },
+    },
+  ],
+  './plugins/withIosModularHeaders',
+  [
     'expo-notifications',
     {
       icon: './assets/favicon.png',
@@ -48,14 +62,16 @@ module.exports = {
     scheme: 'moijia',
     userInterfaceStyle: 'dark',
     splash: {
-      image: './assets/favicon.png',
+      image: './assets/splash.png',
       backgroundColor: '#FAFAF9',
       resizeMode: 'contain',
     },
     ios: {
       supportsTablet: false,
       bundleIdentifier: 'com.moijia.moijia',
+      appleTeamId: 'U25ANZD978',
       associatedDomains: ['applinks:moijia.com', 'applinks:moijia.com?mode=developer'],
+      useFrameworks: 'static',
     },
     android: {
       adaptiveIcon: {
@@ -64,6 +80,19 @@ module.exports = {
       package: 'com.moijia.moijia',
       /** Lets bottom sheets / modals shrink above the keyboard instead of covering inputs */
       softwareKeyboardLayoutMode: 'resize',
+      intentFilters: [
+        {
+          action: 'VIEW',
+          autoVerify: true,
+          data: [
+            { scheme: 'https', host: 'moijia.com', pathPrefix: '/join/' },
+            { scheme: 'https', host: 'moijia.com', pathPrefix: '/event/' },
+            { scheme: 'https', host: 'moijia.com', pathPrefix: '/poll/' },
+            { scheme: 'https', host: 'moijia.com', pathPrefix: '/groups/' },
+          ],
+          category: ['BROWSABLE', 'DEFAULT'],
+        },
+      ],
     },
     web: {
       bundler: 'metro',

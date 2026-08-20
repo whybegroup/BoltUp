@@ -230,6 +230,20 @@ export function useJoinByInviteCode() {
   });
 }
 
+export function useJoinGroup() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
+      GroupsService.joinGroup(groupId, { userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+      queryClient.invalidateQueries({ queryKey: ['polls'] });
+    },
+  });
+}
+
 export function useHandleMembershipRequest(id: string, userId: string) {
   const queryClient = useQueryClient();
 

@@ -1,12 +1,12 @@
-import { useMemo } from 'react';
-import { useLocalSearchParams } from 'expo-router';
-import { PollDetailScreen } from '../../components/PollDetailScreen';
+import { Redirect, useLocalSearchParams } from 'expo-router';
 import { firstSearchParam } from '../../utils/navigationReturn';
 
-export default function PollModalRoute() {
-  const { id: rawId, returnTo } = useLocalSearchParams<{ id?: string | string[]; returnTo?: string | string[] }>();
-  const pollId = useMemo(() => firstSearchParam(rawId), [rawId]);
-  const returnToParam = useMemo(() => firstSearchParam(returnTo), [returnTo]);
-  if (!pollId) return null;
-  return <PollDetailScreen variant="modal" pollId={pollId} returnToParam={returnToParam} />;
+/** `/poll/:id` deep links open the poll in the Polls tab. */
+export default function PollDetailRedirect() {
+  const params = useLocalSearchParams<{ id: string }>();
+  const pollId = firstSearchParam(params.id);
+  if (!pollId) {
+    return <Redirect href="/(tabs)/polls" />;
+  }
+  return <Redirect href={`/(tabs)/polls/${pollId}`} />;
 }

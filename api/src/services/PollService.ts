@@ -13,6 +13,7 @@ import type {
   PollWatchInput,
 } from '../models';
 import { NotificationService } from './NotificationService';
+import { notGroupMemberError } from '../utils/notGroupMemberError';
 
 const prisma = new PrismaClient();
 const notificationService = new NotificationService();
@@ -738,7 +739,9 @@ export class PollService {
       },
     });
     if (!row) return null;
-    if (!(await this.userCanAccessPoll(row, userId))) return null;
+    if (!(await this.userCanAccessPoll(row, userId))) {
+      throw await notGroupMemberError(prisma, row.groupId, userId);
+    }
     const mapped = this.mapPoll(row);
     const counts = await this.respondentCountsByPollIds([row.id]);
     return this.enrichWithViewerWatch({ ...mapped, respondentCount: counts[row.id] ?? 0 }, userId);

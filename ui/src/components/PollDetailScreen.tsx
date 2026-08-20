@@ -44,6 +44,8 @@ import {
   isMissingQueryError,
   useMissingResourceAlert,
 } from '../hooks/useMissingResourceAlert';
+import { parseNotGroupMemberError } from '../utils/apiErrors';
+import { useShareLinkJoinPrompt } from '../hooks/useShareLinkJoinPrompt';
 import Toast from 'react-native-toast-message';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 import {
@@ -59,6 +61,7 @@ import { PollOptionInputKind, type Poll, type PollQuestionResult, type PollResul
 import { ResolvableImage } from './ResolvableImage';
 import { UserAvatar } from './UserAvatar';
 import { getDefaultGroupThemeFromName, getGroupColor } from '../utils/helpers';
+import { sharePoll } from '../utils/shareContent';
 
 const MAX_OPTIONS_PER_QUESTION = 50;
 const POLL_SIDE_MARGIN = 20;
@@ -1175,6 +1178,16 @@ export function PollDetailScreen({
     !!id && isMissingQueryError(isError, pollError),
     dismiss
   );
+  const pollJoinInfo = isError ? parseNotGroupMemberError(pollError) : null;
+  useShareLinkJoinPrompt({
+    kind: 'poll',
+    userId,
+    joinInfo: pollJoinInfo,
+    onDismiss: dismiss,
+    onJoined: () => {
+      void refetchPoll();
+    },
+  });
 
   const onDeletePoll = useCallback(() => {
     if (!id || !userId) return;
@@ -1277,6 +1290,17 @@ export function PollDetailScreen({
               <Ionicons name="close" size={26} color={Colors.textSub} />
             </TouchableOpacity>
             <View style={{ flex: 1 }} />
+            {id ? (
+              <TouchableOpacity
+                onPress={() => void sharePoll(id, poll?.title ?? '')}
+                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Share poll"
+              >
+                <Ionicons name="share-outline" size={20} color={Colors.textSub} />
+              </TouchableOpacity>
+            ) : null}
             {userId ? (
               <TouchableOpacity
                 onPress={async () => {
@@ -1364,6 +1388,17 @@ export function PollDetailScreen({
                           <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
                         </TouchableOpacity>
                         <View style={styles.groupPollToolbar}>
+                          {id ? (
+                            <TouchableOpacity
+                              onPress={() => void sharePoll(id, poll.title)}
+                              style={styles.groupPollIconBtn}
+                              hitSlop={8}
+                              accessibilityRole="button"
+                              accessibilityLabel="Share poll"
+                            >
+                              <Ionicons name="share-outline" size={20} color={Colors.textSub} />
+                            </TouchableOpacity>
+                          ) : null}
                           {userId ? (
                             <TouchableOpacity
                               onPress={async () => {

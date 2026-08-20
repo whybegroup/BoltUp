@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import { type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { shareFromModal, sharePost } from '../utils/shareContent';
+import { useShareLinkJoinPrompt } from '../hooks/useShareLinkJoinPrompt';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
@@ -390,17 +392,51 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const { data: commentQuickReactions = [...DEFAULT_COMMENT_QUICK_REACTIONS_LIST] } =
     useCommentQuickReactions(currentUserId);
 
-  useMissingGroupRedirect(isError, groupError, group?.membershipStatus, '/(tabs)/groups');
+  useMissingGroupRedirect(
+    isError,
+    groupError,
+    focusPostId ? undefined : group?.membershipStatus,
+    '/(tabs)/groups'
+  );
 
   useEffect(() => {
+    if (focusPostId) return;
     if (group?.membershipStatus === 'pending') {
       router.replace(`/(tabs)/groups/${groupId}` as Href);
     }
-  }, [group?.membershipStatus, groupId, router]);
+  }, [focusPostId, group?.membershipStatus, groupId, router]);
+
+  const isActiveMember =
+    group?.membershipStatus === 'member' || group?.membershipStatus === 'admin';
+  const postJoinInfo =
+    focusPostId && group && !isActiveMember
+      ? {
+          groupId,
+          groupName: group.name,
+          membershipStatus: (group.membershipStatus === 'pending' ? 'pending' : 'none') as
+            | 'pending'
+            | 'none',
+          requireApprovalToJoin: group.requireApprovalToJoin ?? true,
+        }
+      : null;
+  useShareLinkJoinPrompt({
+    kind: 'post',
+    userId: currentUserId,
+    joinInfo: postJoinInfo,
+    onDismiss: () => {
+      if (router.canGoBack()) router.back();
+      else router.replace('/(tabs)/groups' as Href);
+    },
+    onJoined: () => {
+      void refetchGroup();
+      void refetchPosts();
+    },
+  });
 
   const postGone =
     !!focusPostId &&
     !!group &&
+    isActiveMember &&
     !isMissingQueryError(isError, groupError) &&
     postsFetched &&
     !postsLoading &&
@@ -925,6 +961,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     () => (postMenuTarget ? posts.find((p) => p.id === postMenuTarget.postId) ?? null : null),
     [postMenuTarget, posts]
   );
+  const canEditMenuPost = !!(postMenuTargetPost && postMenuTargetPost.userId === currentUserId);
 
   const postMenuPopoverLayout = useMemo(() => {
     if (!postMenuTarget) return null;
@@ -1763,19 +1800,17 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                       </TouchableOpacity>
                     ) : null}
                   </View>
-                  {post.userId === currentUserId ? (
-                    <TouchableOpacity
-                      ref={(node) => {
-                        postMenuButtonRefs.current[post.id] = node;
-                      }}
-                      onPress={() => openPostMenu(post)}
-                      style={styles.postMenuBtn}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      accessibilityLabel="Post options"
-                    >
-                      <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
-                    </TouchableOpacity>
-                  ) : null}
+                  <TouchableOpacity
+                    ref={(node) => {
+                      postMenuButtonRefs.current[post.id] = node;
+                    }}
+                    onPress={() => openPostMenu(post)}
+                    style={styles.postMenuBtn}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel="Post options"
+                  >
+                    <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
+                  </TouchableOpacity>
                 </View>
                 {editingPostId === post.id ? (
                   forumComposerFields('edit')
@@ -2092,26 +2127,44 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
             >
               <View style={styles.postOptionsCard}>
                 <TouchableOpacity
-                  style={styles.postOptionsRow}
-                  onPress={() => {
-                    setPostMenuTarget(null);
-                    if (postMenuTargetPost) beginEditPost(postMenuTargetPost);
-                  }}
-                >
-                  <Ionicons name="create-outline" size={20} color={Colors.text} />
-                  <Text style={styles.postOptionsLabel}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.postOptionsRow, styles.postOptionsRowLast]}
+                  style={[styles.postOptionsRow, !canEditMenuPost && styles.postOptionsRowLast]}
                   onPress={() => {
                     const id = postMenuTarget.postId;
-                    setPostMenuTarget(null);
-                    confirmDeletePost(id);
+                    const name = group?.name;
+                    shareFromModal(
+                      () => setPostMenuTarget(null),
+                      () => sharePost(groupId, id, name),
+                    );
                   }}
                 >
-                  <Ionicons name="trash-outline" size={20} color={Colors.notGoing} />
-                  <Text style={[styles.postOptionsLabel, styles.postOptionsLabelDanger]}>Delete</Text>
+                  <Ionicons name="share-outline" size={20} color={Colors.text} />
+                  <Text style={styles.postOptionsLabel}>Share</Text>
                 </TouchableOpacity>
+                {canEditMenuPost ? (
+                  <TouchableOpacity
+                    style={styles.postOptionsRow}
+                    onPress={() => {
+                      setPostMenuTarget(null);
+                      if (postMenuTargetPost) beginEditPost(postMenuTargetPost);
+                    }}
+                  >
+                    <Ionicons name="create-outline" size={20} color={Colors.text} />
+                    <Text style={styles.postOptionsLabel}>Edit</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {canEditMenuPost ? (
+                  <TouchableOpacity
+                    style={[styles.postOptionsRow, styles.postOptionsRowLast]}
+                    onPress={() => {
+                      const id = postMenuTarget.postId;
+                      setPostMenuTarget(null);
+                      confirmDeletePost(id);
+                    }}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={Colors.notGoing} />
+                    <Text style={[styles.postOptionsLabel, styles.postOptionsLabelDanger]}>Delete</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             </View>
           </View>

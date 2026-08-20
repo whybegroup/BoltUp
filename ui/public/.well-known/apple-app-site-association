@@ -4,7 +4,19 @@
     "details": [
       {
         "appID": "U25ANZD978.com.moijia.moijia",
-        "paths": ["/join/*"]
+        "paths": [
+          "/join/*",
+          "/event/*",
+          "/poll/*",
+          "/groups/*"
+        ],
+        "appIDs": ["U25ANZD978.com.moijia.moijia"],
+        "components": [
+          { "/": "/join/*" },
+          { "/": "/event/*" },
+          { "/": "/poll/*" },
+          { "/": "/groups/*" }
+        ]
       }
     ]
   }

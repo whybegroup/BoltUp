@@ -1084,28 +1084,31 @@ export function CalendarView({
           {scopeMenuPosition ? (
             <View
               style={[
-                styles.modalMenuWrap,
+                styles.scopeMenu,
                 {
                   top: scopeMenuPosition.top,
                   left: scopeMenuPosition.left,
                   width: scopeMenuPosition.width,
                 },
               ]}
-              pointerEvents="box-none"
             >
-            <View style={styles.scopeMenu}>
               {SCOPE_OPTIONS.map(({ key, label }, i) => (
-                <TouchableOpacity
+                <Pressable
                   key={key}
-                  style={[
+                  style={({ pressed }) => [
                     styles.scopeMenuItem,
                     i === SCOPE_OPTIONS.length - 1 && styles.scopeMenuItemLast,
                     scopeMode === key && styles.scopeMenuItemActive,
+                    pressed && scopeMode !== key && styles.scopeMenuItemPressed,
                   ]}
                   onPress={() => {
                     setScopeMode(key);
                     closeScopeMenu();
                   }}
+                  android_ripple={{ color: 'rgba(24, 24, 27, 0.14)' }}
+                  accessibilityRole="button"
+                  accessibilityLabel={label}
+                  accessibilityState={{ selected: scopeMode === key }}
                 >
                   <Text style={[styles.scopeMenuItemText, scopeMode === key && styles.scopeMenuItemTextActive]}>
                     {label}
@@ -1113,9 +1116,8 @@ export function CalendarView({
                   {scopeMode === key ? (
                     <Ionicons name="checkmark" size={18} color={Colors.accentFg} />
                   ) : null}
-                </TouchableOpacity>
+                </Pressable>
               ))}
-            </View>
             </View>
           ) : null}
         </View>
@@ -1579,12 +1581,10 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: Colors.overlay,
   },
-  modalMenuWrap: {
-    position: 'absolute',
-    zIndex: 10,
-  },
   scopeMenu: {
-    width: '100%',
+    position: 'absolute',
+    zIndex: 20,
+    elevation: 24,
     minWidth: 168,
     backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
@@ -1595,7 +1595,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.12,
     shadowRadius: 12,
-    elevation: 8,
   },
   scopeMenuItem: {
     flexDirection: 'row',
@@ -1611,6 +1610,9 @@ const styles = StyleSheet.create({
   },
   scopeMenuItemActive: {
     backgroundColor: Colors.accent,
+  },
+  scopeMenuItemPressed: {
+    backgroundColor: '#E4E4E7',
   },
   scopeMenuItemText: {
     fontSize: 15,

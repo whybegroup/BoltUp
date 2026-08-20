@@ -7,6 +7,7 @@ import {
   signInWithPopup,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   browserLocalPersistence,
@@ -140,6 +141,11 @@ export const signInWithEmail = async (email: string, password: string) => {
 export const signUpWithEmail = async (email: string, password: string) => {
   const result = await createUserWithEmailAndPassword(auth, email.trim(), password);
   return result.user;
+};
+
+export const sendPasswordReset = async (email: string) => {
+  auth.useDeviceLanguage();
+  await sendPasswordResetEmail(auth, email.trim());
 };
 
 export const signOut = async () => {
