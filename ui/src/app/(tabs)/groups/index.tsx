@@ -4,7 +4,6 @@ import {
   useMemo,
   useEffect,
   useRef,
-  type ReactNode,
 } from 'react';
 import {
   View,
@@ -37,46 +36,6 @@ import type { GroupScoped } from '@moijia/client';
 
 const groupsListPanGesture = Gesture.Pan().activateAfterLongPress(520);
 
-function DragHandle({
-  drag,
-  disabled,
-  label,
-}: {
-  drag: () => void;
-  disabled?: boolean;
-  label: string;
-}) {
-  return (
-    <Pressable
-      onLongPress={Platform.OS === 'web' ? undefined : drag}
-      onPressIn={Platform.OS === 'web' ? () => !disabled && drag() : undefined}
-      disabled={disabled}
-      style={styles.dragHandle}
-      delayLongPress={120}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Ionicons name="reorder-three" size={22} color={Colors.textMuted} />
-    </Pressable>
-  );
-}
-
-function GroupRowBody({
-  onPress,
-  disabled,
-  children,
-}: {
-  onPress: () => void;
-  disabled?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <Pressable onPress={onPress} disabled={disabled} style={styles.rowBody}>
-      {children}
-    </Pressable>
-  );
-}
-
 type ActiveGroupRowProps = {
   group: GroupScoped;
   groupColors: Record<string, string>;
@@ -107,12 +66,20 @@ function ActiveGroupRow({
   }).length;
 
   return (
-    <View
+    <Pressable
+      onPress={isActive ? undefined : () => onOpenGroup(g.id)}
+      onLongPress={isActive ? undefined : drag}
+      delayLongPress={120}
       style={[styles.groupItemCard, isActive && styles.groupItemCardDragging, isActive && Shadows.sm]}
+      accessibilityRole="button"
+      accessibilityLabel={g.name}
+      accessibilityHint="Hold and drag to reorder"
     >
       <View style={styles.row}>
-        <DragHandle drag={drag} disabled={isActive} label={`Reorder ${g.name}`} />
-        <GroupRowBody onPress={() => onOpenGroup(g.id)} disabled={isActive}>
+        <View style={styles.dragHandle} pointerEvents="none">
+          <Ionicons name="reorder-three" size={22} color={Colors.textMuted} />
+        </View>
+        <View style={styles.rowBody}>
           <View style={[styles.groupIconOuter, { backgroundColor: p.cal }]}>
             <View style={styles.groupIconInner}>
               <GroupAvatar seed={g.avatarSeed} thumbnail={g.thumbnail} name={g.name} size={44} />
@@ -151,16 +118,16 @@ function ActiveGroupRow({
             )}
             <Text style={{ color: Colors.textMuted, fontSize: 18 }}>›</Text>
           </View>
-        </GroupRowBody>
+        </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 export default function GroupsScreen() {
   const router = useRouter();
   const { userId: currentUserId } = useCurrentUserContext();
-  const isDraggingRef = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const { listGroups, refetch: refetchGroups } = useListGroups(currentUserId ?? '', true);
   const recoverGroup = useRecoverGroup(currentUserId ?? '');
@@ -172,30 +139,29 @@ export default function GroupsScreen() {
   const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(
     currentUserId || ''
   );
-  const { refreshControl } = usePullToRefresh([refetchGroups, refetchEvents, refetchGroupColors]);
+  const { refreshControl } = usePullToRefresh(
+    [refetchGroups, refetchEvents, refetchGroupColors],
+    { enabled: !isDragging }
+  );
 
   const activeGroups = useMemo(() => listGroups.filter((g) => !g.deletedAt), [listGroups]);
   const deletedGroups = useMemo(() => listGroups.filter((g) => g.deletedAt), [listGroups]);
   const [orderedActiveGroups, setOrderedActiveGroups] = useState<GroupScoped[]>([]);
 
   useEffect(() => {
-    if (isDraggingRef.current) return;
+    if (isDragging) return;
     setOrderedActiveGroups(activeGroups);
-  }, [activeGroups]);
-
-  const setDragging = useCallback((dragging: boolean) => {
-    isDraggingRef.current = dragging;
-  }, []);
+  }, [activeGroups, isDragging]);
 
   const handleDragStart = useCallback(() => {
     'worklet';
-    runOnJS(setDragging)(true);
-  }, [setDragging]);
+    runOnJS(setIsDragging)(true);
+  }, []);
 
   const handleDragEnd = useCallback(() => {
     'worklet';
-    runOnJS(setDragging)(false);
-  }, [setDragging]);
+    runOnJS(setIsDragging)(false);
+  }, []);
 
   const handleRecover = async (groupId: string) => {
     try {

@@ -44,7 +44,8 @@ export function EventScopeChrome({ subpage, fromEventId }: EventScopeChromeProps
   const showDetailActions =
     subpage.kind === 'event-detail' ||
     subpage.kind === 'group-event-detail' ||
-    subpage.kind === 'group-poll-detail';
+    subpage.kind === 'group-poll-detail' ||
+    subpage.kind === 'group-overview';
   const createAction =
     subpage.kind === 'all-events'
       ? { mode: 'event' as const, groupId: undefined as string | undefined }

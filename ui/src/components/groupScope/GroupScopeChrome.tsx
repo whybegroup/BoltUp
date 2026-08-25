@@ -71,7 +71,8 @@ export function GroupScopeChrome({ groupId }: GroupScopeChromeProps) {
     [allGroupsForChrome]
   );
   const { headerTrailing } = useGroupScopeHeaderSlot();
-  const showDetailActions = subpage.kind === 'poll' || subpage.kind === 'event';
+  const showDetailActions =
+    subpage.kind === 'poll' || subpage.kind === 'event' || subpage.kind === 'overview';
   const createAction = !groupId
     ? { mode: 'group' as const, groupId: undefined as string | undefined }
     : subpage.kind === 'events'

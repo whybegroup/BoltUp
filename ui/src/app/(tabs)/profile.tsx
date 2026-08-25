@@ -490,14 +490,28 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionLabel}>NOTIFICATIONS (ALL GROUPS)</Text>
-        <Text style={styles.sectionHint}>
-          Notifications are sent only when the same category is enabled here and in that group&apos;s settings.
-        </Text>
-        <View style={[styles.card, { marginBottom: 20 }]}>
-          <View style={styles.notifSection}>
-            {user.notifPrefs ? (
-              <>
+        {user.notifPrefs ? (
+          <>
+            <Text style={styles.sectionLabel}>GROUP NOTIFICATIONS</Text>
+            <View style={[styles.card, styles.notifCard]}>
+              <View style={styles.notifSection}>
+                <Toggle
+                  value={user.notifPrefs.groupAnnouncement}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { groupAnnouncement: v } })}
+                  label="Announcements"
+                />
+                <Toggle
+                  value={user.notifPrefs.groupMembership}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { groupMembership: v } })}
+                  label="Membership updates (e.g. approvals)"
+                  style={{ borderBottomWidth: 0 }}
+                />
+              </View>
+            </View>
+
+            <Text style={styles.sectionLabel}>EVENT NOTIFICATIONS</Text>
+            <View style={[styles.card, styles.notifCard]}>
+              <View style={styles.notifSection}>
                 <Toggle
                   value={user.notifPrefs.newEvent}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { newEvent: v } })}
@@ -506,75 +520,35 @@ export default function ProfileScreen() {
                 <Toggle
                   value={user.notifPrefs.minAttendees}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { minAttendees: v } })}
-                  label="Event min attendees / waitlist"
+                  label="Min attendees / waitlist"
                 />
                 <Toggle
                   value={user.notifPrefs.onLocation}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onLocation: v } })}
-                  label="Event location changes"
+                  label="Location changes"
                 />
                 <Toggle
                   value={user.notifPrefs.onTime}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onTime: v } })}
-                  label="Event time changes"
+                  label="Time changes"
                 />
                 <Toggle
                   value={user.notifPrefs.onRsvp}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onRsvp: v } })}
-                  label="Event RSVP updates"
+                  label="RSVP updates"
                 />
                 <Toggle
                   value={user.notifPrefs.comments}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { comments: v } })}
-                  label="Event comments"
+                  label="Comments"
                 />
                 <Toggle
                   value={user.notifPrefs.mentions}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { mentions: v } })}
-                  label="Event comment mentions"
-                />
-                <Toggle
-                  value={user.notifPrefs.newPoll}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { newPoll: v } })}
-                  label="New poll alerts"
-                />
-                <Toggle
-                  value={user.notifPrefs.onPollEdit}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onPollEdit: v } })}
-                  label="Poll edits"
-                />
-                <Toggle
-                  value={user.notifPrefs.onPollResponse}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onPollResponse: v } })}
-                  label="Poll responses"
-                />
-                <Toggle
-                  value={user.notifPrefs.onPollSuggestion}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onPollSuggestion: v } })}
-                  label="Poll option suggestions"
-                />
-                <Toggle
-                  value={user.notifPrefs.groupAnnouncement}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { groupAnnouncement: v } })}
-                  label="Group announcements"
-                />
-                <Toggle
-                  value={user.notifPrefs.postComments}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { postComments: v } })}
-                  label="Comments on your posts"
-                />
-                <Toggle
-                  value={user.notifPrefs.postReactions}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { postReactions: v } })}
-                  label="Reactions on your posts"
-                />
-                <Toggle
-                  value={user.notifPrefs.groupMembership}
-                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { groupMembership: v } })}
-                  label="Group membership updates (e.g. approvals)"
+                  label="Comment mentions"
                 />
                 <View style={styles.reminderRow}>
-                  <Text style={styles.reminderLabel}>Event reminder</Text>
+                  <Text style={styles.reminderLabel}>Reminder</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
                     {REMINDER_OPTIONS.map((opt) => (
                       <TouchableOpacity
@@ -597,14 +571,60 @@ export default function ProfileScreen() {
                     ))}
                   </ScrollView>
                 </View>
-              </>
-            ) : (
-              <View style={[styles.notifSection, { alignItems: 'center', paddingVertical: 24 }]}>
-                <ActivityIndicator color={Colors.accent} />
               </View>
-            )}
+            </View>
+
+            <Text style={styles.sectionLabel}>POLL NOTIFICATIONS</Text>
+            <View style={[styles.card, styles.notifCard]}>
+              <View style={styles.notifSection}>
+                <Toggle
+                  value={user.notifPrefs.newPoll}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { newPoll: v } })}
+                  label="New poll alerts"
+                />
+                <Toggle
+                  value={user.notifPrefs.onPollEdit}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onPollEdit: v } })}
+                  label="Edits"
+                />
+                <Toggle
+                  value={user.notifPrefs.onPollResponse}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onPollResponse: v } })}
+                  label="Responses"
+                />
+                <Toggle
+                  value={user.notifPrefs.onPollSuggestion}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { onPollSuggestion: v } })}
+                  label="Option suggestions"
+                  style={{ borderBottomWidth: 0 }}
+                />
+              </View>
+            </View>
+
+            <Text style={styles.sectionLabel}>POST NOTIFICATIONS</Text>
+            <View style={[styles.card, styles.notifCard]}>
+              <View style={styles.notifSection}>
+                <Toggle
+                  value={user.notifPrefs.postComments}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { postComments: v } })}
+                  label="Comments on your posts"
+                />
+                <Toggle
+                  value={user.notifPrefs.postReactions}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { postReactions: v } })}
+                  label="Reactions on your posts"
+                  style={{ borderBottomWidth: 0 }}
+                />
+              </View>
+            </View>
+          </>
+        ) : (
+          <View style={[styles.card, styles.notifCard]}>
+            <View style={[styles.notifSection, { alignItems: 'center', paddingVertical: 24 }]}>
+              <ActivityIndicator color={Colors.accent} />
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Sign out */}
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
@@ -651,11 +671,12 @@ const styles = StyleSheet.create({
   header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: Layout.tabHeaderMinHeight, paddingHorizontal: 20, paddingVertical: 12, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
   headerTitleRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },
   title:            { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text },
-  sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
+  sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
   sectionHint:      { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: -6, marginBottom: 10, lineHeight: 17 },
   card:             { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
-  notifSection:     { padding: 16 },
-  reminderRow:      { paddingVertical: 10, marginTop: 8 },
+  notifCard:        { marginBottom: 16 },
+  notifSection:     { paddingVertical: 4, paddingHorizontal: 12 },
+  reminderRow:      { paddingVertical: 10, marginTop: 4 },
   reminderLabel:    { fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, marginBottom: 8 },
   reminderChip:     { paddingHorizontal: 12, paddingVertical: 5, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border },
   reminderChipActive:{ borderColor: Colors.accent, backgroundColor: Colors.accent },

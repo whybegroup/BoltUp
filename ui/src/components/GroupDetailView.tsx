@@ -62,6 +62,7 @@ import {
 import { withReturnTo } from '../utils/navigationReturn';
 import { groupInviteLink } from '../utils/inviteLink';
 import { shareGroupInvite } from '../utils/shareContent';
+import { ChromeHeaderTrailingRow, DetailActionIcon, RegisterChromeHeader } from './chromeHeaderSlot';
 
 const AVATAR_SIZE = 56;
 
@@ -502,6 +503,45 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     await shareGroupInvite(inviteCode, { name: group.name, description: group.desc });
   };
 
+  const palette = getGroupColor(memberColorData?.colorHex || getDefaultGroupThemeFromName(group.name));
+  const groupToolbar = (
+    <>
+      {!isPending && inviteCode ? (
+        <DetailActionIcon
+          placement="chrome"
+          onPress={() => setInviteSheetOpen(true)}
+          accessibilityLabel="Share group"
+        >
+          <Ionicons name="share-outline" size={18} color={Colors.text} />
+        </DetailActionIcon>
+      ) : null}
+      {canEditMain ? (
+        <DetailActionIcon
+          placement="chrome"
+          onPress={() =>
+            router.push(
+              withReturnTo(`/create-group?editId=${encodeURIComponent(groupId)}`, pathname)
+            )
+          }
+          accessibilityLabel="Edit group"
+        >
+          <Ionicons name="create-outline" size={18} color={Colors.text} />
+        </DetailActionIcon>
+      ) : null}
+      {canOpenGroupSettings ? (
+        <DetailActionIcon
+          placement="chrome"
+          onPress={() =>
+            router.push(buildGroupSettingsUrl(groupId, { isInEventsTab, fromEventId }))
+          }
+          accessibilityLabel="Group settings"
+        >
+          <Ionicons name="settings-outline" size={18} color={Colors.text} />
+        </DetailActionIcon>
+      ) : null}
+    </>
+  );
+
   const confirmRegenerateInviteCode = () => {
     const run = () => {
       regenerateInviteCodeMutation.mutate(undefined, {
@@ -792,49 +832,6 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
                   />
                 </View>
               )}
-              <View style={styles.groupProfileTrailing}>
-                {!isPending && inviteCode ? (
-                  <TouchableOpacity
-                    onPress={() => setInviteSheetOpen(true)}
-                    style={styles.groupProfileEditBtn}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Invite people"
-                  >
-                    <Ionicons name="person-add-outline" size={20} color={Colors.text} />
-                  </TouchableOpacity>
-                ) : null}
-                {canEditMain ? (
-                  <View style={styles.groupProfileEditActions}>
-                    <TouchableOpacity
-                      onPress={() =>
-                        router.push(
-                          withReturnTo(`/create-group?editId=${encodeURIComponent(groupId)}`, pathname)
-                        )
-                      }
-                      style={styles.groupProfileEditBtn}
-                      hitSlop={8}
-                      accessibilityRole="button"
-                      accessibilityLabel="Edit group"
-                    >
-                      <Ionicons name="create-outline" size={20} color={Colors.text} />
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
-                {canOpenGroupSettings ? (
-              <TouchableOpacity
-                onPress={() =>
-                  router.push(buildGroupSettingsUrl(groupId, { isInEventsTab, fromEventId }))
-                }
-                style={styles.groupProfileEditBtn}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Group settings"
-                  >
-                    <Ionicons name="settings-outline" size={20} color={Colors.text} />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
             </View>
             {canEditMain && editingGroupProfile ? (
               <View style={styles.groupEditFieldBlock}>
@@ -1304,7 +1301,15 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     </>
   );
 
-  return <View style={styles.page}>{scrollAndOverlays}</View>;
+  return (
+    <View style={styles.page}>
+      <RegisterChromeHeader
+        trailing={<ChromeHeaderTrailingRow>{groupToolbar}</ChromeHeaderTrailingRow>}
+        theme={{ backgroundColor: palette.row, borderBottomColor: palette.label }}
+      />
+      {scrollAndOverlays}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -1323,28 +1328,7 @@ const styles = StyleSheet.create({
   groupProfileTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     marginBottom: 10,
-  },
-  groupProfileTrailing: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexShrink: 0,
-    gap: 2,
-  },
-  groupProfileEditActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexShrink: 0,
-    marginRight: -2,
-  },
-  groupProfileEditBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 0,
   },
   requiredMark: { color: Colors.todayRed, fontFamily: Fonts.semiBold },
   groupEditFieldBlock: { marginBottom: 12 },
