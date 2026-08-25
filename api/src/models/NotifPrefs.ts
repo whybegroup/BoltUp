@@ -10,6 +10,10 @@ export interface NotifPrefs {
   onRsvp: boolean;
   comments: boolean;
   mentions: boolean;
+  newPoll: boolean;
+  onPollEdit: boolean;
+  onPollResponse: boolean;
+  onPollSuggestion: boolean;
   groupMembership: boolean;
   eventReminder: string;
 }

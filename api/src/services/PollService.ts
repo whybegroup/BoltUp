@@ -153,6 +153,91 @@ export class PollService {
     return poll.createdBy === userId;
   }
 
+  private async getActiveGroupMemberIds(groupId: string): Promise<string[]> {
+    const members = await prisma.groupMember.findMany({
+      where: { groupId, status: 'active' },
+      select: { userId: true },
+    });
+    return members.map((m) => m.userId);
+  }
+
+  /** Poll creator (by default) plus anyone with an explicit watch-on row. */
+  private async getUserIdsWatchingPoll(pollId: string): Promise<string[]> {
+    const poll = await prisma.poll.findUnique({
+      where: { id: pollId },
+      select: { createdBy: true },
+    });
+    if (!poll) return [];
+    let watchRows: Array<{ userId: string; watching: boolean }> = [];
+    try {
+      watchRows = await prisma.pollWatch.findMany({
+        where: { pollId },
+        select: { userId: true, watching: true },
+      });
+    } catch (err) {
+      if (!this.isMissingPollWatchTableError(err)) throw err;
+    }
+    const rowByUser = new Map(watchRows.map((r) => [r.userId, r.watching]));
+    const candidateIds = new Set<string>([poll.createdBy]);
+    for (const r of watchRows) candidateIds.add(r.userId);
+    const watching: string[] = [];
+    for (const uid of candidateIds) {
+      const explicit = rowByUser.get(uid);
+      const effective = explicit !== undefined ? explicit : this.defaultWatching(poll, uid);
+      if (effective) watching.push(uid);
+    }
+    return watching;
+  }
+
+  private async notifyActiveGroupMembers(
+    groupId: string,
+    excludeUserId: string,
+    title: string,
+    body: string,
+    options: { type: string; icon: string; pollId: string },
+  ): Promise<void> {
+    const ids = (await this.getActiveGroupMemberIds(groupId)).filter((uid) => uid !== excludeUserId);
+    if (ids.length === 0) return;
+    await notificationService
+      .createForUsers(ids, title, body, {
+        type: options.type,
+        icon: options.icon,
+        groupId,
+        pollId: options.pollId,
+        dest: 'poll',
+      })
+      .catch(() => undefined);
+  }
+
+  private async notifyPollFollowers(
+    pollId: string,
+    groupId: string,
+    excludeUserId: string,
+    title: string,
+    body: string,
+    options: { type: string; icon: string },
+  ): Promise<void> {
+    const ids = (await this.getUserIdsWatchingPoll(pollId)).filter((uid) => uid !== excludeUserId);
+    if (ids.length === 0) return;
+    await notificationService
+      .createForUsers(ids, title, body, {
+        type: options.type,
+        icon: options.icon,
+        groupId,
+        pollId,
+        dest: 'poll',
+      })
+      .catch(() => undefined);
+  }
+
+  private async displayNameForUser(userId: string): Promise<string> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, name: true },
+    });
+    return user?.displayName || user?.name || 'Someone';
+  }
+
   private async enrichWithViewerWatch(poll: Poll, userId: string): Promise<Poll> {
     const defaultWatch = this.defaultWatching(poll, userId);
     try {
@@ -412,6 +497,14 @@ export class PollService {
         closer: { select: { id: true, displayName: true, name: true } },
       },
     });
+
+    void this.notifyActiveGroupMembers(
+      row.groupId,
+      createdBy,
+      'New Poll Created',
+      `“${row.title.trim()}”`,
+      { type: 'poll_created', icon: '📊', pollId: row.id },
+    );
 
     return this.mapPoll(row);
   }
@@ -725,6 +818,14 @@ export class PollService {
       return updated;
     });
 
+    void this.notifyActiveGroupMembers(
+      row.groupId,
+      actorUserId,
+      'Poll updated',
+      `“${row.title.trim()}” was updated`,
+      { type: 'poll_updated', icon: '✏️', pollId: row.id },
+    );
+
     return this.mapPoll(row);
   }
 
@@ -892,6 +993,12 @@ export class PollService {
       return !!q && q.type === 'text';
     });
 
+    const [priorVote, priorText] = await Promise.all([
+      prisma.pollOptionVote.findFirst({ where: { pollId, userId }, select: { id: true } }),
+      prisma.pollTextAnswer.findFirst({ where: { pollId, userId }, select: { id: true } }),
+    ]);
+    const isUpdate = !!(priorVote || priorText);
+
     await prisma.$transaction(async (tx) => {
       await tx.pollOptionVote.deleteMany({ where: { pollId, userId } });
       await tx.pollTextAnswer.deleteMany({ where: { pollId, userId } });
@@ -917,6 +1024,16 @@ export class PollService {
           })),
         });
       }
+    });
+
+    const who = poll.anonymousVotes ? 'Someone' : await this.displayNameForUser(userId);
+    const title = isUpdate ? 'Poll response updated' : 'New poll response';
+    const body = isUpdate
+      ? `${who} updated their response on “${poll.title.trim()}”`
+      : `${who} responded to “${poll.title.trim()}”`;
+    void this.notifyPollFollowers(pollId, poll.groupId, userId, title, body, {
+      type: 'poll_response',
+      icon: '✓',
     });
 
     return this.getResults(pollId, userId);
@@ -1107,6 +1224,13 @@ export class PollService {
         closer: { select: { id: true, displayName: true, name: true } },
       },
     });
+    void this.notifyActiveGroupMembers(
+      row.groupId,
+      actorUserId,
+      'Poll closed',
+      `“${row.title.trim()}” is now closed`,
+      { type: 'poll_closed', icon: '🔒', pollId: row.id },
+    );
     return this.mapPoll(row);
   }
 
@@ -1215,18 +1339,14 @@ export class PollService {
     });
 
     const who = row.suggester ? row.suggester.displayName || row.suggester.name : 'Someone';
-    const creatorId = poll.createdBy;
-    if (creatorId && creatorId !== userId) {
-      void notificationService
-        .createForUser(creatorId, 'Poll option suggested', `${who} suggested “${t}” on “${poll.title.trim()}”.`, {
-          type: 'poll_option_suggestion',
-          icon: '➕',
-          groupId: poll.groupId,
-          pollId,
-          dest: 'poll',
-        })
-        .catch(() => undefined);
-    }
+    void this.notifyPollFollowers(
+      pollId,
+      poll.groupId,
+      userId,
+      'Poll option suggested',
+      `${who} suggested “${t}” on “${poll.title.trim()}”`,
+      { type: 'poll_option_suggestion', icon: '➕' },
+    );
 
     return this.mapPollOptionSuggestion(row);
   }
@@ -1283,6 +1403,22 @@ export class PollService {
         data: { status: 'declined', decidedAt: new Date() },
         include: { suggester: { select: { displayName: true, name: true } } },
       });
+      if (sugg.suggestedBy !== userId) {
+        void notificationService
+          .createForUser(
+            sugg.suggestedBy,
+            'Option suggestion declined',
+            `Your option “${sugg.label.trim()}” was declined on “${poll.title.trim()}”`,
+            {
+              type: 'poll_option_decision',
+              icon: '✖️',
+              groupId: poll.groupId,
+              pollId,
+              dest: 'poll',
+            },
+          )
+          .catch(() => undefined);
+      }
       return { suggestion: this.mapPollOptionSuggestion(updated) };
     }
 
@@ -1353,6 +1489,22 @@ export class PollService {
     const counts = await this.respondentCountsByPollIds([pollId]);
     const mapped = this.mapPoll(row);
     const enriched = await this.enrichWithViewerWatch({ ...mapped, respondentCount: counts[pollId] ?? 0 }, userId);
+    if (sugg.suggestedBy !== userId) {
+      void notificationService
+        .createForUser(
+          sugg.suggestedBy,
+          'Option suggestion accepted',
+          `Your option “${sugg.label.trim()}” was added to “${poll.title.trim()}”`,
+          {
+            type: 'poll_option_decision',
+            icon: '✅',
+            groupId: poll.groupId,
+            pollId,
+            dest: 'poll',
+          },
+        )
+        .catch(() => undefined);
+    }
     return { suggestion: this.mapPollOptionSuggestion(updated), poll: enriched };
   }
 }

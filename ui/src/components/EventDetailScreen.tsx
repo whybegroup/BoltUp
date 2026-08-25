@@ -89,6 +89,7 @@ import { useCommentQuickReactions } from '../hooks/useCommentQuickReactions';
 import { uid, getNoResponseIds } from '../utils/api-helpers';
 import type { CommentInput, EventDetailed, GroupScoped, RSVP, User } from '@moijia/client';
 import { RSVPInput, MembershipStatus, EventUpdate } from '@moijia/client';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import DateTimePicker from './AppDateTimePicker';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { ResolvableImage } from './ResolvableImage';
@@ -128,6 +129,7 @@ import {
   formatWallDateFromUtcIso,
   formatWallTimeHmFromUtcIso,
   localWallDateTimeToUtcIso,
+  localWallDateTimeToDate,
   localWallDateStartOfDayToUtcIso,
   localWallDateEndOfDayToUtcIso,
   isValidEventFormTimeRange,
@@ -182,6 +184,20 @@ function webDetailTimeInputStyle(errored: boolean): Record<string, string | numb
     minWidth: 0,
     width: '100%',
   };
+}
+
+function webSuggestTimeInputStyle(errored: boolean): Record<string, string | number> {
+  return { ...webDetailTimeInputStyle(errored), backgroundColor: Colors.surface };
+}
+
+function parseYmdLocal(ymd: string): Date {
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return new Date();
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
+}
+
+function formatHmFromDate(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 // ── Comment Photo Gallery (inline version) ───────────────────────────────────
@@ -549,6 +565,12 @@ export function EventDetailScreen({
   const [showSuggestEndDatePicker, setShowSuggestEndDatePicker] = useState(false);
   const [showSuggestStartTimePicker, setShowSuggestStartTimePicker] = useState(false);
   const [showSuggestEndTimePicker, setShowSuggestEndTimePicker] = useState(false);
+  const [iosSuggestStartDateDraft, setIosSuggestStartDateDraft] = useState(() => new Date());
+  const [iosSuggestEndDateDraft, setIosSuggestEndDateDraft] = useState(() => new Date());
+  const [iosSuggestStartTimeDraft, setIosSuggestStartTimeDraft] = useState(() => new Date());
+  const [iosSuggestEndTimeDraft, setIosSuggestEndTimeDraft] = useState(() => new Date());
+  const androidSuggestPickerOpenRef = useRef(false);
+  const androidSuggestPickerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
   const scrollViewportYRef = useRef(0);
   const scrollOffsetYRef = useRef(0);
@@ -1417,7 +1439,19 @@ export function EventDetailScreen({
     ev.createdBy === currentUserId ||
     group.ownerId === currentUserId ||
     (group.adminIds ?? []).includes(currentUserId);
-  const pendingTimeSuggestions = timeSuggestions.filter((s) => s.status === 'pending');
+  const pendingTimeSuggestions = (() => {
+    const pending = timeSuggestions.filter((s) => s.status === 'pending');
+    const latestByUser = new Map<string, (typeof pending)[number]>();
+    for (const s of pending) {
+      const prev = latestByUser.get(s.suggestedBy);
+      const sTs = new Date(s.updatedAt as string | Date).getTime();
+      const prevTs = prev ? new Date(prev.updatedAt as string | Date).getTime() : 0;
+      if (!prev || (Number.isFinite(sTs) ? sTs : 0) >= (Number.isFinite(prevTs) ? prevTs : 0)) {
+        latestByUser.set(s.suggestedBy, s);
+      }
+    }
+    return [...latestByUser.values()];
+  })();
 
   const resetDetailsDrafts = () => {
     setDraftName(ev.name ?? '');
@@ -1653,7 +1687,68 @@ export function EventDetailScreen({
     (draftAllDay || (!!draftStartTime?.trim() && !!draftEndTime?.trim()));
   const detailTimeRangeErrored = detailTimeFieldsComplete && !detailTimeRangeValid;
 
+  const applySuggestStartDate = (dateStr: string) => {
+    const shifted = endPreservingDuration({
+      prevStartDate: suggestStartDate,
+      prevStartTime: suggestStartTime,
+      prevEndDate: suggestEndDate,
+      prevEndTime: suggestEndTime,
+      nextStartDate: dateStr,
+      nextStartTime: suggestStartTime,
+      allDay: false,
+    });
+    setSuggestStartDate(dateStr);
+    if (shifted) {
+      setSuggestEndDate(shifted.endDate);
+      setSuggestEndTime(shifted.endTime);
+    }
+  };
+
+  const applySuggestStartTime = (timeStr: string) => {
+    const shifted = endPreservingDuration({
+      prevStartDate: suggestStartDate,
+      prevStartTime: suggestStartTime,
+      prevEndDate: suggestEndDate,
+      prevEndTime: suggestEndTime,
+      nextStartDate: suggestStartDate,
+      nextStartTime: timeStr,
+      allDay: false,
+    });
+    setSuggestStartTime(timeStr);
+    if (shifted) {
+      setSuggestEndDate(shifted.endDate);
+      setSuggestEndTime(shifted.endTime);
+    }
+  };
+
+  const suggestTimeFieldsComplete =
+    !!suggestStartDate?.trim() &&
+    !!suggestEndDate?.trim() &&
+    !!suggestStartTime?.trim() &&
+    !!suggestEndTime?.trim();
+  const suggestTimeRangeValid = isValidEventFormTimeRange({
+    allDay: false,
+    startDate: suggestStartDate,
+    endDate: suggestEndDate,
+    startTime: suggestStartTime,
+    endTime: suggestEndTime,
+  });
+  const suggestTimeRangeErrored = suggestTimeFieldsComplete && !suggestTimeRangeValid;
+
   const closeTimeSuggestModal = () => {
+    androidSuggestPickerOpenRef.current = false;
+    if (androidSuggestPickerTimerRef.current) {
+      clearTimeout(androidSuggestPickerTimerRef.current);
+      androidSuggestPickerTimerRef.current = null;
+    }
+    if (Platform.OS === 'android') {
+      try {
+        DateTimePickerAndroid.dismiss('date');
+        DateTimePickerAndroid.dismiss('time');
+      } catch {
+        /* no native picker open */
+      }
+    }
     setShowSuggestStartDatePicker(false);
     setShowSuggestEndDatePicker(false);
     setShowSuggestStartTimePicker(false);
@@ -1661,7 +1756,107 @@ export function EventDetailScreen({
     setShowTimeSuggestModal(false);
   };
 
+  const commitIosSuggestStartDate = () => {
+    applySuggestStartDate(formatLocalDateInput(iosSuggestStartDateDraft));
+    setShowSuggestStartDatePicker(false);
+  };
+  const commitIosSuggestEndDate = () => {
+    setSuggestEndDate(formatLocalDateInput(iosSuggestEndDateDraft));
+    setShowSuggestEndDatePicker(false);
+  };
+  const commitIosSuggestStartTime = () => {
+    applySuggestStartTime(formatHmFromDate(iosSuggestStartTimeDraft));
+    setShowSuggestStartTimePicker(false);
+  };
+  const commitIosSuggestEndTime = () => {
+    setSuggestEndTime(formatHmFromDate(iosSuggestEndTimeDraft));
+    setShowSuggestEndTimePicker(false);
+  };
+
+  const flushActiveIosSuggestPicker = () => {
+    if (showSuggestEndTimePicker) commitIosSuggestEndTime();
+    else if (showSuggestEndDatePicker) commitIosSuggestEndDate();
+    else if (showSuggestStartTimePicker) commitIosSuggestStartTime();
+    else if (showSuggestStartDatePicker) commitIosSuggestStartDate();
+  };
+
+  const openAndroidSuggestPicker = (which: 'startDate' | 'startTime' | 'endDate' | 'endTime') => {
+    if (androidSuggestPickerOpenRef.current) return;
+    androidSuggestPickerOpenRef.current = true;
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const finish = (event: { type: string }, date?: Date, onSet?: (d: Date) => void) => {
+      androidSuggestPickerOpenRef.current = false;
+      if (event.type !== 'set' || !date) return;
+      onSet?.(date);
+    };
+    const open = () => {
+      if (which === 'startDate' || which === 'endDate') {
+        DateTimePickerAndroid.open({
+          value: parseYmdLocal(which === 'startDate' ? suggestStartDate : suggestEndDate),
+          mode: 'date',
+          display: 'default',
+          minimumDate: which === 'endDate' ? parseYmdLocal(suggestStartDate) : startOfToday,
+          onChange: (event, date) =>
+            finish(event, date, (d) => {
+              if (which === 'startDate') applySuggestStartDate(formatLocalDateInput(d));
+              else setSuggestEndDate(formatLocalDateInput(d));
+            }),
+        });
+        return;
+      }
+      DateTimePickerAndroid.open({
+        value: localWallDateTimeToDate(
+          which === 'startTime' ? suggestStartDate : suggestEndDate,
+          which === 'startTime' ? suggestStartTime : suggestEndTime,
+        ),
+        mode: 'time',
+        display: 'default',
+        onChange: (event, date) =>
+          finish(event, date, (d) => {
+            if (which === 'startTime') applySuggestStartTime(formatHmFromDate(d));
+            else setSuggestEndTime(formatHmFromDate(d));
+          }),
+      });
+    };
+    // Let the tap finish before presenting the system dialog; otherwise Android
+    // can deliver the same press into a nested window and stack multiple pickers.
+    androidSuggestPickerTimerRef.current = setTimeout(() => {
+      androidSuggestPickerTimerRef.current = null;
+      try {
+        open();
+      } catch {
+        androidSuggestPickerOpenRef.current = false;
+      }
+    }, 50);
+  };
+
   const openSuggestPicker = (which: 'startDate' | 'startTime' | 'endDate' | 'endTime') => {
+    if (Platform.OS === 'android') {
+      openAndroidSuggestPicker(which);
+      return;
+    }
+    if (which === 'startDate' && showSuggestStartDatePicker) {
+      commitIosSuggestStartDate();
+      return;
+    }
+    if (which === 'startTime' && showSuggestStartTimePicker) {
+      commitIosSuggestStartTime();
+      return;
+    }
+    if (which === 'endDate' && showSuggestEndDatePicker) {
+      commitIosSuggestEndDate();
+      return;
+    }
+    if (which === 'endTime' && showSuggestEndTimePicker) {
+      commitIosSuggestEndTime();
+      return;
+    }
+    flushActiveIosSuggestPicker();
+    if (which === 'startDate') setIosSuggestStartDateDraft(parseYmdLocal(suggestStartDate));
+    if (which === 'startTime') setIosSuggestStartTimeDraft(localWallDateTimeToDate(suggestStartDate, suggestStartTime));
+    if (which === 'endDate') setIosSuggestEndDateDraft(parseYmdLocal(suggestEndDate));
+    if (which === 'endTime') setIosSuggestEndTimeDraft(localWallDateTimeToDate(suggestEndDate, suggestEndTime));
     setShowSuggestStartDatePicker(which === 'startDate');
     setShowSuggestStartTimePicker(which === 'startTime');
     setShowSuggestEndDatePicker(which === 'endDate');
@@ -1670,25 +1865,7 @@ export function EventDetailScreen({
 
   const submitTimeSuggestion = async () => {
     if (!currentUserId || !suggestStartDate || !suggestEndDate) return;
-    const [sh, sm] = suggestStartTime.split(':').map(Number);
-    const [eh, em] = suggestEndTime.split(':').map(Number);
-    const start = new Date(
-      suggestStartDate +
-        'T' +
-        String(sh).padStart(2, '0') +
-        ':' +
-        String(sm || 0).padStart(2, '0') +
-        ':00',
-    );
-    const end = new Date(
-      suggestEndDate +
-        'T' +
-        String(eh).padStart(2, '0') +
-        ':' +
-        String(em || 0).padStart(2, '0') +
-        ':00',
-    );
-    if (!(start.getTime() < end.getTime())) {
+    if (!suggestTimeRangeValid) {
       Alert.alert('Check times', 'End must be after start.');
       return;
     }
@@ -1696,15 +1873,11 @@ export function EventDetailScreen({
       await createTimeSuggestionMutation.mutateAsync({
         id: uid(),
         userId: currentUserId,
-        start: start.toISOString(),
-        end: end.toISOString(),
+        start: localWallDateTimeToUtcIso(suggestStartDate, suggestStartTime),
+        end: localWallDateTimeToUtcIso(suggestEndDate, suggestEndTime),
         viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
-      setShowTimeSuggestModal(false);
-      setShowSuggestStartDatePicker(false);
-      setShowSuggestEndDatePicker(false);
-      setShowSuggestStartTimePicker(false);
-      setShowSuggestEndTimePicker(false);
+      closeTimeSuggestModal();
     } catch {
       Alert.alert('Error', 'Could not submit time suggestion');
     }
@@ -3411,208 +3584,126 @@ export function EventDetailScreen({
         onRequestClose={closeTimeSuggestModal}
         {...edgeToEdgeModalProps}
       >
+        <View style={styles.suggestModalRoot}>
         <View style={styles.deleteOverlay}>
           <View style={[styles.deleteBox, { maxWidth: 400 }]}>
             <Text style={styles.deleteTitle}>Suggest a time</Text>
             <Text style={[styles.deleteMessage, { marginBottom: 12 }]}>
               Propose new start and end. The host can accept to update the event.
             </Text>
-            {Platform.OS === 'web' ? (
-              <View style={{ gap: 10, marginBottom: 16 }} pointerEvents="box-none">
-                <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted }}>Start</Text>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <input
-                    type="date"
-                    value={suggestStartDate}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSuggestStartDate(e.target.value)}
-                    style={{
-                      flex: 1,
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      border: `1px solid ${Colors.border}`,
-                      fontSize: 14,
-                      fontFamily: 'DMSans_400Regular',
-                    }}
-                  />
-                  <input
-                    type="time"
-                    value={suggestStartTime}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSuggestStartTime(e.target.value)}
-                    style={{
-                      flex: 1,
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      border: `1px solid ${Colors.border}`,
-                      fontSize: 14,
-                      fontFamily: 'DMSans_400Regular',
-                    }}
-                  />
-                </View>
-                <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted }}>End</Text>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <input
-                    type="date"
-                    value={suggestEndDate}
-                    min={suggestStartDate}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSuggestEndDate(e.target.value)}
-                    style={{
-                      flex: 1,
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      border: `1px solid ${Colors.border}`,
-                      fontSize: 14,
-                      fontFamily: 'DMSans_400Regular',
-                    }}
-                  />
-                  <input
-                    type="time"
-                    value={suggestEndTime}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSuggestEndTime(e.target.value)}
-                    style={{
-                      flex: 1,
-                      padding: '10px 12px',
-                      borderRadius: 10,
-                      border: `1px solid ${Colors.border}`,
-                      fontSize: 14,
-                      fontFamily: 'DMSans_400Regular',
-                    }}
-                  />
+            <View style={[styles.detailEventTimeStack, { marginBottom: 16 }]} pointerEvents="box-none">
+              <View style={styles.detailEventTimeLine}>
+                <Text style={styles.detailEventTimeLineLabel}>From</Text>
+                <View style={styles.detailEventTimeRow}>
+                  {Platform.OS === 'web' ? (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldDate]}>
+                      <input
+                        type="date"
+                        value={suggestStartDate}
+                        min={formatLocalDateInput(new Date())}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => applySuggestStartDate(e.target.value)}
+                        style={webSuggestTimeInputStyle(false)}
+                      />
+                    </View>
+                  ) : (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldDate]} collapsable={false}>
+                      <TouchableOpacity
+                        onPress={() => openSuggestPicker('startDate')}
+                        activeOpacity={0.85}
+                        style={[styles.detailEventTimeSegment, styles.suggestTimeSegment]}
+                      >
+                        <Text style={styles.detailEventTimeSegmentText} numberOfLines={1}>
+                          {suggestStartDate || 'Date'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {Platform.OS === 'web' ? (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldTime]}>
+                      <input
+                        type="time"
+                        value={suggestStartTime}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => applySuggestStartTime(e.target.value)}
+                        style={webSuggestTimeInputStyle(false)}
+                      />
+                    </View>
+                  ) : (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldTime]} collapsable={false}>
+                      <TouchableOpacity
+                        onPress={() => openSuggestPicker('startTime')}
+                        activeOpacity={0.85}
+                        style={[styles.detailEventTimeSegment, styles.suggestTimeSegment]}
+                      >
+                        <Text style={styles.detailEventTimeSegmentText} numberOfLines={1}>
+                          {suggestStartTime}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </View>
-            ) : (
-              <ScrollView
-                style={{ maxHeight: 420, marginBottom: 12 }}
-                keyboardShouldPersistTaps="always"
-                nestedScrollEnabled
-              >
-                <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>Start date</Text>
-                <Pressable
-                  onPress={() => openSuggestPicker('startDate')}
-                  style={[styles.detailEventTimeSegment, { marginBottom: 12 }]}
-                >
-                  <Text style={styles.detailEventTimeSegmentText}>{suggestStartDate || 'Date'}</Text>
-                </Pressable>
-                <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>Start time</Text>
-                <Pressable
-                  onPress={() => openSuggestPicker('startTime')}
-                  style={[styles.detailEventTimeSegment, { marginBottom: 12 }]}
-                >
-                  <Text style={styles.detailEventTimeSegmentText}>{suggestStartTime}</Text>
-                </Pressable>
-                <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>End date</Text>
-                <Pressable
-                  onPress={() => openSuggestPicker('endDate')}
-                  style={[styles.detailEventTimeSegment, { marginBottom: 12 }]}
-                >
-                  <Text style={styles.detailEventTimeSegmentText}>{suggestEndDate || 'Date'}</Text>
-                </Pressable>
-                <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>End time</Text>
-                <Pressable
-                  onPress={() => openSuggestPicker('endTime')}
-                  style={[styles.detailEventTimeSegment, { marginBottom: 8 }]}
-                >
-                  <Text style={styles.detailEventTimeSegmentText}>{suggestEndTime}</Text>
-                </Pressable>
-                {showSuggestStartDatePicker ? (
-                  <>
-                    <DateTimePicker
-                      value={(() => {
-                        const [y, m, d] = (suggestStartDate || '').split('-').map(Number);
-                        return y && m && d ? new Date(y, m - 1, d) : new Date();
-                      })()}
-                      mode="date"
-                      display="spinner"
-                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
-                      onChange={(_, d) => {
-                        if (d) setSuggestStartDate(formatLocalDateInput(d));
-                      }}
-                    />
-                    <View style={styles.detailDatePickerActions}>
-                      <TouchableOpacity onPress={() => setShowSuggestStartDatePicker(false)} style={styles.detailDatePickerBtn}>
-                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
+              <View style={styles.detailEventTimeLine}>
+                <Text style={styles.detailEventTimeLineLabel}>To</Text>
+                <View style={styles.detailEventTimeRow}>
+                  {Platform.OS === 'web' ? (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldDate]}>
+                      <input
+                        type="date"
+                        value={suggestEndDate}
+                        min={suggestStartDate}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => setSuggestEndDate(e.target.value)}
+                        style={webSuggestTimeInputStyle(suggestTimeRangeErrored)}
+                      />
+                    </View>
+                  ) : (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldDate]} collapsable={false}>
+                      <TouchableOpacity
+                        onPress={() => openSuggestPicker('endDate')}
+                        activeOpacity={0.85}
+                        style={[
+                          styles.detailEventTimeSegment,
+                          styles.suggestTimeSegment,
+                          suggestTimeRangeErrored && styles.detailEventTimeSegmentError,
+                        ]}
+                      >
+                        <Text style={styles.detailEventTimeSegmentText} numberOfLines={1}>
+                          {suggestEndDate || 'Date'}
+                        </Text>
                       </TouchableOpacity>
                     </View>
-                  </>
-                ) : null}
-                {showSuggestEndDatePicker ? (
-                  <>
-                    <DateTimePicker
-                      value={(() => {
-                        const [y, m, d] = (suggestEndDate || '').split('-').map(Number);
-                        return y && m && d ? new Date(y, m - 1, d) : new Date();
-                      })()}
-                      mode="date"
-                      display="spinner"
-                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
-                      minimumDate={(() => {
-                        const [y, m, d] = (suggestStartDate || '').split('-').map(Number);
-                        return y && m && d ? new Date(y, m - 1, d) : undefined;
-                      })()}
-                      onChange={(_, d) => {
-                        if (d) setSuggestEndDate(formatLocalDateInput(d));
-                      }}
-                    />
-                    <View style={styles.detailDatePickerActions}>
-                      <TouchableOpacity onPress={() => setShowSuggestEndDatePicker(false)} style={styles.detailDatePickerBtn}>
-                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                  )}
+                  {Platform.OS === 'web' ? (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldTime]}>
+                      <input
+                        type="time"
+                        value={suggestEndTime}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => setSuggestEndTime(e.target.value)}
+                        style={webSuggestTimeInputStyle(suggestTimeRangeErrored)}
+                      />
+                    </View>
+                  ) : (
+                    <View style={[styles.detailEventTimeCell, styles.detailEventTimeFieldTime]} collapsable={false}>
+                      <TouchableOpacity
+                        onPress={() => openSuggestPicker('endTime')}
+                        activeOpacity={0.85}
+                        style={[
+                          styles.detailEventTimeSegment,
+                          styles.suggestTimeSegment,
+                          suggestTimeRangeErrored && styles.detailEventTimeSegmentError,
+                        ]}
+                      >
+                        <Text style={styles.detailEventTimeSegmentText} numberOfLines={1}>
+                          {suggestEndTime}
+                        </Text>
                       </TouchableOpacity>
                     </View>
-                  </>
-                ) : null}
-                {showSuggestStartTimePicker ? (
-                  <>
-                    <DateTimePicker
-                      value={(() => {
-                        const [h, m] = suggestStartTime.split(':').map(Number);
-                        const x = new Date();
-                        x.setHours(h || 0, m || 0, 0, 0);
-                        return x;
-                      })()}
-                      mode="time"
-                      display="spinner"
-                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
-                      onChange={(_, d) => {
-                        if (d) {
-                          const pad = (n: number) => String(n).padStart(2, '0');
-                          setSuggestStartTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                        }
-                      }}
-                    />
-                    <View style={styles.detailDatePickerActions}>
-                      <TouchableOpacity onPress={() => setShowSuggestStartTimePicker(false)} style={styles.detailDatePickerBtn}>
-                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </>
-                ) : null}
-                {showSuggestEndTimePicker ? (
-                  <>
-                    <DateTimePicker
-                      value={(() => {
-                        const [h, m] = suggestEndTime.split(':').map(Number);
-                        const x = new Date();
-                        x.setHours(h || 0, m || 0, 0, 0);
-                        return x;
-                      })()}
-                      mode="time"
-                      display="spinner"
-                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
-                      onChange={(_, d) => {
-                        if (d) {
-                          const pad = (n: number) => String(n).padStart(2, '0');
-                          setSuggestEndTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                        }
-                      }}
-                    />
-                    <View style={styles.detailDatePickerActions}>
-                      <TouchableOpacity onPress={() => setShowSuggestEndTimePicker(false)} style={styles.detailDatePickerBtn}>
-                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </>
-                ) : null}
-              </ScrollView>
-            )}
+                  )}
+                </View>
+              </View>
+              {suggestTimeRangeErrored ? (
+                <Text style={styles.detailTimeError}>End must be after start</Text>
+              ) : null}
+            </View>
             <View style={styles.deleteActions}>
               <TouchableOpacity
                 onPress={closeTimeSuggestModal}
@@ -3625,6 +3716,113 @@ export function EventDetailScreen({
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+          {Platform.OS === 'ios' && showSuggestStartDatePicker ? (
+            <View style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerModalRoot, styles.suggestPickerOverlay]}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]}
+                onPress={commitIosSuggestStartDate}
+              />
+              <View style={styles.iosFilterPickerModalCard}>
+                <View style={styles.iosFilterPickerHostDate}>
+                  <DateTimePicker
+                    value={iosSuggestStartDateDraft}
+                    mode="date"
+                    display="inline"
+                    onChange={(_, d) => {
+                      if (d) setIosSuggestStartDateDraft(d);
+                    }}
+                    minimumDate={(() => {
+                      const t = new Date();
+                      t.setHours(0, 0, 0, 0);
+                      return t;
+                    })()}
+                  />
+                </View>
+                <View style={styles.detailDatePickerActions}>
+                  <TouchableOpacity onPress={commitIosSuggestStartDate} style={styles.detailDatePickerBtn}>
+                    <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ) : null}
+          {Platform.OS === 'ios' && showSuggestEndDatePicker ? (
+            <View style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerModalRoot, styles.suggestPickerOverlay]}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]}
+                onPress={commitIosSuggestEndDate}
+              />
+              <View style={styles.iosFilterPickerModalCard}>
+                <View style={styles.iosFilterPickerHostDate}>
+                  <DateTimePicker
+                    value={iosSuggestEndDateDraft}
+                    mode="date"
+                    display="inline"
+                    onChange={(_, d) => {
+                      if (d) setIosSuggestEndDateDraft(d);
+                    }}
+                    minimumDate={parseYmdLocal(suggestStartDate)}
+                  />
+                </View>
+                <View style={styles.detailDatePickerActions}>
+                  <TouchableOpacity onPress={commitIosSuggestEndDate} style={styles.detailDatePickerBtn}>
+                    <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ) : null}
+          {Platform.OS === 'ios' && showSuggestStartTimePicker ? (
+            <View style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerModalRoot, styles.suggestPickerOverlay]}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]}
+                onPress={commitIosSuggestStartTime}
+              />
+              <View style={styles.iosFilterPickerModalCard}>
+                <View style={styles.iosFilterPickerHostTime}>
+                  <DateTimePicker
+                    value={iosSuggestStartTimeDraft}
+                    mode="time"
+                    display="spinner"
+                    onChange={(_, d) => {
+                      if (d) setIosSuggestStartTimeDraft(d);
+                    }}
+                  />
+                </View>
+                <View style={styles.detailDatePickerActions}>
+                  <TouchableOpacity onPress={commitIosSuggestStartTime} style={styles.detailDatePickerBtn}>
+                    <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ) : null}
+          {Platform.OS === 'ios' && showSuggestEndTimePicker ? (
+            <View style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerModalRoot, styles.suggestPickerOverlay]}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]}
+                onPress={commitIosSuggestEndTime}
+              />
+              <View style={styles.iosFilterPickerModalCard}>
+                <View style={styles.iosFilterPickerHostTime}>
+                  <DateTimePicker
+                    value={iosSuggestEndTimeDraft}
+                    mode="time"
+                    display="spinner"
+                    onChange={(_, d) => {
+                      if (d) setIosSuggestEndTimeDraft(d);
+                    }}
+                  />
+                </View>
+                <View style={styles.detailDatePickerActions}>
+                  <TouchableOpacity onPress={commitIosSuggestEndTime} style={styles.detailDatePickerBtn}>
+                    <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ) : null}
         </View>
       </Modal>
     </View>
@@ -4047,6 +4245,7 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
   detailEventTimeSegmentError: { borderColor: '#EF4444' },
+  suggestTimeSegment: { backgroundColor: Colors.surface },
   detailEventTimeSegmentText: {
     fontSize: 13,
     fontFamily: Fonts.medium,
@@ -4073,6 +4272,46 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent,
   },
   detailDatePickerBtnText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accentFg },
+  suggestModalRoot: { flex: 1 },
+  suggestPickerOverlay: { zIndex: 20, elevation: 20 },
+  iosFilterPickerBackdrop: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  iosFilterPickerModalRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 40,
+  },
+  iosFilterPickerModalCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    zIndex: 2,
+  },
+  iosFilterPickerHostDate: {
+    width: '100%',
+    minHeight: 320,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iosFilterPickerHostTime: {
+    width: '100%',
+    minHeight: 200,
+    padding: 12,
+    alignItems: 'stretch',
+    justifyContent: 'center',
+  },
   detailSaveScopeModalBox: { maxWidth: 400 },
   detailSaveScopeModalActions: { flexDirection: 'row', gap: 12, alignItems: 'stretch' },
   detailScopeSettingsCard: {

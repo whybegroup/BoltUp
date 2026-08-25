@@ -613,31 +613,94 @@ export function formatRecurrenceSummary(rule: string | null | undefined, start: 
   return appendRecurrenceEndClause(summary, st, trimmed, start);
 }
 
-function lowercaseFirst(s: string): string {
-  if (!s) return s;
-  return s.charAt(0).toLowerCase() + s.slice(1);
+const UNTIL_MONTHS = [
+  'Jan.',
+  'Feb.',
+  'Mar.',
+  'Apr.',
+  'May',
+  'June',
+  'July',
+  'Aug.',
+  'Sept.',
+  'Oct.',
+  'Nov.',
+  'Dec.',
+] as const;
+const ORDINAL_NUMERIC = ['', '1st', '2nd', '3rd', '4th', '5th'] as const;
+const DOW_PLURAL = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'] as const;
+
+function formatUntilDisplayDate(ymd: string): string {
+  const [y, m, d] = ymd.trim().split('-').map((x) => parseInt(x, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d) || m < 1 || m > 12) {
+    return ymd.trim();
+  }
+  return `${UNTIL_MONTHS[m - 1]} ${d}, ${y}`;
 }
 
-/** Compact label for event detail, e.g. "Repeats daily". Null when the event does not repeat. */
+function formatWeeklyDaysCsv(days: number[]): string {
+  return [...new Set(days)].sort((a, b) => a - b).map((d) => DOW_LABEL[d] ?? '?').join(',');
+}
+
+function formatMonthlyWeekdayRepeatsPhrase(start: Date): string {
+  const plural = DOW_PLURAL[start.getDay()] ?? 'days';
+  if (isLastWeekdayOfMonth(start)) return `last ${plural}`;
+  const o = weekOrdinalInMonth(start);
+  const ord = ORDINAL_NUMERIC[o] ?? `${o}th`;
+  return `${ord} ${plural}`;
+}
+
+function formatRepeatsPattern(st: RecurrenceFormState, start: Date): string {
+  const n = Math.max(1, st.customInterval || 1);
+  if (st.preset === 'daily') return 'every day';
+  if (st.preset === 'weekly') return 'every week';
+  if (st.preset === 'monthly') {
+    if (st.monthlyPattern === 'weekdayOfMonth') {
+      return `every month on ${formatMonthlyWeekdayRepeatsPhrase(start)}`;
+    }
+    return `every month on the ${ordinalSuffixDom(start.getDate())}`;
+  }
+  if (st.preset === 'yearly') return 'every year';
+
+  if (st.customUnit === 'day') {
+    return n === 1 ? 'every day' : `every ${n} days`;
+  }
+  if (st.customUnit === 'week') {
+    const days =
+      st.weeklyDays.length > 0
+        ? [...new Set(st.weeklyDays)].sort((a, b) => a - b)
+        : [start.getDay()];
+    const onDays = days.length ? ` on ${formatWeeklyDaysCsv(days)}` : '';
+    if (n === 1) return `every week${onDays}`;
+    return `every ${n} weeks${onDays}`;
+  }
+  if (st.customUnit === 'month') {
+    const every = n === 1 ? 'every month' : `every ${n} months`;
+    if (st.monthlyPattern === 'weekdayOfMonth') {
+      return `${every} on ${formatMonthlyWeekdayRepeatsPhrase(start)}`;
+    }
+    return `${every} on the ${ordinalSuffixDom(start.getDate())}`;
+  }
+  return n === 1 ? 'every year' : `every ${n} years`;
+}
+
+function formatRepeatsEndClause(st: RecurrenceFormState): string {
+  if (st.endType === 'until' && st.untilDate.trim()) {
+    return ` until ${formatUntilDisplayDate(st.untilDate)}`;
+  }
+  if (st.endType === 'count') {
+    const c = normalizeRecurrenceCount(parseInt(st.count, 10) || 10);
+    return `, ${c} ${c === 1 ? 'time' : 'times'}`;
+  }
+  return '';
+}
+
+/** Event detail label, e.g. "Repeats every week on Mon,Wed,Fri, 5 times". Null when it does not repeat. */
 export function formatRecurrenceRepeatsLabel(rule: string | null | undefined, start: Date): string | null {
   if (!rule?.trim()) return null;
   const st = parseRecurrenceToForm(rule.trim(), start);
-  switch (st.preset) {
-    case 'none':
-      return null;
-    case 'daily':
-      return 'Repeats daily';
-    case 'weekly':
-      return 'Repeats weekly';
-    case 'monthly':
-      return 'Repeats monthly';
-    case 'yearly':
-      return 'Repeats yearly';
-    case 'custom':
-      return `Repeats ${lowercaseFirst(formatCustomRecurrenceSummary(st, start))}`;
-    default:
-      return `Repeats ${lowercaseFirst(formatCustomRecurrenceSummary(st, start))}`;
-  }
+  if (st.preset === 'none') return null;
+  return `Repeats ${formatRepeatsPattern(st, start)}${formatRepeatsEndClause(st)}`;
 }
 
 /**

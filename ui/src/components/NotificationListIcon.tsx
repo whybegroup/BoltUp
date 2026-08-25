@@ -20,6 +20,11 @@ const TYPE_TO_ICON: Record<string, IonName> = {
   event_time_changed: 'time-outline',
   location_changed: 'location-outline',
   poll_option_suggestion: 'add-circle-outline',
+  poll_created: 'stats-chart-outline',
+  poll_updated: 'create-outline',
+  poll_closed: 'lock-closed-outline',
+  poll_response: 'checkbox-outline',
+  poll_option_decision: 'checkmark-circle-outline',
   general: 'notifications-outline',
 };
 

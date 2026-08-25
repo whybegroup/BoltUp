@@ -1,6 +1,7 @@
 import { Linking, Platform, Share } from 'react-native';
 import * as Calendar from 'expo-calendar';
 import { File, Paths } from 'expo-file-system';
+import * as WebBrowser from 'expo-web-browser';
 import Toast from 'react-native-toast-message';
 import { eventLocationShareLabel, stripHtmlToText } from './sharePreviewCopy';
 import { eventShareLink, withShareTimeZone } from './shareLinks';
@@ -295,13 +296,13 @@ export function detailsForCalendarExportScope(
     starts.sort((a, b) => a.getTime() - b.getTime());
   }
 
-  if (scope === 'this' || starts.length <= 1) {
+  if (scope === 'this') {
     return { ...details, recurrenceRule: null, recurrenceSeriesId: null };
   }
 
   const fromHere = starts.filter((d) => d.getTime() >= currentMs - 1000);
   if (fromHere.length <= 1) {
-    return { ...details, recurrenceRule: null, recurrenceSeriesId: null };
+    return { ...details, start, end };
   }
   const last = fromHere[fromHere.length - 1]!;
   return {
@@ -359,19 +360,29 @@ export function googleCalendarTemplateUrl(eventId: string, details: EventCalenda
   const dates = isAllDay
     ? `${icsLocalDate(start)}/${icsLocalDate(nextLocalDate(end))}`
     : `${icsUtcStamp(start)}/${icsUtcStamp(end)}`;
-  const params = new URLSearchParams({
-    action: 'TEMPLATE',
-    text: details.name.trim() || 'Event',
-    dates,
-    details: calendarDescription(details, url).slice(0, 8000),
-  });
+  
+  let finalUrl = 'https://calendar.google.com/calendar/render';
+  finalUrl += '?action=TEMPLATE';
+  finalUrl += `&text=${encodeURIComponent(details.name.trim() || 'Event')}`;
+  finalUrl += `&dates=${dates}`;
+  finalUrl += `&details=${encodeURIComponent(calendarDescription(details, url).slice(0, 8000))}`;
+  
   const location = eventLocationShareLabel(details);
-  if (location) params.set('location', location);
+  if (location) {
+    finalUrl += `&location=${encodeURIComponent(location)}`;
+  }
+  
   const rrule = normalizeIcsRrule(details.recurrenceRule);
-  if (rrule) params.set('recur', `RRULE:${rrule}`);
+  if (rrule) {
+    finalUrl += `&recur=${encodeURIComponent('RRULE:' + rrule)}`;
+  }
+  
   const tz = viewerTimeZone();
-  if (tz) params.set('ctz', tz);
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  if (tz) {
+    finalUrl += `&ctz=${encodeURIComponent(tz)}`;
+  }
+  
+  return finalUrl;
 }
 
 function isShareCanceled(e: unknown): boolean {
@@ -469,6 +480,8 @@ export async function openEventInGoogleCalendar(
   details: EventCalendarDetails,
 ): Promise<void> {
   const url = googleCalendarTemplateUrl(eventId, details);
+  console.log('Google Calendar URL:', url);
+  console.log('Recurrence rule:', details.recurrenceRule);
   try {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const opened = window.open(url, '_blank', 'noopener,noreferrer');
@@ -476,7 +489,8 @@ export async function openEventInGoogleCalendar(
       return;
     }
     await Linking.openURL(url);
-  } catch {
+  } catch (e) {
+    console.error('Google Calendar error:', e);
     Toast.show({ type: 'error', text1: 'Could not open Google Calendar' });
   }
 }

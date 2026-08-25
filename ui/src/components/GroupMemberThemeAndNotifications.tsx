@@ -123,6 +123,30 @@ export function GroupMemberThemeAndNotifications({ groupId, userId, groupName }:
                 style={rowPad}
               />
               <Toggle
+                value={notifPrefs.newPoll}
+                onChange={(v) => void patchNotif({ newPoll: v })}
+                label="New poll alerts"
+                style={rowPad}
+              />
+              <Toggle
+                value={notifPrefs.onPollEdit}
+                onChange={(v) => void patchNotif({ onPollEdit: v })}
+                label="Poll edits"
+                style={rowPad}
+              />
+              <Toggle
+                value={notifPrefs.onPollResponse}
+                onChange={(v) => void patchNotif({ onPollResponse: v })}
+                label="Poll responses"
+                style={rowPad}
+              />
+              <Toggle
+                value={notifPrefs.onPollSuggestion}
+                onChange={(v) => void patchNotif({ onPollSuggestion: v })}
+                label="Poll option suggestions"
+                style={rowPad}
+              />
+              <Toggle
                 value={notifPrefs.groupMembership}
                 onChange={(v) => void patchNotif({ groupMembership: v })}
                 label="Group membership updates (e.g. approvals)"

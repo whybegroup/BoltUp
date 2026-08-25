@@ -1049,7 +1049,7 @@ export class EventService {
         event.groupId,
         event.name,
         updatedBy,
-        { locChanged, timeChanged, location: event.location, start: event.start, end: event.end, timeZone: viewerTimeZone, isAllDay: event.isAllDay }
+        { locChanged, timeChanged, location: event.location, start: event.start, end: event.end, timeZone: viewerTimeZone, isAllDay: event.isAllDay ?? undefined }
       ).catch(() => undefined);
     }
 
@@ -1852,14 +1852,23 @@ export class EventService {
     if (!(start.getTime() < end.getTime())) {
       throw Object.assign(new Error('End time must be after start time'), { status: 400 });
     }
-    const row = await prisma.eventTimeSuggestion.create({
-      data: {
-        id: input.id,
-        eventId,
-        suggestedBy: input.userId,
-        start,
-        end,
-      },
+    const row = await prisma.$transaction(async (tx) => {
+      await tx.eventTimeSuggestion.deleteMany({
+        where: {
+          eventId,
+          suggestedBy: input.userId,
+          status: 'pending',
+        },
+      });
+      return tx.eventTimeSuggestion.create({
+        data: {
+          id: input.id,
+          eventId,
+          suggestedBy: input.userId,
+          start,
+          end,
+        },
+      });
     });
     if (event.createdBy !== input.userId) {
       const suggester = await prisma.user.findUnique({ where: { id: input.userId } });
@@ -1957,7 +1966,7 @@ export class EventService {
         location: updated.location,
         start: updated.start,
         end: updated.end,
-        isAllDay: updated.isAllDay,
+        isAllDay: updated.isAllDay ?? undefined,
       }
     ).catch(() => undefined);
 

@@ -10,6 +10,10 @@ export const DEFAULT_NOTIF_PREFS: NotifPrefs = {
   onRsvp: true,
   comments: true,
   mentions: true,
+  newPoll: true,
+  onPollEdit: true,
+  onPollResponse: true,
+  onPollSuggestion: true,
   groupMembership: true,
   eventReminder: '1 hour before',
 };
@@ -47,6 +51,16 @@ export function notifTypeToPrefKey(type: string | undefined): NotifPrefsKey | nu
       return 'groupMembership';
     case 'location_changed':
       return 'onLocation';
+    case 'poll_created':
+      return 'newPoll';
+    case 'poll_updated':
+    case 'poll_closed':
+      return 'onPollEdit';
+    case 'poll_response':
+      return 'onPollResponse';
+    case 'poll_option_suggestion':
+    case 'poll_option_decision':
+      return 'onPollSuggestion';
     default:
       return null;
   }
