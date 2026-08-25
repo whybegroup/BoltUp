@@ -11,7 +11,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { usePathname } from 'expo-router';
+import type { Notification as ApiNotification } from '@moijia/client';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { useCurrentUserContext } from '../contexts/CurrentUserContext';
+import { useNotifications } from '../hooks/api';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { navigateFromNotificationPayload } from '../utils/notificationNavigation';
 import { NotificationListIcon } from './NotificationListIcon';
@@ -32,14 +35,14 @@ type Banner = {
   commentId?: string;
 };
 
-function bannerFromNotification(notification: Notifications.Notification): Banner | null {
+function bannerFromPush(notification: Notifications.Notification): Banner | null {
   const { title, body, data } = notification.request.content;
   const heading = (title ?? '').trim();
   const detail = (body ?? '').trim();
   if (!heading && !detail) return null;
   const payload = (data && typeof data === 'object' ? data : {}) as Record<string, string | undefined>;
   return {
-    id: notification.request.identifier,
+    id: payload.notificationId || notification.request.identifier,
     title: heading || 'Notification',
     body: detail,
     type: payload.type ?? '',
@@ -52,15 +55,34 @@ function bannerFromNotification(notification: Notifications.Notification): Banne
   };
 }
 
+function bannerFromApi(n: ApiNotification): Banner {
+  return {
+    id: n.id,
+    title: (n.title ?? '').trim() || 'Notification',
+    body: (n.body ?? '').trim(),
+    type: n.type ?? '',
+    dest: n.dest ?? undefined,
+    eventId: n.eventId ?? undefined,
+    groupId: n.groupId ?? undefined,
+    pollId: n.pollId ?? undefined,
+    postId: n.postId ?? undefined,
+    commentId: n.commentId ?? undefined,
+  };
+}
+
 export function ForegroundNotificationBanner() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
+  const { userId } = useCurrentUserContext();
+  const { data: notifs = [], isFetched } = useNotifications(userId ?? undefined);
   const [banner, setBanner] = useState<Banner | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-SLIDE)).current;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showRef = useRef<(next: Banner) => void>(() => undefined);
+  const seenIdsRef = useRef<Set<string> | null>(null);
+  const shownIdsRef = useRef(new Set<string>());
 
   const hide = () => {
     if (hideTimer.current) {
@@ -76,6 +98,8 @@ export function ForegroundNotificationBanner() {
   };
 
   const show = (next: Banner) => {
+    if (shownIdsRef.current.has(next.id)) return;
+    shownIdsRef.current.add(next.id);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     opacity.setValue(0);
     translateY.setValue(-SLIDE);
@@ -90,9 +114,29 @@ export function ForegroundNotificationBanner() {
   showRef.current = show;
 
   useEffect(() => {
+    if (!userId) {
+      seenIdsRef.current = null;
+      shownIdsRef.current = new Set();
+      return;
+    }
+    if (!isFetched) return;
+    if (seenIdsRef.current === null) {
+      seenIdsRef.current = new Set(notifs.map((n) => n.id));
+      return;
+    }
+    const unseen = notifs.filter((n) => !seenIdsRef.current!.has(n.id));
+    if (unseen.length === 0) return;
+    for (const n of unseen) seenIdsRef.current.add(n.id);
+    const newest = unseen.reduce((a, b) =>
+      new Date(a.ts).getTime() >= new Date(b.ts).getTime() ? a : b
+    );
+    showRef.current(bannerFromApi(newest));
+  }, [isFetched, notifs, userId]);
+
+  useEffect(() => {
     if (Platform.OS === 'web') return;
     const sub = Notifications.addNotificationReceivedListener((notification) => {
-      const next = bannerFromNotification(notification);
+      const next = bannerFromPush(notification);
       if (next) showRef.current(next);
     });
     return () => {
@@ -120,7 +164,11 @@ export function ForegroundNotificationBanner() {
   };
 
   return (
-    <View pointerEvents="box-none" style={[styles.layer, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
+    <View
+      pointerEvents="box-none"
+      collapsable={false}
+      style={[styles.layer, { paddingTop: Math.max(insets.top, 8) + 8 }]}
+    >
       <Animated.View style={{ opacity, transform: [{ translateY }] }}>
         <Pressable
           onPress={open}
@@ -154,6 +202,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 99999,
+    elevation: 24,
     paddingHorizontal: 12,
   },
   card: {
@@ -166,7 +215,8 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: Colors.border,
-    ...Shadows.md,
+    ...Shadows.lg,
+    ...(Platform.OS === 'android' ? { elevation: 24 } : null),
   },
   cardPressed: {
     opacity: 0.92,

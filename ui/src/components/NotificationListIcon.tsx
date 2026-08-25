@@ -25,6 +25,9 @@ const TYPE_TO_ICON: Record<string, IonName> = {
   poll_closed: 'lock-closed-outline',
   poll_response: 'checkbox-outline',
   poll_option_decision: 'checkmark-circle-outline',
+  group_announcement: 'megaphone-outline',
+  post_comment: 'chatbubble-ellipses-outline',
+  post_reaction: 'happy-outline',
   general: 'notifications-outline',
 };
 

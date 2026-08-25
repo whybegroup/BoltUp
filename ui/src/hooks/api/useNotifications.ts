@@ -12,6 +12,7 @@ export function useNotifications(userId?: string) {
     enabled: !!userId,
     staleTime: 0,
     gcTime: 0,
+    refetchInterval: 10_000,
     refetchOnWindowFocus: true,
     refetchOnMount: true,
     refetchOnReconnect: true,

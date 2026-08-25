@@ -14,6 +14,9 @@ export const DEFAULT_NOTIF_PREFS: NotifPrefs = {
   onPollEdit: true,
   onPollResponse: true,
   onPollSuggestion: true,
+  groupAnnouncement: true,
+  postComments: true,
+  postReactions: true,
   groupMembership: true,
   eventReminder: '1 hour before',
 };
@@ -61,6 +64,12 @@ export function notifTypeToPrefKey(type: string | undefined): NotifPrefsKey | nu
     case 'poll_option_suggestion':
     case 'poll_option_decision':
       return 'onPollSuggestion';
+    case 'group_announcement':
+      return 'groupAnnouncement';
+    case 'post_comment':
+      return 'postComments';
+    case 'post_reaction':
+      return 'postReactions';
     default:
       return null;
   }

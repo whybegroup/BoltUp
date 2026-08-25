@@ -1855,8 +1855,8 @@ export function PollDetailScreen({
                           accessibilityRole="button"
                           accessibilityLabel="Suggest a new option for this question"
                         >
-                          <Ionicons name="add-circle-outline" size={18} color={Colors.text} />
-                          <Text style={styles.suggestOptionBtnText}>Suggest option</Text>
+                          <Ionicons name="add-circle-outline" size={18} color={Colors.textMuted} />
+                          <Text style={styles.suggestOptionBtnText}>Suggest a different option</Text>
                         </TouchableOpacity>
                       ) : null}
                       {editingSavedAnswer &&
@@ -2688,7 +2688,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   suggestOptionBtnDisabled: { opacity: 0.45 },
-  suggestOptionBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.accent },
+  suggestOptionBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.textMuted },
   rankingResetBtn: {
     flexDirection: 'row',
     alignItems: 'center',

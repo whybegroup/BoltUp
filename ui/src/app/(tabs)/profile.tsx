@@ -554,6 +554,21 @@ export default function ProfileScreen() {
                   label="Poll option suggestions"
                 />
                 <Toggle
+                  value={user.notifPrefs.groupAnnouncement}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { groupAnnouncement: v } })}
+                  label="Group announcements"
+                />
+                <Toggle
+                  value={user.notifPrefs.postComments}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { postComments: v } })}
+                  label="Comments on your posts"
+                />
+                <Toggle
+                  value={user.notifPrefs.postReactions}
+                  onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { postReactions: v } })}
+                  label="Reactions on your posts"
+                />
+                <Toggle
                   value={user.notifPrefs.groupMembership}
                   onChange={(v) => void updateUser.mutateAsync({ notifPrefs: { groupMembership: v } })}
                   label="Group membership updates (e.g. approvals)"

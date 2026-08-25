@@ -12,12 +12,22 @@ import { useNotifications } from './api';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
+    shouldShowAlert: false,
     shouldShowBanner: false,
     shouldShowList: false,
     shouldPlaySound: false,
     shouldSetBadge: true,
   }),
 });
+
+if (Platform.OS === 'android') {
+  void Notifications.setNotificationChannelAsync('default', {
+    name: 'Notifications',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  }).catch(() => undefined);
+}
 
 function pushPayloadFromResponse(
   response: Notifications.NotificationResponse

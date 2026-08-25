@@ -147,6 +147,24 @@ export function GroupMemberThemeAndNotifications({ groupId, userId, groupName }:
                 style={rowPad}
               />
               <Toggle
+                value={notifPrefs.groupAnnouncement}
+                onChange={(v) => void patchNotif({ groupAnnouncement: v })}
+                label="Group announcements"
+                style={rowPad}
+              />
+              <Toggle
+                value={notifPrefs.postComments}
+                onChange={(v) => void patchNotif({ postComments: v })}
+                label="Comments on your posts"
+                style={rowPad}
+              />
+              <Toggle
+                value={notifPrefs.postReactions}
+                onChange={(v) => void patchNotif({ postReactions: v })}
+                label="Reactions on your posts"
+                style={rowPad}
+              />
+              <Toggle
                 value={notifPrefs.groupMembership}
                 onChange={(v) => void patchNotif({ groupMembership: v })}
                 label="Group membership updates (e.g. approvals)"

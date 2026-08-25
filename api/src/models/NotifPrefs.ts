@@ -14,6 +14,9 @@ export interface NotifPrefs {
   onPollEdit: boolean;
   onPollResponse: boolean;
   onPollSuggestion: boolean;
+  groupAnnouncement: boolean;
+  postComments: boolean;
+  postReactions: boolean;
   groupMembership: boolean;
   eventReminder: string;
 }

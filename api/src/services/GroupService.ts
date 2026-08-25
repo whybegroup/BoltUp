@@ -38,6 +38,11 @@ const userService = new UserService();
 
 const FORUM_MENTION_NOTIFICATION_TITLE = 'You were mentioned';
 
+function forumSnippet(text: string, fallback: string): string {
+  const raw = text.replace(/\s+/g, ' ').trim() || fallback;
+  return raw.length > 160 ? `${raw.slice(0, 157)}…` : raw;
+}
+
 const GROUP_COVER_PHOTOS_INCLUDE = { orderBy: { id: 'asc' as const } };
 
 export class GroupService {
@@ -437,6 +442,14 @@ export class GroupService {
       });
     }
 
+    const announcementChanging = Object.prototype.hasOwnProperty.call(groupData, 'announcement');
+    const beforeAnnouncement = announcementChanging
+      ? await prisma.group.findUnique({
+          where: { id },
+          select: { announcement: true, name: true },
+        })
+      : null;
+
     if (coverPhotos !== undefined) {
       const existing = await prisma.group.findUnique({
         where: { id },
@@ -469,6 +482,21 @@ export class GroupService {
           updatedBy,
         },
       });
+    }
+
+    if (announcementChanging && beforeAnnouncement && updatedBy) {
+      const prev = (beforeAnnouncement.announcement ?? '').trim();
+      const next = ((groupData.announcement as string | null | undefined) ?? '').trim();
+      if (prev !== next) {
+        const groupName =
+          (typeof groupData.name === 'string' && groupData.name.trim()) || beforeAnnouncement.name;
+        void this.notifyGroupAnnouncementChanged({
+          groupId: id,
+          groupName,
+          actorId: updatedBy,
+          announcement: next,
+        });
+      }
     }
 
     // Fetch and return updated group
@@ -600,6 +628,60 @@ export class GroupService {
     }
   }
 
+  private async actorDisplayName(userId: string): Promise<string> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, name: true },
+    });
+    return user?.displayName?.trim() || user?.name?.trim() || 'Someone';
+  }
+
+  private async getActiveGroupMemberIds(groupId: string): Promise<string[]> {
+    const members = await prisma.groupMember.findMany({
+      where: { groupId, status: 'active' },
+      select: { userId: true },
+    });
+    return members.map((m) => m.userId);
+  }
+
+  private async notifyActiveGroupMembers(
+    groupId: string,
+    excludeUserId: string | undefined,
+    title: string,
+    body: string,
+    options: { type: string; icon: string }
+  ): Promise<void> {
+    const ids = (await this.getActiveGroupMemberIds(groupId)).filter(
+      (uid) => uid !== excludeUserId
+    );
+    if (ids.length === 0) return;
+    await notificationService
+      .createForUsers(ids, title, body, {
+        type: options.type,
+        icon: options.icon,
+        groupId,
+        dest: 'group',
+      })
+      .catch((err) => console.error('Failed to create group notifications:', err));
+  }
+
+  private async notifyGroupAnnouncementChanged(params: {
+    groupId: string;
+    groupName: string;
+    actorId: string;
+    announcement: string;
+  }): Promise<void> {
+    const who = await this.actorDisplayName(params.actorId);
+    const title = params.announcement ? 'New group announcement' : 'Announcement removed';
+    const body = params.announcement
+      ? `${who} posted an announcement in ${params.groupName}: ${forumSnippet(params.announcement, 'announcement')}`
+      : `${who} removed the announcement in ${params.groupName}`;
+    await this.notifyActiveGroupMembers(params.groupId, params.actorId, title, body, {
+      type: 'group_announcement',
+      icon: '📢',
+    });
+  }
+
   private mapReactionEntries(
     rows: Array<{ emoji: string; userId: string }>
   ): GroupPostReactionEntry[] {
@@ -659,13 +741,13 @@ export class GroupService {
     /** When editing, skip users already mentioned in the previous body. */
     previousText?: string;
     previousMentionedUserIds?: string[];
-  }): Promise<void> {
+  }): Promise<Set<string>> {
     const mentionTokens = extractMentionTokens(params.text);
     if (
       mentionTokens.length === 0 &&
       !(params.mentionedUserIds && params.mentionedUserIds.length > 0)
     ) {
-      return;
+      return new Set();
     }
 
     const [author, groupMembers] = await Promise.all([
@@ -678,7 +760,7 @@ export class GroupService {
         include: { user: true },
       }),
     ]);
-    if (!author) return;
+    if (!author) return new Set();
 
     const rowByUserId = new Map<string, MemberRow>();
     for (const m of groupMembers as any[]) {
@@ -710,7 +792,7 @@ export class GroupService {
       for (const uid of previousRecipients) mentionRecipients.delete(uid);
     }
 
-    if (mentionRecipients.size === 0) return;
+    if (mentionRecipients.size === 0) return new Set();
 
     const snippetRaw = params.text.trim() || (params.kind === 'post' ? 'posted' : 'commented');
     const snippet = snippetRaw.length > 160 ? `${snippetRaw.slice(0, 157)}…` : snippetRaw;
@@ -731,6 +813,7 @@ export class GroupService {
         })
         .catch((err) => console.error('Failed to create forum mention notification:', err));
     }
+    return mentionRecipients;
   }
 
   private mapGroupPost(row: any): GroupPost {
@@ -862,7 +945,7 @@ export class GroupService {
   public async toggleGroupPostReaction(postId: string, input: GroupPostReactionInput): Promise<GroupPost> {
     const post = await prisma.groupPost.findUnique({
       where: { id: postId },
-      select: { id: true, groupId: true },
+      select: { id: true, groupId: true, userId: true, title: true },
     });
     if (!post) throw new Error('Post not found');
     await this.requireActiveMember(post.groupId, input.userId);
@@ -886,6 +969,23 @@ export class GroupService {
           emoji: input.emoji,
         },
       });
+      if (post.userId !== input.userId) {
+        const who = await this.actorDisplayName(input.userId);
+        void notificationService
+          .createForUser(
+            post.userId,
+            'New reaction on your post',
+            `${who} reacted ${input.emoji} to your post "${post.title}"`,
+            {
+              type: 'post_reaction',
+              icon: input.emoji,
+              groupId: post.groupId,
+              postId,
+              dest: 'group',
+            }
+          )
+          .catch((err) => console.error('Failed to create post reaction notification:', err));
+      }
     }
     const refreshed = await prisma.groupPost.findUnique({
       where: { id: postId },
@@ -907,18 +1007,20 @@ export class GroupService {
   ): Promise<GroupPostComment> {
     const post = await prisma.groupPost.findUnique({
       where: { id: postId },
-      select: { groupId: true, title: true },
+      select: { groupId: true, title: true, userId: true },
     });
     if (!post) throw new Error('Post not found');
     await this.requireActiveMember(post.groupId, input.userId);
+    let parentAuthorId: string | undefined;
     if (input.parentCommentId) {
       const parent = await prisma.groupPostComment.findUnique({
         where: { id: input.parentCommentId },
-        select: { postId: true },
+        select: { postId: true, userId: true },
       });
       if (!parent || parent.postId !== postId) {
         throw new Error('Parent comment not found');
       }
+      parentAuthorId = parent.userId;
     }
     const created = await prisma.groupPostComment.create({
       data: {
@@ -930,7 +1032,7 @@ export class GroupService {
       },
       include: { reactions: { select: { emoji: true, userId: true } } },
     });
-    await this.notifyForumMentions({
+    const mentionRecipients = await this.notifyForumMentions({
       groupId: post.groupId,
       authorId: input.userId,
       text: input.body,
@@ -940,6 +1042,41 @@ export class GroupService {
       postTitle: post.title,
       kind: 'comment',
     });
+    const who = await this.actorDisplayName(input.userId);
+    const snippet = forumSnippet(input.body, 'commented');
+    const dest = {
+      type: 'post_comment',
+      icon: '💬',
+      groupId: post.groupId,
+      postId,
+      commentId: created.id,
+      dest: 'group' as const,
+    };
+    if (post.userId !== input.userId && !mentionRecipients.has(post.userId)) {
+      void notificationService
+        .createForUser(
+          post.userId,
+          'New comment on your post',
+          `${who} commented on "${post.title}": ${snippet}`,
+          dest
+        )
+        .catch((err) => console.error('Failed to create post comment notification:', err));
+    }
+    if (
+      parentAuthorId &&
+      parentAuthorId !== input.userId &&
+      parentAuthorId !== post.userId &&
+      !mentionRecipients.has(parentAuthorId)
+    ) {
+      void notificationService
+        .createForUser(
+          parentAuthorId,
+          'New reply',
+          `${who} replied to your comment on "${post.title}": ${snippet}`,
+          dest
+        )
+        .catch((err) => console.error('Failed to create post reply notification:', err));
+    }
     return this.mapGroupPostComment(created);
   }
 
@@ -1048,7 +1185,7 @@ export class GroupService {
   ): Promise<GroupPostComment> {
     const comment = await prisma.groupPostComment.findUnique({
       where: { id: commentId },
-      include: { post: { select: { groupId: true } } },
+      include: { post: { select: { groupId: true, title: true } } },
     });
     if (!comment) throw new Error('Comment not found');
     await this.requireActiveMember(comment.post.groupId, input.userId);
@@ -1072,6 +1209,24 @@ export class GroupService {
           emoji: input.emoji,
         },
       });
+      if (comment.userId !== input.userId) {
+        const who = await this.actorDisplayName(input.userId);
+        void notificationService
+          .createForUser(
+            comment.userId,
+            'New reaction on your comment',
+            `${who} reacted ${input.emoji} to your comment on "${comment.post.title}"`,
+            {
+              type: 'post_reaction',
+              icon: input.emoji,
+              groupId: comment.post.groupId,
+              postId: comment.postId,
+              commentId,
+              dest: 'group',
+            }
+          )
+          .catch((err) => console.error('Failed to create comment reaction notification:', err));
+      }
     }
     const refreshed = await prisma.groupPostComment.findUnique({
       where: { id: commentId },
