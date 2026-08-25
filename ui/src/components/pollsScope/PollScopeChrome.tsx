@@ -7,7 +7,9 @@ import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 import { PollsTopHeader } from './PollsTopHeader';
 import { GroupsBreadcrumbTrail } from '../GroupsBreadcrumbTrail';
 import { NotificationsPanelModal } from '../NotificationsPanelModal';
+import { CreateOrJoinButton } from '../CreateOrJoinButton';
 import { usePollScopeBreadcrumbs } from './usePollScopeBreadcrumbs';
+import { usePollScopeHeaderSlot } from './PollScopeNavContext';
 
 type PollScopeChromeProps = {
   pollId: string | null;
@@ -28,14 +30,45 @@ export function PollScopeChrome({ pollId }: PollScopeChromeProps) {
   const [showNotifs, setShowNotifs] = useState(false);
 
   const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
+  const eventEligibleGroupCount = useMemo(
+    () =>
+      allGroupsForChrome.filter(
+        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
+      ).length,
+    [allGroupsForChrome]
+  );
+  const { headerTrailing, headerTheme } = usePollScopeHeaderSlot();
+  const showDetailActions = !!pollId;
 
   return (
     <>
-      <View style={[styles.chrome, { paddingTop: insets.top }]}>
+      <View
+        collapsable={false}
+        style={[
+          styles.chrome,
+          { paddingTop: insets.top },
+          {
+            backgroundColor:
+              showDetailActions && headerTheme ? headerTheme.backgroundColor : Colors.bg,
+          },
+        ]}
+      >
         <PollsTopHeader
           showNotifs={showNotifs}
           onToggleNotifs={() => setShowNotifs((p) => !p)}
           unreadCount={unreadNotifCount}
+          trailingActions={showDetailActions ? headerTrailing : undefined}
+          createAction={
+            !showDetailActions ? (
+              <CreateOrJoinButton
+                userId={currentUserId}
+                eventEligibleGroupCount={eventEligibleGroupCount}
+                mode="poll"
+                variant="header"
+              />
+            ) : undefined
+          }
+          headerTheme={showDetailActions ? headerTheme : undefined}
         />
         <GroupsBreadcrumbTrail segments={segments} />
       </View>

@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { Poll, GroupScoped } from '@moijia/client';
 import { PollOptionInputKind } from '@moijia/client';
@@ -101,7 +101,6 @@ export interface PollRowProps {
   group?: GroupScoped;
   groupColorHex?: string;
   onPress: () => void;
-  onGroupPress?: (groupId: string) => void;
   isLast?: boolean;
   showGroup?: boolean;
   /** When set, shown as a pill next to the title (e.g. “Closes today”). */
@@ -113,7 +112,6 @@ export function PollRow({
   group,
   groupColorHex,
   onPress,
-  onGroupPress,
   isLast = false,
   showGroup = true,
   urgency,
@@ -161,14 +159,18 @@ export function PollRow({
         styles.row,
         {
           backgroundColor: isPast ? '#F5F5F4' : Colors.surface,
-          borderLeftWidth: 3,
-          borderLeftColor: isPast ? Colors.border : p.dot,
           opacity: isPast ? 0.5 : 1,
         },
         !isLast && styles.rowBorder,
       ]}
       activeOpacity={0.7}
+      collapsable={false}
     >
+      <View
+        pointerEvents="none"
+        collapsable={false}
+        style={[styles.themeAccent, { backgroundColor: isPast ? Colors.border : p.dot }]}
+      />
       <View style={styles.content}>
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={2}>
@@ -196,20 +198,6 @@ export function PollRow({
             </View>
           ) : null}
         </View>
-        {showGroup && group ? (
-          <Pressable
-            onPress={() => onGroupPress?.(poll.groupId)}
-            style={({ pressed }) => [
-              styles.groupNameWrap,
-              onGroupPress && pressed && { backgroundColor: p.label, borderRadius: 6 },
-            ]}
-            disabled={!onGroupPress}
-          >
-            <Text style={[styles.groupName, onGroupPress && { color: p.dot }]} numberOfLines={1}>
-              {group.name}
-            </Text>
-          </Pressable>
-        ) : null}
         <View style={styles.metaRow}>
           <Ionicons name="time-outline" size={14} color={Colors.textMuted} style={styles.metaIcon} />
           <Text style={styles.meta} numberOfLines={2}>
@@ -222,6 +210,12 @@ export function PollRow({
             <Text style={styles.meta} numberOfLines={2}>
               {descPreview}
             </Text>
+          </View>
+        ) : null}
+        {showGroup && group ? (
+          <View style={styles.groupNameRow}>
+            <Ionicons name="people-outline" size={14} color={Colors.textMuted} style={styles.groupIcon} />
+            <Text style={styles.groupName} numberOfLines={1}>{group.name}</Text>
           </View>
         ) : null}
         <Text style={styles.responseLine}>{responseLine}</Text>
@@ -238,6 +232,14 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     gap: 12,
     position: 'relative',
+    overflow: 'hidden',
+  },
+  themeAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
   },
   rowBorder: {
     borderBottomWidth: 1,
@@ -290,18 +292,17 @@ const styles = StyleSheet.create({
   urgencyBadgeTextSoon: {
     color: '#B45309',
   },
-  groupNameWrap: {
-    alignSelf: 'flex-start',
-    marginBottom: 2,
-    paddingHorizontal: 6,
-    marginHorizontal: -6,
-    paddingVertical: 2,
-    marginVertical: -2,
+  groupNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 3,
+  },
+  groupIcon: {
+    marginTop: 0,
   },
   groupName: {
-    fontSize: 12,
-    fontFamily: Fonts.regular,
-    color: Colors.textMuted,
+    fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted,
   },
   metaRow: {
     flexDirection: 'row',

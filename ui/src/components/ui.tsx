@@ -11,6 +11,7 @@ import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollVi
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadows, Fonts } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { modalTopBarStyles } from './modalTopBarStyles';
 import { avatarColor } from '../utils/helpers';
 
@@ -286,7 +287,7 @@ export function Sheet({
   }));
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} {...edgeToEdgeModalProps}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <KeyboardFormRoot style={overlayStyle}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />

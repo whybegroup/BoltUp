@@ -26,6 +26,10 @@ export class PushNotificationService {
     if (notification.commentId) data.commentId = notification.commentId;
     if (notification.dest) data.dest = notification.dest;
 
+    const unreadCount = await prisma.notification.count({
+      where: { userId: notification.userId, read: false },
+    });
+
     const messages: ExpoPushMessage[] = [];
     for (const { token } of rows) {
       if (!Expo.isExpoPushToken(token)) continue;
@@ -34,6 +38,7 @@ export class PushNotificationService {
         sound: 'default',
         title: notification.title,
         body: notification.body,
+        badge: unreadCount,
         data,
       });
     }

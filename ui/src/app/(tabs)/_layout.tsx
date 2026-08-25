@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useCallback } from 'react';
+import { useMemo, useRef } from 'react';
 import { Tabs, usePathname, type Href } from 'expo-router';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,42 @@ function isTabRoot(tab: TabName, pathname: string): boolean {
   const normalized = pathname.replace(/^\/\(tabs\)/, '') || '/';
   return normalized === `/${tab}`;
 }
+
+function pathnameIsOnTab(tab: TabName, pathname: string): boolean {
+  const normalized = pathname.replace(/^\/\(tabs\)/, '') || '/';
+  return normalized === `/${tab}` || normalized.startsWith(`/${tab}/`);
+}
+
+type TabNavState = {
+  type?: string;
+  index?: number;
+  routes?: Array<{ name: string; state?: TabNavState }>;
+};
+
+type TabNavigation = {
+  isFocused: () => boolean;
+  getState?: () => TabNavState | undefined;
+};
+
+function nestedStackIndex(state: TabNavState | undefined, tab: TabName): number | null {
+  if (!state) return null;
+  if (state.type === 'tab' && Array.isArray(state.routes)) {
+    const route =
+      state.routes.find((r) => r.name === tab) ?? state.routes[state.index ?? 0];
+    if (!route?.state) return 0;
+    return nestedStackIndex(route.state, tab) ?? route.state.index ?? 0;
+  }
+  if (typeof state.index === 'number') return state.index;
+  return 0;
+}
+
+function isTabAtRoot(navigation: TabNavigation, tab: TabName, pathname: string): boolean {
+  if (pathnameIsOnTab(tab, pathname)) return isTabRoot(tab, pathname);
+  const nested = nestedStackIndex(navigation.getState?.(), tab);
+  return nested == null || nested === 0;
+}
+
+const SAME_TAB_PRESS_MS = 450;
 
 /** Renders in React Navigation's label slot (full tab width), not inside the ~31px icon wrapper. */
 function TabBarLabel({
@@ -88,18 +124,40 @@ export default function TabLayout() {
   const pathname = usePathname();
   const router = useRouter();
 
-  const tabRootListeners = useCallback(
-    (tab: TabName) =>
-      ({ navigation }: { navigation: { isFocused: () => boolean } }) => ({
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const lastSameTabPressAt = useRef<Partial<Record<TabName, number>>>({});
+
+  const tabListeners = useMemo(() => {
+    const make =
+      (tab: TabName) =>
+      ({ navigation }: { navigation: TabNavigation }) => ({
         tabPress: (e: { preventDefault: () => void }) => {
+          const now = Date.now();
+          const prev = lastSameTabPressAt.current[tab] ?? 0;
+          if (now - prev < SAME_TAB_PRESS_MS) {
+            e.preventDefault();
+            return;
+          }
+          lastSameTabPressAt.current[tab] = now;
+
           if (!navigation.isFocused()) return;
-          if (isTabRoot(tab, pathname)) return;
+
           e.preventDefault();
-          router.replace(TAB_ROOT_HREF[tab]);
+          if (isTabAtRoot(navigation, tab, pathnameRef.current)) return;
+          routerRef.current.replace(TAB_ROOT_HREF[tab]);
         },
-      }),
-    [pathname, router]
-  );
+      });
+    return {
+      groups: make('groups'),
+      events: make('events'),
+      polls: make('polls'),
+      posts: make('posts'),
+      profile: make('profile'),
+    };
+  }, []);
 
   const tabBarLabelFn = (props: { focused: boolean; color: string; children: string }) => (
     <TabBarLabel focused={props.focused} color={props.color}>
@@ -126,7 +184,7 @@ export default function TabLayout() {
     >
       <Tabs.Screen
         name="groups"
-        listeners={tabRootListeners('groups')}
+        listeners={tabListeners.groups}
         options={{
           title: 'Groups',
           tabBarIcon: ({ focused }) => (
@@ -139,7 +197,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="events"
-        listeners={tabRootListeners('events')}
+        listeners={tabListeners.events}
         options={{
           title: 'Events',
           tabBarIcon: ({ focused }) => (
@@ -152,7 +210,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="polls"
-        listeners={tabRootListeners('polls')}
+        listeners={tabListeners.polls}
         options={{
           title: 'Polls',
           tabBarIcon: ({ focused }) => (
@@ -171,7 +229,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="posts"
-        listeners={tabRootListeners('posts')}
+        listeners={tabListeners.posts}
         options={{
           title: 'Posts',
           tabBarIcon: ({ focused }) => (
@@ -190,7 +248,7 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="profile"
-        listeners={tabRootListeners('profile')}
+        listeners={tabListeners.profile}
         options={{
           title: 'Profile',
           tabBarIcon: ({ focused }) => <TabBarGlyph focused={focused} isAvatar user={me} />,

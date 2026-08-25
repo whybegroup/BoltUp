@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 
 export type BreadcrumbDropdownItem = {
   id: string;
@@ -108,7 +109,7 @@ export function GroupsBreadcrumbDropdownModal({
   const menuTop = breadcrumbDropdownTop(anchor?.y);
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+    <Modal {...edgeToEdgeModalProps} visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={groupsBreadcrumbDropdownStyles.overlay}>
         <TouchableOpacity
           style={groupsBreadcrumbDropdownStyles.overlayBackdrop}

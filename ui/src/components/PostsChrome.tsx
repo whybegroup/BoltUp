@@ -7,6 +7,7 @@ import { Colors, Fonts, Layout } from '../constants/theme';
 import { useGroups, useNotifications, useAllGroupMemberColors } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { NotificationsPanelModal } from './NotificationsPanelModal';
+import { NotificationBellButton } from './NotificationBellButton';
 
 type PostsChromeProps = {
   viewMode: 'list' | 'grid';
@@ -73,25 +74,11 @@ export function PostsChrome({ viewMode, onViewModeChange }: PostsChromeProps) {
                 </Svg>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
+            <NotificationBellButton
+              showNotifs={showNotifs}
               onPress={() => setShowNotifs(true)}
-              style={[styles.iconBtn, showNotifs && { borderColor: Colors.borderStrong, backgroundColor: Colors.bg }]}
-            >
-              <Svg
-                width={16}
-                height={16}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={Colors.text}
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </Svg>
-              {unreadNotifCount > 0 && <View style={styles.bellDot} />}
-            </TouchableOpacity>
+              unreadCount={unreadNotifCount}
+            />
           </View>
         </View>
       </View>
@@ -123,7 +110,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
   },
   headerTitleRow: { 
     flexDirection: 'row', 
@@ -164,25 +151,4 @@ const styles = StyleSheet.create({
   },
   viewToggleSegRight: {},
   viewBtnActive: { backgroundColor: '#F0F0EE' },
-  iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellDot: {
-    position: 'absolute',
-    top: 1,
-    right: 1,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.notGoing,
-    borderWidth: 2,
-    borderColor: Colors.surface,
-  },
 });

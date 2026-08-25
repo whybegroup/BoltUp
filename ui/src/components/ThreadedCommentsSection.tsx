@@ -19,7 +19,12 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
-import { createScrollAboveKeyboardOnFocus } from '../utils/scrollInputAboveKeyboard';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
+import { isContentEdited } from '../utils/helpers';
+import {
+  createScrollAboveKeyboardOnFocus,
+  scrollNodeToTopOfViewport,
+} from '../utils/scrollInputAboveKeyboard';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import { CommentsSection } from './CommentsSection';
 import { CommentReplyQuote } from './CommentReplyQuote';
@@ -37,6 +42,7 @@ export type ThreadComment = {
   body: string;
   parentCommentId: string | null;
   createdAt: string | number | Date;
+  updatedAt?: string | number | Date;
   reactions: Array<{ emoji: string; count: number; userIds: string[] }>;
 };
 
@@ -44,6 +50,14 @@ function toTimestamp(value: ThreadComment['createdAt']): number {
   if (value instanceof Date) return value.getTime();
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function commentTimeLabel(
+  comment: ThreadComment,
+  formatCommentTime: (createdAt: ThreadComment['createdAt']) => string,
+): string {
+  const base = formatCommentTime(comment.createdAt);
+  return isContentEdited(comment.createdAt, comment.updatedAt) ? `${base} · Edited` : base;
 }
 
 export function invalidReplyParentIds(editingId: string, comments: ThreadComment[]): Set<string> {
@@ -68,6 +82,7 @@ export function mapApiEventCommentsToThread(
     text: string;
     replyToCommentId?: string | null;
     createdAt: Date | string | number;
+    updatedAt?: Date | string | number;
     reactions: ThreadComment['reactions'];
   }>
 ): ThreadComment[] {
@@ -77,6 +92,7 @@ export function mapApiEventCommentsToThread(
     body: c.text ?? '',
     parentCommentId: c.replyToCommentId ?? null,
     createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
     reactions: c.reactions,
   }));
 }
@@ -212,6 +228,7 @@ export function ThreadedCommentsSection({
   const consumedFocusCommentRef = useRef<string | null>(null);
   const commentRowRefs = useRef<Record<string, View | null>>({});
   const commentComposerRef = useRef<View | null>(null);
+  const composerInputRef = useRef<TextInput | null>(null);
   const commentEditMountRef = useRef<View | null>(null);
   const commentRowTopByIdRef = useRef<Record<string, number>>({});
   const commentMenuButtonRefs = useRef<Record<string, View | null>>({});
@@ -370,7 +387,7 @@ export function ThreadedCommentsSection({
                       </Text>
                       <Text style={styles.commentTimeInline}>
                         {' · '}
-                        {formatCommentTime(comment.createdAt)}
+                        {commentTimeLabel(comment, formatCommentTime)}
                       </Text>
                     </Text>
                   </View>
@@ -524,7 +541,7 @@ export function ThreadedCommentsSection({
                     </Text>
                     <Text style={styles.commentTimeInline}>
                       {' · '}
-                      {formatCommentTime(comment.createdAt)}
+                        {commentTimeLabel(comment, formatCommentTime)}
                     </Text>
                   </Text>
                 </View>
@@ -685,6 +702,31 @@ export function ThreadedCommentsSection({
     [scrollOffsetYRef, scrollRef]
   );
 
+  useEffect(() => {
+    if (!replyTargetId) return;
+    let cancelled = false;
+    const bringComposerToTop = () => {
+      if (cancelled) return;
+      scrollNodeToTopOfViewport({
+        scrollRef,
+        scrollViewportYRef,
+        scrollOffsetYRef,
+        targetRef: commentComposerRef,
+      });
+    };
+    const focusTimer = setTimeout(() => {
+      if (!cancelled) composerInputRef.current?.focus();
+    }, 30);
+    const t1 = setTimeout(bringComposerToTop, 50);
+    const t2 = setTimeout(bringComposerToTop, Platform.OS === 'android' ? 360 : 180);
+    return () => {
+      cancelled = true;
+      clearTimeout(focusTimer);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [replyTargetId, scrollOffsetYRef, scrollRef, scrollViewportYRef]);
+
   const scrollEditIntoView = useMemo(
     () =>
       createScrollAboveKeyboardOnFocus({
@@ -706,7 +748,7 @@ export function ThreadedCommentsSection({
           {renderComposer ? (
             renderComposer()
           ) : (
-            <View ref={commentComposerRef} style={styles.commentComposer}>
+            <View ref={commentComposerRef} collapsable={false} style={styles.commentComposer}>
               {replyTargetComment ? (
                 <View style={styles.composerReplyPreviewRow}>
                   <View style={[styles.replyQuoteStrip, styles.composerReplyQuoteStrip]}>
@@ -737,6 +779,7 @@ export function ThreadedCommentsSection({
               {mentionMembers ? (
                 <CommentMentionInput
                   stacked
+                  inputRef={composerInputRef}
                   value={draftText}
                   onChangeText={onDraftTextChange}
                   onFocus={scrollComposerIntoView}
@@ -749,6 +792,7 @@ export function ThreadedCommentsSection({
                 />
               ) : (
                 <TextInput
+                  ref={composerInputRef}
                   value={draftText}
                   onChangeText={onDraftTextChange}
                   onFocus={scrollComposerIntoView}
@@ -856,7 +900,7 @@ export function ThreadedCommentsSection({
       </CommentsSection>
 
       {commentOptionsTarget && commentOptionsPopoverLayout ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"

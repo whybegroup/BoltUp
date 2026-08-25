@@ -8,8 +8,8 @@ import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { PushTokenInput, UsersService } from '@moijia/client';
 import { navigateFromNotificationPayload } from '../utils/notificationNavigation';
 import { refreshAppOnResume } from '../utils/refreshAppOnResume';
+import { useNotifications } from './api';
 
-// Native only (web uses usePushNotifications.web.ts)
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: false,
@@ -41,7 +41,7 @@ async function resolveExpoPushToken(): Promise<string | null> {
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'Notifications',
-      importance: Notifications.AndroidImportance.DEFAULT,
+      importance: Notifications.AndroidImportance.HIGH,
     });
   }
 
@@ -63,6 +63,13 @@ export function usePushNotifications(userId: string | null) {
   const router = useRouter();
   const pathname = usePathname();
   const registeredTokenRef = useRef<string | null>(null);
+  const { data: notifs = [] } = useNotifications(userId ?? undefined);
+  const unreadCount = notifs.filter((n) => !n.read).length;
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    void Notifications.setBadgeCountAsync(userId ? unreadCount : 0).catch(() => undefined);
+  }, [userId, unreadCount]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || !userId) return;

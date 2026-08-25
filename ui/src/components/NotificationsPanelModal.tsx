@@ -12,10 +12,12 @@ import { usePathname } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Notification } from '@moijia/client';
 import { Colors, Fonts, Layout, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
 import { NotificationListIcon } from './NotificationListIcon';
 import { useUpdateNotification, useMarkAllNotificationsRead } from '../hooks/api';
 import { navigateFromNotification } from '../utils/notificationNavigation';
+import { formatNotificationTimestamp } from '../utils/notificationDisplay';
 
 export type NotificationsPanelGroup = { id: string; name: string };
 
@@ -48,7 +50,7 @@ export function NotificationsPanelModal({
   const panelTop = insets.top + Layout.tabHeaderMinHeight + 1 + 6;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} {...edgeToEdgeModalProps}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
         <View style={[styles.panel, { top: panelTop, right: 20 }]}>
@@ -122,14 +124,19 @@ export function NotificationsPanelModal({
                             fontSize: 13,
                             fontFamily: n.read ? Fonts.medium : Fonts.bold,
                             color: Colors.text,
+                            flex: 1,
+                            minWidth: 0,
                           }}
                           numberOfLines={1}
                         >
                           {n.title}
                         </Text>
                         {!n.read && <View style={styles.unreadDot} />}
+                        <Text style={styles.ts} numberOfLines={1}>
+                          {formatNotificationTimestamp(n.ts)}
+                        </Text>
                       </View>
-                      <Text style={{ fontSize: 12, color: Colors.textSub }} numberOfLines={1}>
+                      <Text style={{ fontSize: 12, color: Colors.textSub }} numberOfLines={2}>
                         {n.body}
                       </Text>
                     </View>
@@ -210,4 +217,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   unreadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.notGoing },
+  ts: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted, flexShrink: 0 },
 });

@@ -2,22 +2,30 @@ import { PrismaClient } from '@prisma/client';
 import { Notification, NotificationInput } from '../models';
 import { notifTypeToPrefKey, parseNotifPrefsJson } from '../utils/notifPrefsCore';
 import { PushNotificationService } from './PushNotificationService';
+import {
+  eventTimeUpdatedNotificationBody,
+  newEventNotificationBody,
+  timeSuggestionNotificationBody,
+} from '../utils/formatNotificationEventWhen';
 
 const prisma = new PrismaClient();
 const pushNotificationService = new PushNotificationService();
 
 export class NotificationService {
   /**
-   * Get all notifications with optional user filtering
+   * Get all notifications with optional user filtering.
+   * `timeZone` is an IANA zone from the device (`Intl…timeZone`) so event times in
+   * notification bodies match the rest of the app.
    */
-  public async getAll(userId?: string): Promise<Notification[]> {
+  public async getAll(userId?: string, timeZone?: string): Promise<Notification[]> {
     const notifications = await prisma.notification.findMany({
       where: userId ? { userId } : undefined,
       orderBy: {
         ts: 'desc',
       },
     });
-    return notifications.map((n) => this.mapNotification(n));
+    const mapped = notifications.map((n) => this.mapNotification(n));
+    return this.applyViewerTimeZoneToBodies(mapped, timeZone);
   }
 
   /**
@@ -197,5 +205,64 @@ export class NotificationService {
       ...n,
       dest: n.dest as 'group' | 'event' | 'poll' | null,
     };
+  }
+
+  private async applyViewerTimeZoneToBodies(
+    notifications: Notification[],
+    timeZone?: string
+  ): Promise<Notification[]> {
+    const tz = timeZone?.trim();
+    if (!tz) return notifications;
+
+    const eventIds = [
+      ...new Set(notifications.map((n) => n.eventId).filter((id): id is string => !!id)),
+    ];
+    if (eventIds.length === 0) return notifications;
+
+    const events = await prisma.event.findMany({
+      where: { id: { in: eventIds } },
+      select: { id: true, name: true, start: true, isAllDay: true },
+    });
+    const byId = new Map(events.map((e) => [e.id, e]));
+
+    const suggestionNotifs = notifications.filter((n) => n.type === 'time_suggestion' && n.eventId);
+    const suggestions = suggestionNotifs.length
+      ? await prisma.eventTimeSuggestion.findMany({
+          where: { eventId: { in: [...new Set(suggestionNotifs.map((n) => n.eventId as string))] } },
+          select: { eventId: true, start: true, createdAt: true, suggestedBy: true },
+        })
+      : [];
+    const suggesterIds = [...new Set(suggestions.map((s) => s.suggestedBy))];
+    const suggesters = suggesterIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: suggesterIds } },
+          select: { id: true, displayName: true },
+        })
+      : [];
+    const nameById = new Map(suggesters.map((u) => [u.id, u.displayName]));
+
+    return notifications.map((n) => {
+      const ev = n.eventId ? byId.get(n.eventId) : undefined;
+      if (!ev) return n;
+      if (n.type === 'event_created') {
+        return { ...n, body: newEventNotificationBody(ev.name, ev.start, tz, ev.isAllDay) };
+      }
+      if (n.type === 'event_time_changed') {
+        return { ...n, body: eventTimeUpdatedNotificationBody(ev.name, ev.start, tz, ev.isAllDay) };
+      }
+      if (n.type === 'time_suggestion') {
+        const notifTs = new Date(n.ts).getTime();
+        const match = suggestions
+          .filter((s) => s.eventId === n.eventId)
+          .sort(
+            (a, b) =>
+              Math.abs(a.createdAt.getTime() - notifTs) - Math.abs(b.createdAt.getTime() - notifTs)
+          )[0];
+        if (!match) return n;
+        const who = nameById.get(match.suggestedBy) || 'Someone';
+        return { ...n, body: timeSuggestionNotificationBody(who, match.start, ev.name, tz) };
+      }
+      return n;
+    });
   }
 }

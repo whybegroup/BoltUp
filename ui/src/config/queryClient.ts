@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
+import { refetchIntervalUnlessNotFound } from '../utils/apiErrors';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -9,6 +10,7 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       refetchOnMount: true,
       refetchOnReconnect: true,
+      refetchInterval: refetchIntervalUnlessNotFound(10_000),
     },
     mutations: {
       retry: 1,

@@ -26,6 +26,13 @@ moijia.com {
     header Content-Type application/json
     file_server
   }
+  @share_preview_bot {
+    path /event/* /poll/* /join/* /groups/*/forum
+    expression `{http.request.header.User-Agent} matches "(?i)(facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|discordbot|whatsapp|telegrambot|skypeuripreview|microsoftpreview|google-pagerenderer|iframely|embedly|pinterest|applebot|redditbot|vkshare|tumblr|bitlybot|preview)"`
+  }
+  handle @share_preview_bot {
+    reverse_proxy 127.0.0.1:3000
+  }
   handle {
     try_files {path} /index.html
     file_server

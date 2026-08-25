@@ -39,6 +39,7 @@ import {
 import { NavBar, Field, Toggle, formSectionTitleStyle } from '../components/ui';
 import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
+import { edgeToEdgeModalProps } from '../components/edgeToEdgeModalProps';
 import { RecurrenceField } from '../components/RecurrenceField';
 import { buildRecurrenceRule, defaultRecurrenceFormState, parseRecurrenceToForm, type RecurrenceFormState } from '../utils/recurrence';
 import { useGroups, useCreateEvent, useUpdateEvent, useEvent, useAllGroupMemberColors } from '../hooks/api';
@@ -57,6 +58,7 @@ import {
   type CoverPhotoDraft,
 } from '../services/pickAndUploadImage';
 import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
+import { buildGroupEventDetailUrl } from '../utils/breadcrumbUrl';
 import { EventUpdate } from '@moijia/client';
 import Toast from 'react-native-toast-message';
 import { SERIES_SCOPE_OPTIONS, type SeriesUpdateScope } from '../utils/seriesUpdateScopeOptions';
@@ -632,7 +634,14 @@ export default function CreateEventScreen() {
       };
 
       await createEventMutation.mutateAsync(newEvent);
-      router.replace(`/(tabs)/events/${newEvent.id}` as Href);
+      if (paramGroupId) {
+        const isInEventsTab = (createReturnTo ?? '').includes('/events/group/');
+        router.replace(
+          buildGroupEventDetailUrl(form.groupId || paramGroupId, newEvent.id, { isInEventsTab })
+        );
+      } else {
+        router.replace(`/(tabs)/events/${newEvent.id}` as Href);
+      }
     } catch {
       Alert.alert('Error', isEditing ? 'Failed to update event' : 'Failed to create event');
     }
@@ -1212,7 +1221,7 @@ export default function CreateEventScreen() {
               >
                 {selectedGroup.name}
               </Text>
-              {!isEditing && eventEligibleGroups.length > 1 ? (
+              {!isEditing && !paramGroupId && eventEligibleGroups.length > 1 ? (
                 <TouchableOpacity
                   onPress={() => setCreateStep('group')}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1660,7 +1669,7 @@ export default function CreateEventScreen() {
       )}
 
       {Platform.OS === 'ios' && showStartDatePicker ? (
-        <Modal transparent animationType="fade" statusBarTranslucent visible>
+        <Modal transparent animationType="fade" statusBarTranslucent visible {...edgeToEdgeModalProps}>
           <View style={styles.iosFilterPickerModalRoot}>
             <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosStartDate} />
             <View style={styles.iosFilterPickerModalCard}>
@@ -1685,7 +1694,7 @@ export default function CreateEventScreen() {
         </Modal>
       ) : null}
       {Platform.OS === 'ios' && showEndDatePicker ? (
-        <Modal transparent animationType="fade" statusBarTranslucent visible>
+        <Modal transparent animationType="fade" statusBarTranslucent visible {...edgeToEdgeModalProps}>
           <View style={styles.iosFilterPickerModalRoot}>
             <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosEndDate} />
             <View style={styles.iosFilterPickerModalCard}>
@@ -1710,7 +1719,7 @@ export default function CreateEventScreen() {
         </Modal>
       ) : null}
       {Platform.OS === 'ios' && showStartTimePicker ? (
-        <Modal transparent animationType="fade" statusBarTranslucent visible>
+        <Modal transparent animationType="fade" statusBarTranslucent visible {...edgeToEdgeModalProps}>
           <View style={styles.iosFilterPickerModalRoot}>
             <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosStartTime} />
             <View style={styles.iosFilterPickerModalCard}>
@@ -1735,7 +1744,7 @@ export default function CreateEventScreen() {
         </Modal>
       ) : null}
       {Platform.OS === 'ios' && showEndTimePicker ? (
-        <Modal transparent animationType="fade" statusBarTranslucent visible>
+        <Modal transparent animationType="fade" statusBarTranslucent visible {...edgeToEdgeModalProps}>
           <View style={styles.iosFilterPickerModalRoot}>
             <Pressable style={[StyleSheet.absoluteFillObject, styles.iosFilterPickerBackdrop]} onPress={commitIosEndTime} />
             <View style={styles.iosFilterPickerModalCard}>
@@ -1768,6 +1777,7 @@ export default function CreateEventScreen() {
           if (updateEventMutation.isPending) return;
           setShowSaveScopeModal(false);
         }}
+        {...edgeToEdgeModalProps}
       >
         <View style={styles.saveScopeOverlay}>
           <View style={styles.saveScopeBox}>

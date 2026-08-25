@@ -32,8 +32,13 @@ import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import { keyboardAwareScrollProps } from './KeyboardSafeScrollView';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  useAndroidKeyboardContentPad,
+  useEnsureFocusedInputAboveKeyboard,
+} from '../utils/scrollInputAboveKeyboard';
 import { Ionicons } from '@expo/vector-icons';
 import { EventFormPopoverChrome } from './EventFormPopoverChrome';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { modalTopBarStyles } from './modalTopBarStyles';
 import { usePathname, useNavigation, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
@@ -49,6 +54,8 @@ import {
   getMyWaitlistPosition,
   formatLocalDateInput,
   formatLocalDateYmdSlashes,
+  formatCreatedAtLabel,
+  isContentEdited,
 } from '../utils/helpers';
 import { computeMentionUserIdsForPost, type MentionMemberRow } from '../utils/mentionUtils';
 import { Avatar, Sheet, Toggle, formSectionTitleStyle } from './ui';
@@ -127,7 +134,9 @@ import {
   endPreservingDuration,
 } from '../utils/datetimeUtc';
 import { SERIES_SCOPE_OPTIONS, type SeriesUpdateScope } from '../utils/seriesUpdateScopeOptions';
-import { shareEvent } from '../utils/shareContent';
+import { formatRecurrenceRepeatsLabel } from '../utils/recurrence';
+import { ChromeHeaderTrailingRow, DetailActionIcon, RegisterChromeHeader } from './chromeHeaderSlot';
+import { EventShareSheet } from './EventShareSheet';
 
 /** Must match API soft-delete text when an admin removes someone else's comment */
 const COMMENT_DELETED_BY_ADMIN_MSG = 'This message was deleted by admin';
@@ -502,6 +511,7 @@ export function EventDetailScreen({
   const resolvedImageMap = useResolvedImageUrls(allSourceUrls);
 
   const [showAttend,  setShowAttend]  = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
   const [memoFor,     setMemoFor]     = useState<RSVPInput.status | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentDraftPhotos, setCommentDraftPhotos] = useState<string[]>([]);
@@ -542,6 +552,8 @@ export function EventDetailScreen({
   const scrollRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
   const scrollViewportYRef = useRef(0);
   const scrollOffsetYRef = useRef(0);
+  useEnsureFocusedInputAboveKeyboard(scrollRef, scrollOffsetYRef);
+  const androidKbPad = useAndroidKeyboardContentPad();
   const [eventCommentsAncestorTopPx, setEventCommentsAncestorTopPx] = useState(0);
   const reactionButtonRefs = useRef<Record<string, View | null>>({});
   const insets = useSafeAreaInsets();
@@ -1029,6 +1041,7 @@ export function EventDetailScreen({
         text: c.text ?? '',
         replyToCommentId: c.replyToCommentId ?? null,
         createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
         reactions: (c.reactions ?? []).map((r) => ({
           emoji: r.emoji,
           count: r.count,
@@ -1268,6 +1281,7 @@ export function EventDetailScreen({
   const myRsvp  = rsvps.find(r => r.userId === currentUserId);
   const evStart = displayTiming.displayStart;
   const evEnd = displayTiming.displayEnd;
+  const recurrenceRepeatsLabel = formatRecurrenceRepeatsLabel(displayEv.recurrenceRule, evStart);
   const isMultiDay = evStart.toDateString() !== evEnd.toDateString();
   /** Event is considered ended only after its configured end instant has passed. */
   const isPast = Date.now() > evEnd.getTime();
@@ -1639,6 +1653,21 @@ export function EventDetailScreen({
     (draftAllDay || (!!draftStartTime?.trim() && !!draftEndTime?.trim()));
   const detailTimeRangeErrored = detailTimeFieldsComplete && !detailTimeRangeValid;
 
+  const closeTimeSuggestModal = () => {
+    setShowSuggestStartDatePicker(false);
+    setShowSuggestEndDatePicker(false);
+    setShowSuggestStartTimePicker(false);
+    setShowSuggestEndTimePicker(false);
+    setShowTimeSuggestModal(false);
+  };
+
+  const openSuggestPicker = (which: 'startDate' | 'startTime' | 'endDate' | 'endTime') => {
+    setShowSuggestStartDatePicker(which === 'startDate');
+    setShowSuggestStartTimePicker(which === 'startTime');
+    setShowSuggestEndDatePicker(which === 'endDate');
+    setShowSuggestEndTimePicker(which === 'endTime');
+  };
+
   const submitTimeSuggestion = async () => {
     if (!currentUserId || !suggestStartDate || !suggestEndDate) return;
     const [sh, sm] = suggestStartTime.split(':').map(Number);
@@ -1669,8 +1698,13 @@ export function EventDetailScreen({
         userId: currentUserId,
         start: start.toISOString(),
         end: end.toISOString(),
+        viewerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       setShowTimeSuggestModal(false);
+      setShowSuggestStartDatePicker(false);
+      setShowSuggestEndDatePicker(false);
+      setShowSuggestStartTimePicker(false);
+      setShowSuggestEndTimePicker(false);
     } catch {
       Alert.alert('Error', 'Could not submit time suggestion');
     }
@@ -1870,23 +1904,21 @@ export function EventDetailScreen({
   const hasBanners =
     showHoursBanner || isPast || needsMore || showLowSpots || imWaitlisted;
 
+  const actionPlacement = isPageVariant ? 'chrome' : 'modal';
   const eventToolbar = (
     <>
-      <TouchableOpacity
-        onPress={() => void shareEvent(eventId, displayEv.name)}
-        style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-        hitSlop={8}
-        accessibilityRole="button"
+      <DetailActionIcon
+        placement={actionPlacement}
+        onPress={() => setShowShareSheet(true)}
         accessibilityLabel="Share event"
       >
-        <Ionicons name="share-outline" size={20} color={Colors.text} />
-      </TouchableOpacity>
+        <Ionicons name="share-outline" size={actionPlacement === 'chrome' ? 18 : 20} color={Colors.text} />
+      </DetailActionIcon>
       {currentUserId ? (
-        <TouchableOpacity
-          onPress={toggleEventWatch}
+        <DetailActionIcon
+          placement={actionPlacement}
+          onPress={() => void toggleEventWatch()}
           disabled={setWatchMutation.isPending}
-          style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-          accessibilityRole="button"
           accessibilityLabel={
             effectiveWatching
               ? 'Watching this event — tap to stop default notifications'
@@ -1895,42 +1927,44 @@ export function EventDetailScreen({
         >
           <Ionicons
             name={effectiveWatching ? 'eye' : 'eye-off-outline'}
-            size={22}
+            size={actionPlacement === 'chrome' ? 18 : 22}
             color={Colors.text}
           />
-        </TouchableOpacity>
+        </DetailActionIcon>
       ) : null}
       {canEdit ? (
-        <TouchableOpacity
+        <DetailActionIcon
+          placement={actionPlacement}
           onPress={() =>
             router.push(
               withReturnTo(`/create-event?editId=${encodeURIComponent(eventId)}`, pathname)
             )
           }
-          style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-          hitSlop={8}
-          accessibilityRole="button"
           accessibilityLabel="Edit event"
         >
-          <Ionicons name="create-outline" size={20} color={Colors.text} />
-        </TouchableOpacity>
+          <Ionicons name="create-outline" size={actionPlacement === 'chrome' ? 18 : 20} color={Colors.text} />
+        </DetailActionIcon>
       ) : null}
       {canDeleteEventLive ? (
-        <TouchableOpacity
+        <DetailActionIcon
+          placement={actionPlacement}
           onPress={() => setShowDeleteConfirm(true)}
-          style={isPageVariant ? styles.pageEventIconBtn : [modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-          accessibilityRole="button"
           accessibilityLabel="Delete event"
         >
-          <Ionicons name="trash-outline" size={20} color={Colors.text} />
-        </TouchableOpacity>
+          <Ionicons name="trash-outline" size={actionPlacement === 'chrome' ? 18 : 20} color={Colors.text} />
+        </DetailActionIcon>
       ) : null}
     </>
   );
 
   const sheetBody = (
     <View style={styles.safe}>
-      {!isPageVariant ? (
+      {isPageVariant ? (
+        <RegisterChromeHeader
+          trailing={<ChromeHeaderTrailingRow>{eventToolbar}</ChromeHeaderTrailingRow>}
+          theme={{ backgroundColor: p.row, borderBottomColor: p.label }}
+        />
+      ) : (
         <View style={[modalTopBarStyles.bar, { backgroundColor: p.row, borderBottomColor: p.label }]}>
           <TouchableOpacity
             onPress={requestClose}
@@ -1943,7 +1977,7 @@ export function EventDetailScreen({
           <View style={{ flex: 1 }} />
           {eventToolbar}
         </View>
-      ) : null}
+      )}
 
       {isInProgress ? (
         <View style={styles.modalInProgressBanner}>
@@ -1967,7 +2001,7 @@ export function EventDetailScreen({
         }}
         {...keyboardAwareScrollProps}
         style={styles.eventScrollView}
-        contentContainerStyle={styles.eventScrollContent}
+        contentContainerStyle={[styles.eventScrollContent, androidKbPad > 0 && { paddingBottom: 8 + androidKbPad }]}
         showsVerticalScrollIndicator={false}
         refreshControl={refreshControl}
         onScroll={(e) => {
@@ -2012,12 +2046,7 @@ export function EventDetailScreen({
 
           <View style={styles.eventMainCardWrap}>
             <View style={styles.eventMainCard}>
-          {isPageVariant ? (
-            <View style={[styles.pageEventToolbar, { backgroundColor: p.row }]}>
-              {eventToolbar}
-            </View>
-          ) : null}
-          <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
+          <View style={styles.eventTitleBlock}>
             {canEditName ? (
               <View style={styles.eventNameField}>
                 <Text style={formSectionTitleStyle}>
@@ -2228,6 +2257,9 @@ export function EventDetailScreen({
                       {detailTimeRangeErrored ? (
                         <Text style={styles.detailTimeError}>End must be after start</Text>
                       ) : null}
+                      {recurrenceRepeatsLabel ? (
+                        <Text style={styles.detailRecurrenceText}>{recurrenceRepeatsLabel}</Text>
+                      ) : null}
                     </View>
                   </View>
                   {canCollaborateActivities && !isPast && ev.createdBy !== currentUserId ? (
@@ -2244,8 +2276,8 @@ export function EventDetailScreen({
                 </View>
               ) : isMultiDay ? (
                 <View style={{ gap: 4 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <Ionicons name="calendar-outline" size={20} color={Colors.textSub} style={{ width: 22 }} />
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <Ionicons name="calendar-outline" size={20} color={Colors.textSub} style={{ width: 22, marginTop: 1 }} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.infoText}>
                         {fmtDateFull(evStart)}{displayEv.isAllDay ? '' : ` · ${fmtTime(evStart)}`}
@@ -2253,6 +2285,9 @@ export function EventDetailScreen({
                       <Text style={[styles.infoText, { marginTop: 4 }]}>
                         {fmtDateFull(evEnd)}{displayEv.isAllDay ? '' : ` · ${fmtTime(evEnd)}`}
                       </Text>
+                      {recurrenceRepeatsLabel ? (
+                        <Text style={styles.detailRecurrenceText}>{recurrenceRepeatsLabel}</Text>
+                      ) : null}
                     </View>
                   </View>
                   {canCollaborateActivities && !isPast && ev.createdBy !== currentUserId ? (
@@ -2269,10 +2304,18 @@ export function EventDetailScreen({
                 </View>
               ) : (
                 <View style={{ gap: 6 }}>
-                  <InfoRow ionicon="calendar-outline">
-                    {fmtDateFull(evStart)}
-                    {displayEv.isAllDay ? ' · All day' : ` · ${fmtTime(evStart)} – ${fmtTime(evEnd)}`}
-                  </InfoRow>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                    <Ionicons name="calendar-outline" size={20} color={Colors.textSub} style={{ width: 22, marginTop: 1 }} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.infoText}>
+                        {fmtDateFull(evStart)}
+                        {displayEv.isAllDay ? ' · All day' : ` · ${fmtTime(evStart)} – ${fmtTime(evEnd)}`}
+                      </Text>
+                      {recurrenceRepeatsLabel ? (
+                        <Text style={styles.detailRecurrenceText}>{recurrenceRepeatsLabel}</Text>
+                      ) : null}
+                    </View>
+                  </View>
                   {canCollaborateActivities && !isPast && ev.createdBy !== currentUserId ? (
                     <TouchableOpacity
                       onPress={() => setShowTimeSuggestModal(true)}
@@ -2441,6 +2484,10 @@ export function EventDetailScreen({
                 </InfoRow>
               ) : null}
               <InfoRow ionicon="person-outline">Created by {getUserSafe(ev.createdBy).displayName}</InfoRow>
+              <InfoRow ionicon="time-outline">
+                Created at {formatCreatedAtLabel(ev.createdAt)}
+                {isContentEdited(ev.createdAt, ev.updatedAt) ? ' · Edited' : ''}
+              </InfoRow>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Ionicons name="people-outline" size={20} color={Colors.textSub} style={{ width: 22 }} />
                 <TouchableOpacity
@@ -2501,7 +2548,7 @@ export function EventDetailScreen({
                                 Alert.alert('Error', 'Could not accept suggestion');
                               }
                             }}
-                            style={[styles.smallActionBtn, { backgroundColor: p.dot }]}
+                            style={[styles.smallActionBtn, { backgroundColor: Colors.going }]}
                           >
                             <Text style={styles.smallActionBtnText}>Accept</Text>
                           </TouchableOpacity>
@@ -2906,6 +2953,7 @@ export function EventDetailScreen({
 
       {reactionQuickPickerTarget && currentUserId ? (
         <Modal
+          {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -2947,6 +2995,7 @@ export function EventDetailScreen({
 
       {reactionPickerTarget && currentUserId ? (
         <Modal
+          {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -2991,6 +3040,7 @@ export function EventDetailScreen({
 
       {reactionDetailModalForum ? (
         <Modal
+          {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -3039,6 +3089,27 @@ export function EventDetailScreen({
           </View>
         </Modal>
       ) : null}
+
+      <EventShareSheet
+        visible={showShareSheet}
+        onClose={() => setShowShareSheet(false)}
+        eventId={eventId}
+        groupId={displayEv.groupId}
+        userId={currentUserId}
+        details={{
+          name: displayEv.name,
+          start: evStart,
+          end: evEnd,
+          isAllDay: displayEv.isAllDay,
+          location: displayEv.location,
+          locationName: displayEv.locationName,
+          locationAddress: displayEv.locationAddress,
+          groupName: group.name,
+          description: displayEv.description,
+          recurrenceRule: displayEv.recurrenceRule,
+          recurrenceSeriesId: displayEv.recurrenceSeriesId,
+        }}
+      />
 
       {/* Attendance sheet */}
       <AttendanceSheet ev={ev} group={group} users={users} visible={showAttend} onClose={() => setShowAttend(false)} />
@@ -3188,6 +3259,7 @@ export function EventDetailScreen({
           clearPendingAfterSuccessfulSave();
           setShowDetailSaveScopeModal(false);
         }}
+        {...edgeToEdgeModalProps}
       >
         <View style={styles.deleteOverlay}>
           <View style={[styles.deleteBox, styles.detailSaveScopeModalBox]}>
@@ -3253,7 +3325,7 @@ export function EventDetailScreen({
         </View>
       </Modal>
 
-      <Modal visible={showDeleteConfirm} transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
+      <Modal visible={showDeleteConfirm} transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)} {...edgeToEdgeModalProps}>
         <View style={styles.deleteOverlay}>
           <View style={[styles.deleteBox, displayTiming.isRecurring && { maxWidth: 360 }]}>
             <Text style={styles.deleteTitle}>
@@ -3280,7 +3352,7 @@ export function EventDetailScreen({
                   }
                 >
                   <Text style={[styles.deleteConfirmText, { color: '#EF4444' }]}>
-                    {deleteEventMutation.isPending ? 'Removing…' : 'Only this event'}
+                    {deleteEventMutation.isPending ? 'Removing…' : 'Just this event'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -3293,7 +3365,7 @@ export function EventDetailScreen({
                   }
                 >
                   <Text style={styles.deleteConfirmText}>
-                    {truncateSeriesMutation.isPending ? 'Updating…' : 'This and following events in the series'}
+                    {truncateSeriesMutation.isPending ? 'Updating…' : 'All future events'}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -3336,7 +3408,8 @@ export function EventDetailScreen({
         visible={showTimeSuggestModal}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowTimeSuggestModal(false)}
+        onRequestClose={closeTimeSuggestModal}
+        {...edgeToEdgeModalProps}
       >
         <View style={styles.deleteOverlay}>
           <View style={[styles.deleteBox, { maxWidth: 400 }]}>
@@ -3345,7 +3418,7 @@ export function EventDetailScreen({
               Propose new start and end. The host can accept to update the event.
             </Text>
             {Platform.OS === 'web' ? (
-              <View style={{ gap: 10, marginBottom: 16 }}>
+              <View style={{ gap: 10, marginBottom: 16 }} pointerEvents="box-none">
                 <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted }}>Start</Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <input
@@ -3407,94 +3480,142 @@ export function EventDetailScreen({
                 </View>
               </View>
             ) : (
-              <ScrollView style={{ maxHeight: 320, marginBottom: 12 }} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                style={{ maxHeight: 420, marginBottom: 12 }}
+                keyboardShouldPersistTaps="always"
+                nestedScrollEnabled
+              >
                 <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>Start date</Text>
-                <TouchableOpacity onPress={() => setShowSuggestStartDatePicker(true)} style={{ marginBottom: 12 }}>
-                  <TextInput
-                    value={suggestStartDate}
-                    editable={false}
-                    style={styles.commentInputField}
-                    placeholder="Date"
-                  />
-                </TouchableOpacity>
+                <Pressable
+                  onPress={() => openSuggestPicker('startDate')}
+                  style={[styles.detailEventTimeSegment, { marginBottom: 12 }]}
+                >
+                  <Text style={styles.detailEventTimeSegmentText}>{suggestStartDate || 'Date'}</Text>
+                </Pressable>
                 <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>Start time</Text>
-                <TouchableOpacity onPress={() => setShowSuggestStartTimePicker(true)} style={{ marginBottom: 12 }}>
-                  <TextInput value={suggestStartTime} editable={false} style={styles.commentInputField} />
-                </TouchableOpacity>
+                <Pressable
+                  onPress={() => openSuggestPicker('startTime')}
+                  style={[styles.detailEventTimeSegment, { marginBottom: 12 }]}
+                >
+                  <Text style={styles.detailEventTimeSegmentText}>{suggestStartTime}</Text>
+                </Pressable>
                 <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>End date</Text>
-                <TouchableOpacity onPress={() => setShowSuggestEndDatePicker(true)} style={{ marginBottom: 12 }}>
-                  <TextInput value={suggestEndDate} editable={false} style={styles.commentInputField} />
-                </TouchableOpacity>
+                <Pressable
+                  onPress={() => openSuggestPicker('endDate')}
+                  style={[styles.detailEventTimeSegment, { marginBottom: 12 }]}
+                >
+                  <Text style={styles.detailEventTimeSegmentText}>{suggestEndDate || 'Date'}</Text>
+                </Pressable>
                 <Text style={{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textMuted, marginBottom: 6 }}>End time</Text>
-                <TouchableOpacity onPress={() => setShowSuggestEndTimePicker(true)} style={{ marginBottom: 8 }}>
-                  <TextInput value={suggestEndTime} editable={false} style={styles.commentInputField} />
-                </TouchableOpacity>
+                <Pressable
+                  onPress={() => openSuggestPicker('endTime')}
+                  style={[styles.detailEventTimeSegment, { marginBottom: 8 }]}
+                >
+                  <Text style={styles.detailEventTimeSegmentText}>{suggestEndTime}</Text>
+                </Pressable>
                 {showSuggestStartDatePicker ? (
-                  <DateTimePicker
-                    value={suggestStartDate ? new Date(suggestStartDate) : new Date()}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={(_, d) => {
-                      if (Platform.OS === 'android') setShowSuggestStartDatePicker(false);
-                      if (d) setSuggestStartDate(formatLocalDateInput(d));
-                    }}
-                  />
+                  <>
+                    <DateTimePicker
+                      value={(() => {
+                        const [y, m, d] = (suggestStartDate || '').split('-').map(Number);
+                        return y && m && d ? new Date(y, m - 1, d) : new Date();
+                      })()}
+                      mode="date"
+                      display="spinner"
+                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
+                      onChange={(_, d) => {
+                        if (d) setSuggestStartDate(formatLocalDateInput(d));
+                      }}
+                    />
+                    <View style={styles.detailDatePickerActions}>
+                      <TouchableOpacity onPress={() => setShowSuggestStartDatePicker(false)} style={styles.detailDatePickerBtn}>
+                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
                 ) : null}
                 {showSuggestEndDatePicker ? (
-                  <DateTimePicker
-                    value={suggestEndDate ? new Date(suggestEndDate) : new Date()}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    minimumDate={suggestStartDate ? new Date(suggestStartDate) : undefined}
-                    onChange={(_, d) => {
-                      if (Platform.OS === 'android') setShowSuggestEndDatePicker(false);
-                      if (d) setSuggestEndDate(formatLocalDateInput(d));
-                    }}
-                  />
+                  <>
+                    <DateTimePicker
+                      value={(() => {
+                        const [y, m, d] = (suggestEndDate || '').split('-').map(Number);
+                        return y && m && d ? new Date(y, m - 1, d) : new Date();
+                      })()}
+                      mode="date"
+                      display="spinner"
+                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
+                      minimumDate={(() => {
+                        const [y, m, d] = (suggestStartDate || '').split('-').map(Number);
+                        return y && m && d ? new Date(y, m - 1, d) : undefined;
+                      })()}
+                      onChange={(_, d) => {
+                        if (d) setSuggestEndDate(formatLocalDateInput(d));
+                      }}
+                    />
+                    <View style={styles.detailDatePickerActions}>
+                      <TouchableOpacity onPress={() => setShowSuggestEndDatePicker(false)} style={styles.detailDatePickerBtn}>
+                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
                 ) : null}
                 {showSuggestStartTimePicker ? (
-                  <DateTimePicker
-                    value={(() => {
-                      const [h, m] = suggestStartTime.split(':').map(Number);
-                      const x = new Date();
-                      x.setHours(h || 0, m || 0, 0, 0);
-                      return x;
-                    })()}
-                    mode="time"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={(_, d) => {
-                      if (Platform.OS === 'android') setShowSuggestStartTimePicker(false);
-                      if (d) {
-                        const pad = (n: number) => String(n).padStart(2, '0');
-                        setSuggestStartTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                      }
-                    }}
-                  />
+                  <>
+                    <DateTimePicker
+                      value={(() => {
+                        const [h, m] = suggestStartTime.split(':').map(Number);
+                        const x = new Date();
+                        x.setHours(h || 0, m || 0, 0, 0);
+                        return x;
+                      })()}
+                      mode="time"
+                      display="spinner"
+                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
+                      onChange={(_, d) => {
+                        if (d) {
+                          const pad = (n: number) => String(n).padStart(2, '0');
+                          setSuggestStartTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                        }
+                      }}
+                    />
+                    <View style={styles.detailDatePickerActions}>
+                      <TouchableOpacity onPress={() => setShowSuggestStartTimePicker(false)} style={styles.detailDatePickerBtn}>
+                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
                 ) : null}
                 {showSuggestEndTimePicker ? (
-                  <DateTimePicker
-                    value={(() => {
-                      const [h, m] = suggestEndTime.split(':').map(Number);
-                      const x = new Date();
-                      x.setHours(h || 0, m || 0, 0, 0);
-                      return x;
-                    })()}
-                    mode="time"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={(_, d) => {
-                      if (Platform.OS === 'android') setShowSuggestEndTimePicker(false);
-                      if (d) {
-                        const pad = (n: number) => String(n).padStart(2, '0');
-                        setSuggestEndTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                      }
-                    }}
-                  />
+                  <>
+                    <DateTimePicker
+                      value={(() => {
+                        const [h, m] = suggestEndTime.split(':').map(Number);
+                        const x = new Date();
+                        x.setHours(h || 0, m || 0, 0, 0);
+                        return x;
+                      })()}
+                      mode="time"
+                      display="spinner"
+                      style={Platform.OS === 'android' ? { height: 196 } : undefined}
+                      onChange={(_, d) => {
+                        if (d) {
+                          const pad = (n: number) => String(n).padStart(2, '0');
+                          setSuggestEndTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                        }
+                      }}
+                    />
+                    <View style={styles.detailDatePickerActions}>
+                      <TouchableOpacity onPress={() => setShowSuggestEndTimePicker(false)} style={styles.detailDatePickerBtn}>
+                        <Text style={styles.detailDatePickerBtnText}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
                 ) : null}
               </ScrollView>
             )}
             <View style={styles.deleteActions}>
               <TouchableOpacity
-                onPress={() => setShowTimeSuggestModal(false)}
+                onPress={closeTimeSuggestModal}
                 style={styles.deleteCancelBtn}
               >
                 <Text style={styles.deleteCancelText}>Cancel</Text>
@@ -3715,7 +3836,7 @@ function AttendanceSheet({ ev, group, users, visible, onClose }: { ev: EventDeta
       {memoPopup && (() => {
         const memoUser = users[memoPopup.userId];
         return (
-          <Modal visible transparent animationType="fade" onRequestClose={() => setMemoPopup(null)}>
+          <Modal visible transparent animationType="fade" onRequestClose={() => setMemoPopup(null)} {...edgeToEdgeModalProps}>
             <TouchableOpacity style={styles.memoOverlay} onPress={() => setMemoPopup(null)} activeOpacity={1}>
               <View style={styles.memoPopup}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -3761,6 +3882,7 @@ function MemoSheet({ status, existing, onConfirm, onClose }: { status: RSVPInput
       presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
       statusBarTranslucent
       onRequestClose={onClose}
+      {...edgeToEdgeModalProps}
     >
       <KeyboardAvoidingView
         style={styles.rsvpMemoModalRoot}
@@ -3830,22 +3952,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   groupChipInRow: { marginBottom: 0, flexShrink: 1 },
-  pageEventToolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 0,
-    justifyContent: 'flex-end',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    minHeight: 48,
-  },
-  pageEventIconBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   groupChipAboveTitle: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3951,6 +4057,13 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontFamily: Fonts.regular,
     marginTop: 6,
+  },
+  detailRecurrenceText: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    fontFamily: Fonts.regular,
+    marginTop: 6,
+    lineHeight: 18,
   },
   detailDatePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 8 },
   detailDatePickerBtn: {
@@ -4087,6 +4200,7 @@ const styles = StyleSheet.create({
     width: '90%',
     height: '80%',
   },
+  eventTitleBlock: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10 },
   eventNameField: { marginBottom: 2 },
   requiredMark: { color: Colors.todayRed, fontFamily: Fonts.semiBold },
   eventName:       { fontSize: 21, fontFamily: Fonts.extraBold, color: Colors.text, lineHeight: 28, marginBottom: 4 },

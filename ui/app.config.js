@@ -47,6 +47,13 @@ const plugins = [
         'moijia uses your location to suggest nearby places when setting an event location.',
     },
   ],
+  [
+    'expo-calendar',
+    {
+      calendarPermission: 'moijia can add this event to Apple Calendar.',
+      remindersPermission: 'moijia can add this event to Apple Calendar.',
+    },
+  ],
 ];
 if (iosUrlScheme) {
   plugins.push(['@react-native-google-signin/google-signin', { iosUrlScheme }]);
@@ -72,6 +79,14 @@ module.exports = {
       appleTeamId: 'U25ANZD978',
       associatedDomains: ['applinks:moijia.com', 'applinks:moijia.com?mode=developer'],
       useFrameworks: 'static',
+      infoPlist: {
+        NSCalendarsUsageDescription: 'moijia can add this event to Apple Calendar.',
+        NSCalendarsFullAccessUsageDescription: 'moijia can add this event to Apple Calendar.',
+        NSCalendarsWriteOnlyAccessUsageDescription:
+          'moijia can add this event to Apple Calendar.',
+        NSRemindersUsageDescription: 'moijia can add this event to Apple Calendar.',
+        NSRemindersFullAccessUsageDescription: 'moijia can add this event to Apple Calendar.',
+      },
     },
     android: {
       adaptiveIcon: {

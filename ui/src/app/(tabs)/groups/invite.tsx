@@ -12,6 +12,7 @@ import { useGroup } from '../../../hooks/api';
 import { usePullToRefresh } from '../../../hooks/usePullToRefresh';
 import { useCurrentUserContext } from '../../../contexts/CurrentUserContext';
 import { groupInviteLink } from '../../../utils/inviteLink';
+import { groupInviteShareCopy } from '../../../utils/sharePreviewCopy';
 
 export default function GroupInviteScreen() {
   const { id }    = useLocalSearchParams<{ id: string }>();
@@ -39,21 +40,23 @@ export default function GroupInviteScreen() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const inviteCopy = groupInviteShareCopy({ name: group.name, description: group.desc });
+
   const copyMessage = async () => {
     await Clipboard.setStringAsync(
-      `You're invited to ${group.name} on moijia!\n\nJoin here: ${inviteLink}\nOr use code: ${inviteCode}`
+      `${inviteCopy.message}\n\nJoin here: ${inviteLink}\nOr use code: ${inviteCode}`
     );
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const shareIMessage = () => {
-      Linking.openURL(`sms:?body=${encodeURIComponent(`Join the ${group.name} group on Moijia!\n\n${inviteLink}`)}`);
+      Linking.openURL(`sms:?body=${encodeURIComponent(`${inviteCopy.message}\n\n${inviteLink}`)}`);
   };
 
   const shareEmail = () => {
     Linking.openURL(
-      `mailto:?subject=${encodeURIComponent(`Join the ${group.name} group on Moijia!`)}&body=${encodeURIComponent(`You're invited!\n\n${inviteLink}`)}`
+      `mailto:?subject=${encodeURIComponent(inviteCopy.title)}&body=${encodeURIComponent(`${inviteCopy.message}\n\n${inviteLink}`)}`
     );
   };
 

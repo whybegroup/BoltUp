@@ -1,5 +1,6 @@
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 
 export type NoGroupForActionVariant = 'event' | 'poll';
 
@@ -11,7 +12,7 @@ type Props = {
 
 export function NoGroupForActionModal({ visible, variant, onDismiss }: Props) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss} {...edgeToEdgeModalProps}>
       <View style={styles.overlay}>
         <View style={styles.box}>
           <Text style={styles.title}>No Groups</Text>
@@ -43,6 +44,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: '100%',
     maxWidth: 320,
+    flexGrow: 0,
     alignItems: 'center',
   },
   title: { fontSize: 18, fontFamily: Fonts.bold, color: Colors.text, marginBottom: 12 },

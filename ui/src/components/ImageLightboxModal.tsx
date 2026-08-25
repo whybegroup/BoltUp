@@ -19,6 +19,7 @@ import Animated, {
 import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { ResolvableImage } from './ResolvableImage';
 import { downloadOrShareImage } from '../services/downloadImage';
 
@@ -177,7 +178,7 @@ export function ImageLightboxModal({
   const imageHeight = Math.max(240, winH * 0.72);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal {...edgeToEdgeModalProps} visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <GestureHandlerRootView style={styles.gestureRoot}>
         <View style={styles.root}>
           <View style={[styles.header, { paddingTop: Math.max(insets.top, 12) + 8 }]}>

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,20 +15,23 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Path } from 'react-native-svg';
 import { usePathname, type Href } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { GroupsService, type GroupPost } from '@moijia/client';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { shareFromModal, sharePost } from '../utils/shareContent';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { queryKeys } from '../config/queryClient';
 import { COMMENT_THREAD_OPTIONS_MENU_WIDTH } from './ThreadedCommentsSection';
 import {
   getGroupColor,
   getDefaultGroupThemeFromName,
+  formatCreatedAtLabel,
+  isContentEdited,
 } from '../utils/helpers';
 import { Pill } from './ui';
+import { CollapsibleFiltersButton } from './CollapsibleFiltersButton';
 import {
   useGroups,
   useNotifications,
@@ -53,6 +56,13 @@ import {
   pickAndUploadFileFromDevice,
   uploadUrlToDownloadUrl,
 } from '../services/pickAndUploadImage';
+import {
+  forumNewPostFromComposer,
+  loadForumGroupDraft,
+  loadPostsTabDraft,
+  patchForumGroupNewPost,
+  savePostsTabDraft,
+} from '../utils/forumPostDrafts';
 
 const POST_ATTACHMENT_MARKER = '[[MOIJIA_POST_ATTACHMENTS]]';
 
@@ -123,17 +133,6 @@ function splitStoredPostBody(body: string): {
   return { markdownSource: body, attachmentImages: [], attachmentFiles: [] };
 }
 
-function formatCreatedAt(value: string | number): string {
-  const date = typeof value === 'string' ? new Date(value) : new Date(value);
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
 function mergeComposerBodyForApi(
   text: string,
   photoUrls: string[],
@@ -182,6 +181,16 @@ export function PostsListScreen() {
   const [showGroupSelectModal, setShowGroupSelectModal] = useState(false);
   const [newPostPhotoUrls, setNewPostPhotoUrls] = useState<string[]>([]);
   const [newPostFileAttachments, setNewPostFileAttachments] = useState<Array<{ name: string; url: string }>>([]);
+  const [postsTabDraftsReady, setPostsTabDraftsReady] = useState(false);
+  const skipDraftSaveRef = useRef(false);
+  const draftPersistEpochRef = useRef(0);
+  const groupSwitchGenRef = useRef(0);
+  const composerDraftRef = useRef({
+    body: '',
+    photos: [] as string[],
+    files: [] as Array<{ name: string; url: string }>,
+    groupId: null as string | null,
+  });
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [imageLightbox, setImageLightbox] = useState<ForumPostImageLightboxState>(null);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -245,6 +254,134 @@ export function PostsListScreen() {
     const u = usersById.get(userId);
     return u?.displayName || u?.name || 'Unknown';
   }, [usersById]);
+
+  composerDraftRef.current = {
+    body: newPostBody,
+    photos: newPostPhotoUrls,
+    files: newPostFileAttachments,
+    groupId: selectedGroupForPost,
+  };
+
+  const applyNewPostDraft = useCallback(
+    (np: { markdown: string; photos: string[]; files: Array<{ name: string; url: string }> } | null) => {
+      setNewPostBody(np?.markdown ?? '');
+      setNewPostPhotoUrls(Array.isArray(np?.photos) ? [...np.photos] : []);
+      setNewPostFileAttachments(Array.isArray(np?.files) ? np.files.map((f) => ({ name: f.name, url: f.url })) : []);
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!currentUserId) {
+      setPostsTabDraftsReady(false);
+      return;
+    }
+    let cancelled = false;
+    setPostsTabDraftsReady(false);
+    (async () => {
+      const tab = await loadPostsTabDraft(currentUserId);
+      if (cancelled) return;
+      const groupId = tab?.groupId ?? null;
+      let nextPost = tab?.newPost ?? null;
+      if (groupId) {
+        const groupDraft = await loadForumGroupDraft(currentUserId, groupId);
+        if (cancelled) return;
+        if (groupDraft?.newPost) nextPost = groupDraft.newPost;
+      }
+      setSelectedGroupForPost(groupId);
+      applyNewPostDraft(nextPost);
+      setPostsTabDraftsReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyNewPostDraft, currentUserId]);
+
+  useEffect(() => {
+    if (!postsTabDraftsReady || !currentUserId) return;
+    const epoch = draftPersistEpochRef.current;
+    const t = setTimeout(() => {
+      if (skipDraftSaveRef.current) return;
+      if (epoch !== draftPersistEpochRef.current) return;
+      void (async () => {
+        const newPost = forumNewPostFromComposer(newPostBody, newPostPhotoUrls, newPostFileAttachments);
+        if (epoch !== draftPersistEpochRef.current) return;
+        await savePostsTabDraft(currentUserId, { v: 1, groupId: selectedGroupForPost, newPost });
+        if (selectedGroupForPost) {
+          await patchForumGroupNewPost(currentUserId, selectedGroupForPost, newPost);
+        }
+      })();
+    }, 450);
+    return () => clearTimeout(t);
+  }, [
+    postsTabDraftsReady,
+    currentUserId,
+    selectedGroupForPost,
+    newPostBody,
+    newPostPhotoUrls,
+    newPostFileAttachments,
+  ]);
+
+  const newPostDraftDirty = useMemo(
+    () =>
+      newPostBody.trim().length > 0 ||
+      newPostPhotoUrls.length > 0 ||
+      newPostFileAttachments.length > 0,
+    [newPostBody, newPostPhotoUrls, newPostFileAttachments]
+  );
+
+  const discardNewPostDraft = useCallback(() => {
+    draftPersistEpochRef.current += 1;
+    setNewPostBody('');
+    setNewPostPhotoUrls([]);
+    setNewPostFileAttachments([]);
+    setNewPostInputKey((k) => k + 1);
+    void (async () => {
+      if (!currentUserId || !postsTabDraftsReady) return;
+      await savePostsTabDraft(currentUserId, { v: 1, groupId: selectedGroupForPost, newPost: null });
+      if (selectedGroupForPost) {
+        await patchForumGroupNewPost(currentUserId, selectedGroupForPost, null);
+      }
+    })();
+  }, [currentUserId, postsTabDraftsReady, selectedGroupForPost]);
+
+  const selectGroupForPost = useCallback(
+    (nextGroupId: string) => {
+      setShowGroupSelectModal(false);
+      const prev = composerDraftRef.current.groupId;
+      if (prev === nextGroupId) return;
+      const gen = ++groupSwitchGenRef.current;
+      void (async () => {
+        if (!currentUserId || !postsTabDraftsReady) {
+          setSelectedGroupForPost(nextGroupId);
+          return;
+        }
+        const snap = composerDraftRef.current;
+        const hasLocal =
+          snap.body.trim().length > 0 || snap.photos.length > 0 || snap.files.length > 0;
+        skipDraftSaveRef.current = true;
+        try {
+          if (prev) {
+            await patchForumGroupNewPost(
+              currentUserId,
+              prev,
+              forumNewPostFromComposer(snap.body, snap.photos, snap.files)
+            );
+          }
+          if (gen !== groupSwitchGenRef.current) return;
+          setSelectedGroupForPost(nextGroupId);
+          if (!prev && hasLocal) return;
+          const loaded = await loadForumGroupDraft(currentUserId, nextGroupId);
+          if (gen !== groupSwitchGenRef.current) return;
+          applyNewPostDraft(loaded?.newPost ?? null);
+          setNewPostInputKey((k) => k + 1);
+        } finally {
+          if (gen === groupSwitchGenRef.current) skipDraftSaveRef.current = false;
+        }
+      })();
+    },
+    [applyNewPostDraft, currentUserId, postsTabDraftsReady]
+  );
 
   const markdownStyles = useMemo(
     () => ({
@@ -362,11 +499,17 @@ export function PostsListScreen() {
       });
       
       // Reset state after successful creation
+      draftPersistEpochRef.current += 1;
+      const postedGroupId = selectedGroupForPost;
       setNewPostBody('');
       setNewPostPhotoUrls([]);
       setNewPostFileAttachments([]);
       setNewPostInputKey((k) => k + 1);
       setSelectedGroupForPost(null);
+      void (async () => {
+        await savePostsTabDraft(currentUserId, { v: 1, groupId: null, newPost: null });
+        await patchForumGroupNewPost(currentUserId, postedGroupId, null);
+      })();
     } catch (error) {
       console.error('Failed to create post:', error);
     }
@@ -480,64 +623,64 @@ export function PostsListScreen() {
     <View style={styles.safe}>
       {/* Filters container */}
       <View style={styles.filtersContainer}>
-        {/* Group filter pills */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsRow} contentContainerStyle={{ gap: 6, paddingRight: 20 }}>
-          <Pill
-            label="All"
-            selected={selectedGroupIds.length === 0}
-            onPress={() => setSelectedGroupIds([])}
+        <View style={styles.filterToggleRow}>
+          <CollapsibleFiltersButton
+            expanded={showAdvancedFilters}
+            onToggle={() => setShowAdvancedFilters((p) => !p)}
+            filtersActive={hasFilters}
+            onReset={() => setSelectedGroupIds([])}
           />
-          {groups.map(g => {
-            const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
-            const p = getGroupColor(userColorHex);
-            const isSelected = selectedGroupIds.includes(g.id);
-            return (
-              <Pill
-                key={g.id}
-                label={g.name}
-                selected={isSelected}
-                activeColor={p.dot}
-                activeBg={p.label}
-                activeText={p.text}
-                inactiveBorderColor={p.dot}
-                onPress={() => {
-                  const next = isSelected
-                    ? selectedGroupIds.filter(id => id !== g.id)
-                    : [...selectedGroupIds, g.id];
-                  setSelectedGroupIds(next);
-                }}
-                onLongPress={() => setSelectedGroupIds([g.id])}
-              />
-            );
-          })}
-        </ScrollView>
+        </View>
 
-        {/* Advanced filters toggle */}
-        <View style={styles.filterPanel}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingVertical: 8 }}
-          >
-            <TouchableOpacity
-              onPress={() => setShowAdvancedFilters(p => !p)}
-              style={[styles.filterIconBtn, showAdvancedFilters && { borderColor: Colors.text, backgroundColor: Colors.text }]}
-            >
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={showAdvancedFilters ? Colors.surface : Colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>
-              </Svg>
-            </TouchableOpacity>
-          </ScrollView>
+        {showAdvancedFilters ? (
+          <>
+            <View style={styles.filterExpandedRow}>
+              <Text style={styles.filterExpandedHeader}>Groups</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.pillsRow}
+                contentContainerStyle={{ gap: 6, paddingRight: 20 }}
+              >
+                <Pill
+                  label="All"
+                  selected={selectedGroupIds.length === 0}
+                  onPress={() => setSelectedGroupIds([])}
+                />
+                {groups.map((g) => {
+                  const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
+                  const p = getGroupColor(userColorHex);
+                  const isSelected = selectedGroupIds.includes(g.id);
+                  return (
+                    <Pill
+                      key={g.id}
+                      label={g.name}
+                      selected={isSelected}
+                      activeColor={p.dot}
+                      activeBg={p.label}
+                      activeText={p.text}
+                      inactiveBorderColor={p.dot}
+                      onPress={() => {
+                        const next = isSelected
+                          ? selectedGroupIds.filter((id) => id !== g.id)
+                          : [...selectedGroupIds, g.id];
+                        setSelectedGroupIds(next);
+                      }}
+                      onLongPress={() => setSelectedGroupIds([g.id])}
+                    />
+                  );
+                })}
+              </ScrollView>
+            </View>
 
-          {showAdvancedFilters && (
             <View style={styles.filterExpandedRow}>
               <Text style={styles.filterExpandedHeader}>SORT BY</Text>
               <Pill label="Newest" selected onPress={() => {}} />
               <Pill label="Most Reactions" selected={false} onPress={() => {}} />
               <Pill label="Most Comments" selected={false} onPress={() => {}} />
             </View>
-          )}
-        </View>
+          </>
+        ) : null}
       </View>
 
       {/* Posts content */}
@@ -553,6 +696,18 @@ export function PostsListScreen() {
           {/* New post composer */}
           <View style={styles.card}>
             <View style={styles.cardPad}>
+              {newPostDraftDirty ? (
+                <View style={styles.forumDraftBar}>
+                  <Text style={styles.forumDraftBarHint}>Draft saved on this device</Text>
+                  <TouchableOpacity
+                    onPress={discardNewPostDraft}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel="Discard new post draft"
+                  >
+                    <Text style={styles.forumDraftBarDiscard}>Discard draft</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
               <Text style={[formSectionTitleStyle, { marginBottom: 8 }]}>
                 GROUP <Text style={{ color: Colors.notGoing }}>*</Text>
               </Text>
@@ -748,7 +903,7 @@ export function PostsListScreen() {
                             thumbnail={postOwner?.thumbnail}
                             size={18}
                           />
-                          <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={1}>
+                          <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={2}>
                             {post.userId === currentUserId ? (
                               <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
                             ) : (
@@ -757,7 +912,8 @@ export function PostsListScreen() {
                             {post.userId === currentUserId ? (
                               <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
                             ) : null}{' '}
-                            · {formatCreatedAt(post.createdAt)}
+                            · {formatCreatedAtLabel(post.createdAt)}
+                            {isContentEdited(post.createdAt, post.updatedAt) ? ' · Edited' : ''}
                           </Text>
                         </View>
                         <View style={styles.postGroupBadge}>
@@ -1016,7 +1172,7 @@ export function PostsListScreen() {
       </View>
 
       {/* Group selection modal */}
-      <Modal
+      <Modal {...edgeToEdgeModalProps}
         visible={showGroupSelectModal}
         transparent
         animationType="fade"
@@ -1054,10 +1210,7 @@ export function PostsListScreen() {
                       <TouchableOpacity
                         key={group.id}
                         style={styles.modalGroupRow}
-                        onPress={() => {
-                          setSelectedGroupForPost(group.id);
-                          setShowGroupSelectModal(false);
-                        }}
+                        onPress={() => selectGroupForPost(group.id)}
                         activeOpacity={0.7}
                       >
                         <View style={[styles.modalGroupAvatarWrap, { backgroundColor: p.cal }]}>
@@ -1088,7 +1241,7 @@ export function PostsListScreen() {
       </Modal>
 
       {postMenuTarget && postMenuPopoverLayout ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -1123,7 +1276,15 @@ export function PostsListScreen() {
                     const groupName = groups.find((g) => g.id === groupId)?.name;
                     shareFromModal(
                       () => setPostMenuTarget(null),
-                      () => sharePost(groupId, postId, groupName),
+                      () =>
+                        sharePost(groupId, postId, {
+                          title: postMenuTargetPost?.title,
+                          body: postMenuTargetPost?.body,
+                          authorName: postMenuTargetPost
+                            ? getUserDisplayName(postMenuTargetPost.userId)
+                            : undefined,
+                          groupName,
+                        }),
                     );
                   }}
                 >
@@ -1196,26 +1357,19 @@ export function PostsListScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
-  filtersContainer: { 
-    backgroundColor: Colors.surface, 
-    borderBottomWidth: 1, 
-    borderBottomColor: Colors.border,
+  filtersContainer: {
+    backgroundColor: Colors.bg,
+  },
+  filterToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
   pillsRow: { 
-    flexGrow: 0, 
-    paddingLeft: 20, 
-    paddingVertical: 8,
-  },
-  filterPanel: { paddingBottom: 6 },
-  filterIconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexGrow: 0,
+    width: '100%',
   },
   filterExpandedRow: {
     flexDirection: 'row',
@@ -1239,7 +1393,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingTop: 4,
     paddingBottom: 110,
   },
   card: {
@@ -1594,6 +1748,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 500,
     maxHeight: '85%',
+    flexGrow: 0,
   },
   modalCard: {
     backgroundColor: Colors.surface,

@@ -9,11 +9,13 @@ import {
   TextInput,
   Pressable,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { formatLocalDateInput, isSameDay } from '../utils/helpers';
 import { formSectionTitleStyle } from './ui';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import {
   type RecurrenceFormState,
   type RecurrencePreset,
@@ -183,10 +185,10 @@ function UntilEndDateCalendar({
 
 const PRESET_ROWS: { preset: RecurrencePreset; label: string }[] = [
   { preset: 'none', label: 'Does not repeat' },
-  { preset: 'daily', label: 'Daily' },
-  { preset: 'weekly', label: 'Weekly' },
-  { preset: 'monthly', label: 'Monthly' },
-  { preset: 'yearly', label: 'Annually' },
+  { preset: 'daily', label: 'Every day' },
+  { preset: 'weekly', label: 'Every Week' },
+  { preset: 'monthly', label: 'Every Month' },
+  { preset: 'yearly', label: 'Every Year' },
   { preset: 'custom', label: 'Custom…' },
 ];
 
@@ -258,6 +260,7 @@ function MonthlyPatternSection({
 }
 
 export function RecurrenceField({ anchorDate, value, onChange }: Props) {
+  const { height: winH } = useWindowDimensions();
   const [open, setOpen] = useState(false);
   const [untilViewMonth, setUntilViewMonth] = useState(() => ({
     y: anchorDate.getFullYear(),
@@ -320,7 +323,13 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
         <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
       </TouchableOpacity>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpen(false)}
+        {...edgeToEdgeModalProps}
+      >
         <View style={styles.modalRoot} pointerEvents="box-none">
           <Pressable
             style={styles.modalDismiss}
@@ -328,7 +337,13 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
             accessibilityRole="button"
             accessibilityLabel="Dismiss"
           />
-          <Pressable style={styles.dialog} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[
+              styles.dialog,
+              { maxHeight: Platform.OS === 'web' ? ('92vh' as any) : winH * 0.9 },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.dialogHeader}>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.dialogTitle}>Repeat event</Text>
@@ -346,7 +361,7 @@ export function RecurrenceField({ anchorDate, value, onChange }: Props) {
             </View>
 
             <ScrollView
-              style={styles.dialogScroll}
+              style={[styles.dialogScroll, { maxHeight: winH * 0.55 }]}
               contentContainerStyle={styles.dialogScrollContent}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
@@ -570,7 +585,7 @@ const styles = StyleSheet.create({
   dialog: {
     width: '100%',
     maxWidth: 420,
-    maxHeight: Platform.OS === 'web' ? ('92vh' as any) : '90%',
+    flexGrow: 0,
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
     borderWidth: 1,
@@ -608,7 +623,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Colors.bg,
   },
-  dialogScroll: { flexGrow: 1, flexShrink: 1, minHeight: 0 },
+  dialogScroll: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   dialogScrollContent: { paddingHorizontal: 20, paddingBottom: 8, gap: 4 },
   dialogFooter: {
     flexShrink: 0,

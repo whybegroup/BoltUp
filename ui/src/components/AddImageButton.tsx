@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 
 type AddImageButtonProps = {
   disabled?: boolean;
@@ -58,7 +59,7 @@ export function AddImageButton({
       </TouchableOpacity>
 
       {showOptions ? (
-        <Modal visible transparent animationType="fade" onRequestClose={closeAll} statusBarTranslucent>
+        <Modal visible transparent animationType="fade" onRequestClose={closeAll} {...edgeToEdgeModalProps}>
           <View style={styles.overlayRoot}>
             <Pressable style={styles.overlayBackdrop} onPress={closeAll} />
             <View style={styles.overlayCenter} pointerEvents="box-none">
@@ -101,7 +102,7 @@ export function AddImageButton({
       ) : null}
 
       {showLinkModal ? (
-        <Modal visible transparent animationType="fade" onRequestClose={closeAll} statusBarTranslucent>
+        <Modal visible transparent animationType="fade" onRequestClose={closeAll} {...edgeToEdgeModalProps}>
           <View style={styles.overlayRoot}>
             <Pressable style={styles.overlayBackdrop} onPress={closeAll} />
             <View style={styles.overlayCenter} pointerEvents="box-none">
@@ -194,6 +195,7 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 360,
+    flexGrow: 0,
     borderRadius: Radius.xl,
     backgroundColor: Colors.surface,
     borderWidth: StyleSheet.hairlineWidth,

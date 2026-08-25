@@ -23,3 +23,16 @@ export function postSharePath(groupId: string, postId: string): string {
 export function postShareLink(groupId: string, postId: string): string {
   return `${INVITE_LINK_ORIGIN}${postSharePath(groupId, postId)}`;
 }
+
+/** So link unfurls format dates in the sender's timezone. */
+export function withShareTimeZone(url: string): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!tz) return url;
+    const parsed = new URL(url);
+    parsed.searchParams.set('tz', tz);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}

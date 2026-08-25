@@ -11,6 +11,127 @@ import { UserAvatar } from '../../components/UserAvatar';
 import { AvatarPickerModal } from '../../components/AvatarPickerModal';
 import { Toggle } from '../../components/ui';
 import { deleteManagedUploadFireAndForget } from '../../services/managedUploadDelete';
+import {
+  changePassword,
+  hasPasswordProvider,
+  oauthPasswordHint,
+  signInProviderLabels,
+} from '../../config/firebase';
+
+function alertMessage(title: string, message: string) {
+  if (Platform.OS === 'web') window.alert(message);
+  else Alert.alert(title, message);
+}
+
+function passwordChangeErrorMessage(code: string | undefined): string {
+  switch (code) {
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'Current password is incorrect.';
+    case 'auth/weak-password':
+      return 'New password should be at least 6 characters.';
+    case 'auth/requires-recent-login':
+      return 'Please sign out and sign in again, then retry.';
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Please try again later.';
+    case 'auth/missing-email':
+      return 'No email is associated with this account.';
+    default:
+      return 'Failed to update password';
+  }
+}
+
+type InputEl = { value?: string; setSelectionRange?: (s: number, e: number) => void };
+
+function restorePasswordInput(input: TextInput | null, eventTarget: unknown, text: string) {
+  const target = eventTarget as InputEl | undefined;
+  if (target && typeof target.value === 'string') {
+    target.value = text;
+    try {
+      target.setSelectionRange?.(text.length, text.length);
+    } catch {
+      // setSelectionRange throws on some input types
+    }
+    return;
+  }
+  input?.setNativeProps({ text });
+}
+
+/**
+ * Password inputs (type=password) are cleared by the browser/OS on blur.
+ * React still shows the old value, then the first keystroke replaces it.
+ */
+function SettingsPasswordInput({
+  value,
+  onChangeText,
+  placeholder,
+  editable,
+  style,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder: string;
+  editable: boolean;
+  style: TextInput['props']['style'];
+}) {
+  const inputRef = useRef<TextInput>(null);
+  const focusedRef = useRef(false);
+  const keptRef = useRef(value);
+  keptRef.current = value;
+
+  const restore = (eventTarget?: unknown) => {
+    restorePasswordInput(inputRef.current, eventTarget, keptRef.current);
+  };
+
+  return (
+    <TextInput
+      ref={inputRef}
+      value={value}
+      placeholder={placeholder}
+      placeholderTextColor={Colors.textMuted}
+      style={[
+        style,
+        Platform.OS === 'web' ? ({ WebkitTextSecurity: 'disc' } as object) : null,
+      ]}
+      // type=password is what clears on blur/refocus; mask with CSS on web instead
+      secureTextEntry={Platform.OS !== 'web'}
+      autoCapitalize="none"
+      autoCorrect={false}
+      spellCheck={false}
+      autoComplete="off"
+      textContentType="none"
+      importantForAutofill="no"
+      editable={editable}
+      onFocus={(e) => {
+        focusedRef.current = true;
+        restore(e.target);
+        requestAnimationFrame(() => restore(e.target));
+      }}
+      onBlur={(e) => {
+        focusedRef.current = false;
+        restore(e.target);
+      }}
+      onChangeText={(next) => {
+        if (next === '' && !focusedRef.current) return;
+        const kept = keptRef.current;
+        // Native value was empty after blur; first key is only the new character.
+        if (
+          focusedRef.current &&
+          kept.length > 0 &&
+          next.length > 0 &&
+          next.length < kept.length &&
+          !kept.startsWith(next) &&
+          !next.startsWith(kept)
+        ) {
+          next = kept + next;
+          restore();
+        }
+        keptRef.current = next;
+        onChangeText(next);
+      }}
+    />
+  );
+}
 
 const REMINDER_OPTIONS = ['Never', '1 hour before', '1 day before', '1 week before'] as const;
 
@@ -23,10 +144,80 @@ export default function ProfileScreen() {
 
   const [draftDisplayName, setDraftDisplayName] = useState('');
   const [editingDisplayName, setEditingDisplayName] = useState(false);
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [draftAvatarSeed, setDraftAvatarSeed] = useState('');
   const [draftThumbnail, setDraftThumbnail] = useState<string | null>(null);
   const thumbnailAtPickerOpenRef = useRef<string | null>(null);
+  const canChangePassword = hasPasswordProvider(firebaseUser);
+  const passwordManagedHint = oauthPasswordHint(firebaseUser);
+
+  const resetPasswordForm = () => {
+    setEditingPassword(false);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setPasswordError('');
+  };
+
+  const startEditingDisplayName = () => {
+    resetPasswordForm();
+    setDraftDisplayName(user?.displayName || user?.name || '');
+    setEditingDisplayName(true);
+  };
+
+  const cancelEditingDisplayName = () => {
+    setEditingDisplayName(false);
+    setDraftDisplayName('');
+  };
+
+  const saveDisplayName = async () => {
+    const next = draftDisplayName.trim();
+    if (!next || !userId) return;
+    try {
+      await updateUser.mutateAsync({ displayName: next });
+      setEditingDisplayName(false);
+    } catch {
+      alertMessage('Error', 'Failed to update display name');
+    }
+  };
+
+  const savePassword = async () => {
+    if (passwordSaving) return;
+    if (!currentPassword || !newPassword) {
+      setPasswordError('Please enter your current and new password.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordError('New password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('New passwords do not match.');
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setPasswordError('New password must be different from your current password.');
+      return;
+    }
+    setPasswordError('');
+    setPasswordSaving(true);
+    try {
+      await changePassword(currentPassword, newPassword);
+      resetPasswordForm();
+      alertMessage('Password updated', 'Your password has been changed.');
+    } catch (err: unknown) {
+      const code = typeof err === 'object' && err && 'code' in err ? String((err as { code: unknown }).code) : undefined;
+      setPasswordError(passwordChangeErrorMessage(code));
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (showAvatarPicker) {
@@ -76,7 +267,7 @@ export default function ProfileScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.emptyState}>
           <ActivityIndicator color={Colors.accent} />
           <Text style={styles.emptyStateText}>Loading your profile...</Text>
@@ -87,7 +278,7 @@ export default function ProfileScreen() {
 
   if (!user) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.emptyState}>
           <Text style={styles.emptyStateTitle}>Profile data unavailable</Text>
           <Text style={styles.emptyStateText}>
@@ -104,85 +295,198 @@ export default function ProfileScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Profile</Text>
-        <View />
-      </View>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <View style={styles.header}>
+          <View style={styles.headerTitleRow}>
+            <UserAvatar
+              seed={user.displayName || user.name}
+              thumbnail={user.thumbnail}
+              backgroundColor={[user.avatarSeed]}
+              size={28}
+            />
+            <Text style={styles.title}>Profile</Text>
+          </View>
+        </View>
 
       <KeyboardSafeScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         refreshControl={refreshControl}
       >
-        {/* User card */}
-        <View style={styles.userCard}>
-          <TouchableOpacity
-            onPress={() => {
-              thumbnailAtPickerOpenRef.current = user.thumbnail ?? null;
-              setShowAvatarPicker(true);
-            }}
-            style={styles.bigAvatar}
-            activeOpacity={0.8}
-          >
-            <UserAvatar seed={user.displayName || user.name} thumbnail={user.thumbnail} backgroundColor={[user.avatarSeed]} size={60} style={styles.bigAvatarImg} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <View style={styles.displayNameRow}>
-              <View style={styles.displayNameEditRow}>
-                {editingDisplayName ? (
-                  <TextInput
-                    value={draftDisplayName}
-                    onChangeText={setDraftDisplayName}
-                    placeholder="Display name"
-                    placeholderTextColor={Colors.textMuted}
-                    style={styles.displayNameInput}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                    autoFocus
-                  />
-                ) : (
-                  <View style={styles.displayNameReadRow}>
-                    <Text style={styles.userName} numberOfLines={1}>
-                      {user.displayName || user.name}
-                    </Text>
-                  </View>
-                )}
+        <Text style={styles.sectionLabel}>ACCOUNT SETTINGS</Text>
+        <View style={[styles.card, { marginBottom: 20 }]}>
+          <View style={styles.infoRow}>
+            <View style={styles.settingsRowText}>
+              <Text style={styles.infoLabelMuted}>Avatar</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                thumbnailAtPickerOpenRef.current = user.thumbnail ?? null;
+                setShowAvatarPicker(true);
+              }}
+              style={styles.displayNameActionBtn}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.displayNameActionText}>Change avatar</Text>
+            </TouchableOpacity>
+          </View>
 
+          {editingDisplayName ? (
+            <View style={[styles.settingsEditBlock, styles.rowBorder]}>
+              <Text style={styles.infoLabelMuted}>Display name</Text>
+              <TextInput
+                value={draftDisplayName}
+                onChangeText={setDraftDisplayName}
+                placeholder="Display name"
+                placeholderTextColor={Colors.textMuted}
+                style={styles.settingsInput}
+                autoCapitalize="words"
+                autoCorrect={false}
+                autoFocus
+              />
+              <View style={styles.settingsActions}>
                 <TouchableOpacity
-                  onPress={async () => {
-                    if (!editingDisplayName) {
-                      setEditingDisplayName(true);
-                      return;
-                    }
-
-                    const next = draftDisplayName.trim();
-                    if (!next || !userId) return;
-                    try {
-                      await updateUser.mutateAsync({ displayName: next });
-                      setEditingDisplayName(false);
-                    } catch {
-                      if (Platform.OS === 'web') window.alert('Failed to update display name');
-                      else Alert.alert('Error', 'Failed to update display name');
-                    }
-                  }}
-                  disabled={editingDisplayName ? (!draftDisplayName.trim() || updateUser.isPending) : false}
+                  onPress={cancelEditingDisplayName}
+                  disabled={updateUser.isPending}
+                  style={styles.displayNameActionBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.displayNameActionText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => void saveDisplayName()}
+                  disabled={!draftDisplayName.trim() || updateUser.isPending}
                   style={[
                     styles.displayNameActionBtn,
-                    editingDisplayName ? styles.displayNameActionBtnSave : styles.displayNameActionBtnChange,
-                    (editingDisplayName && (!draftDisplayName.trim() || updateUser.isPending)) && { opacity: 0.6 },
+                    styles.displayNameActionBtnSave,
+                    (!draftDisplayName.trim() || updateUser.isPending) && { opacity: 0.6 },
                   ]}
                   activeOpacity={0.7}
                 >
                   {updateUser.isPending ? (
-                    <ActivityIndicator size="small" color={Colors.accentFg} />
+                    <ActivityIndicator size="small" color={Colors.textSub} />
                   ) : (
-                    <Text style={styles.displayNameActionText}>
-                      {editingDisplayName ? 'Save' : 'Change display name'}
-                    </Text>
+                    <Text style={styles.displayNameActionText}>Save</Text>
                   )}
                 </TouchableOpacity>
               </View>
             </View>
+          ) : (
+            <View style={[styles.infoRow, styles.rowBorder]}>
+              <View style={styles.settingsRowText}>
+                <Text style={styles.infoLabelMuted}>Display name</Text>
+                <Text style={styles.infoValue} numberOfLines={1}>
+                  {user.displayName || user.name}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={startEditingDisplayName}
+                style={styles.displayNameActionBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.displayNameActionText}>Change display name</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {canChangePassword ? (
+            editingPassword ? (
+              <View style={[styles.settingsEditBlock, styles.rowBorder]}>
+                <Text style={styles.infoLabelMuted}>Password</Text>
+                <SettingsPasswordInput
+                  value={currentPassword}
+                  onChangeText={(v) => {
+                    setCurrentPassword(v);
+                    if (passwordError) setPasswordError('');
+                  }}
+                  placeholder="Current password"
+                  style={styles.settingsInput}
+                  editable={!passwordSaving}
+                />
+                <SettingsPasswordInput
+                  value={newPassword}
+                  onChangeText={(v) => {
+                    setNewPassword(v);
+                    if (passwordError) setPasswordError('');
+                  }}
+                  placeholder="New password"
+                  style={styles.settingsInput}
+                  editable={!passwordSaving}
+                />
+                <SettingsPasswordInput
+                  value={confirmNewPassword}
+                  onChangeText={(v) => {
+                    setConfirmNewPassword(v);
+                    if (passwordError) setPasswordError('');
+                  }}
+                  placeholder="Confirm new password"
+                  style={styles.settingsInput}
+                  editable={!passwordSaving}
+                />
+                {passwordError ? <Text style={styles.settingsError}>{passwordError}</Text> : null}
+                <View style={styles.settingsActions}>
+                  <TouchableOpacity
+                    onPress={resetPasswordForm}
+                    disabled={passwordSaving}
+                    style={styles.displayNameActionBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.displayNameActionText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => void savePassword()}
+                    disabled={passwordSaving || !currentPassword || !newPassword || !confirmNewPassword}
+                    style={[
+                      styles.displayNameActionBtn,
+                      styles.displayNameActionBtnSave,
+                      (passwordSaving || !currentPassword || !newPassword || !confirmNewPassword) && { opacity: 0.6 },
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    {passwordSaving ? (
+                      <ActivityIndicator size="small" color={Colors.textSub} />
+                    ) : (
+                      <Text style={styles.displayNameActionText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={[styles.infoRow, styles.rowBorder]}>
+                <View style={styles.settingsRowText}>
+                  <Text style={styles.infoLabelMuted}>Password</Text>
+                  <Text style={styles.infoValueMuted}>••••••••</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    cancelEditingDisplayName();
+                    setPasswordError('');
+                    setEditingPassword(true);
+                  }}
+                  style={styles.displayNameActionBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.displayNameActionText}>Change password</Text>
+                </TouchableOpacity>
+              </View>
+            )
+          ) : passwordManagedHint ? (
+            <View style={[styles.settingsHintBlock, styles.rowBorder]}>
+              <Text style={styles.infoLabelMuted}>Password</Text>
+              <Text style={styles.settingsHint}>{passwordManagedHint}</Text>
+            </View>
+          ) : null}
+
+          <View style={[styles.infoRow, styles.rowBorder]}>
+            <Text style={styles.infoLabelMuted}>Email</Text>
+            <Text style={styles.infoValueMuted} numberOfLines={1}>{firebaseUser?.email || '—'}</Text>
+          </View>
+          <View style={[styles.infoRow, styles.rowBorder]}>
+            <Text style={styles.infoLabelMuted}>User ID</Text>
+            <Text style={styles.infoValueMuted} numberOfLines={1}>{userId || '—'}</Text>
+          </View>
+          <View style={[styles.infoRow, styles.rowBorder]}>
+            <Text style={styles.infoLabelMuted}>Sign-in</Text>
+            <Text style={styles.infoValueMuted}>{signInProviderLabels(firebaseUser)}</Text>
           </View>
         </View>
 
@@ -267,23 +571,6 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Account */}
-        <Text style={styles.sectionLabel}>ACCOUNT</Text>
-        <View style={[styles.card, { marginBottom: 20 }]}>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabelMuted}>Email</Text>
-            <Text style={styles.infoValueMuted}>{firebaseUser?.email || '—'}</Text>
-          </View>
-          <View style={[styles.infoRow, styles.rowBorder]}>
-            <Text style={styles.infoLabelMuted}>User ID</Text>
-            <Text style={styles.infoValueMuted}>{userId || '—'}</Text>
-          </View>
-          <View style={[styles.infoRow, styles.rowBorder]}>
-            <Text style={styles.infoLabelMuted}>Sign-in Provider</Text>
-            <Text style={styles.infoValueMuted}>Google</Text>
-          </View>
-        </View>
-
         {/* Sign out */}
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
@@ -326,14 +613,9 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   safe:             { flex: 1, backgroundColor: Colors.bg },
-  header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: Layout.tabHeaderMinHeight, paddingHorizontal: 20, paddingVertical: 16, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: Layout.tabHeaderMinHeight, paddingHorizontal: 20, paddingVertical: 12, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  headerTitleRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 0 },
   title:            { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text },
-  userCard:         { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, padding: 20, marginBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 16 },
-  bigAvatar:        { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
-  bigAvatarImg:     { width: 60, height: 60, borderRadius: 30 },
-  bigAvatarText:    { fontSize: 24, fontFamily: Fonts.bold, color: '#fff' },
-  userName:         { fontSize: 18, fontFamily: Fonts.extraBold, color: Colors.text, marginBottom: 2 },
-  userHandle:       { fontSize: 14, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 8 },
   sectionLabel:     { fontSize: 11, fontFamily: Fonts.semiBold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
   sectionHint:      { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: -6, marginBottom: 10, lineHeight: 17 },
   card:             { backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
@@ -344,27 +626,28 @@ const styles = StyleSheet.create({
   reminderChipActive:{ borderColor: Colors.accent, backgroundColor: Colors.accent },
   reminderChipText: { fontSize: 12, color: Colors.textSub, fontFamily: Fonts.regular },
   reminderChipTextActive:{ color: Colors.accentFg, fontFamily: Fonts.semiBold },
-  rowBorder:        { borderBottomWidth: 1, borderBottomColor: Colors.border },
-  infoRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14 },
+  rowBorder:        { borderTopWidth: 1, borderTopColor: Colors.border },
+  infoRow:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, gap: 12 },
   infoLabel:        { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted },
   infoValue:        { fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
   infoLabelMuted:   { fontSize: 14, fontFamily: Fonts.regular, color: Colors.textMuted, opacity: 0.65 },
   infoValueMuted:   { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textMuted, opacity: 0.65 },
-  displayNameRow:   { height: 34, justifyContent: 'center', marginBottom: 2 },
-  displayNameEditRow:{ flexDirection: 'row', alignItems: 'center', gap: 8 },
-  displayNameReadRow:{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  displayNameInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: 'transparent',
-    fontSize: 18,
-    lineHeight: 22,
+  settingsRowText:  { flex: 1, minWidth: 0, gap: 2 },
+  settingsEditBlock:{ padding: 14, gap: 10 },
+  settingsHintBlock:{ padding: 14, gap: 4 },
+  settingsHint:     { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, lineHeight: 18 },
+  settingsError:    { fontSize: 13, fontFamily: Fonts.regular, color: Colors.notGoing },
+  settingsActions:  { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
+  settingsInput:    {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    fontSize: 15,
     color: Colors.text,
-    fontFamily: Fonts.extraBold,
+    fontFamily: Fonts.regular,
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as any) : null),
   },
   displayNameActionBtn:{
@@ -375,9 +658,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
+    flexShrink: 0,
   },
-  displayNameActionBtnChange:{ minWidth: 160 },
-  displayNameActionBtnSave:{ paddingHorizontal: 10, minWidth: undefined },
+  displayNameActionBtnSave:{ paddingHorizontal: 14 },
   displayNameActionText:{ fontSize: 12, fontFamily: Fonts.semiBold, color: Colors.textSub },
   emptyState:        { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, gap: 10 },
   emptyStateTitle:   { fontSize: 18, color: Colors.text, fontFamily: Fonts.extraBold, textAlign: 'center' },

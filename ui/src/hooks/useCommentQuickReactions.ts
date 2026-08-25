@@ -14,5 +14,6 @@ export function useCommentQuickReactions(userId: string | null | undefined) {
     enabled: uid.length > 0,
     initialData: INITIAL_QUICK_REACTIONS,
     staleTime: Infinity,
+    refetchInterval: false,
   });
 }

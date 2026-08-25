@@ -1,6 +1,6 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
-import { Gesture, Pressable } from 'react-native-gesture-handler';
+import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Gesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -11,46 +11,33 @@ import {
 } from 'react-native-reorderable-list';
 import { Colors } from '../constants/theme';
 
-function RankingDragHandle({
-  drag,
-  disabled,
-  label,
-}: {
-  drag: () => void;
-  disabled?: boolean;
-  label: string;
-}) {
-  return (
-    <Pressable
-      onLongPress={Platform.OS === 'web' ? undefined : drag}
-      onPressIn={Platform.OS === 'web' ? () => !disabled && drag() : undefined}
-      disabled={disabled}
-      style={styles.dragHandle}
-      delayLongPress={120}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Ionicons name="reorder-three" size={22} color={Colors.textMuted} />
-    </Pressable>
-  );
-}
-
 export function RankingPollOptionRowShell({
-  dragHandleLabel,
+  dragLabel,
   disabled,
   children,
 }: {
-  dragHandleLabel: string;
+  dragLabel: string;
   disabled?: boolean;
   children: ReactNode;
 }) {
   const drag = useReorderableDrag();
   const isActive = useIsActive();
   return (
-    <View style={[styles.rowShell, isActive && styles.rowShellDragging]}>
-      <RankingDragHandle drag={drag} disabled={disabled || isActive} label={dragHandleLabel} />
+    <Pressable
+      onLongPress={disabled ? undefined : drag}
+      onPressIn={Platform.OS === 'web' && !disabled ? drag : undefined}
+      disabled={disabled}
+      delayLongPress={120}
+      style={[styles.rowShell, isActive && styles.rowShellDragging]}
+      accessibilityRole="button"
+      accessibilityLabel={dragLabel}
+      accessibilityHint="Hold and drag to reorder"
+    >
+      <View style={styles.dragHandle} pointerEvents="none">
+        <Ionicons name="reorder-three" size={22} color={Colors.textMuted} />
+      </View>
       <View style={styles.rowBody}>{children}</View>
-    </View>
+    </Pressable>
   );
 }
 

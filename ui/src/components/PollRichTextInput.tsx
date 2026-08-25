@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { PollTextFont } from '@moijia/client';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -175,7 +176,7 @@ export function PollRichTextInput({ value, onChange, placeholder, textFont }: Pr
         autoCorrect
       />
 
-      <Modal visible={linkOpen} transparent animationType="fade" onRequestClose={() => setLinkOpen(false)}>
+      <Modal visible={linkOpen} transparent animationType="fade" onRequestClose={() => setLinkOpen(false)} {...edgeToEdgeModalProps}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setLinkOpen(false)} />
           <View style={styles.modalCard}>
@@ -245,6 +246,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
     borderColor: Colors.border,
+    flexGrow: 0,
     zIndex: 1,
   },
   modalTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.text, marginBottom: 12 },

@@ -36,14 +36,13 @@ export function GroupAvatarPicker({
   deferFileUpload = false,
   pendingAvatarFileRef,
 }: GroupAvatarPickerProps) {
-  const { width: winW } = useWindowDimensions();
-  /** Large preview: scales with modal width, capped for very wide screens. */
-  const previewSize = Math.min(240, Math.max(140, Math.round(winW * 0.42)));
+  const { width: winW, height: winH } = useWindowDimensions();
+  const previewSize = Math.min(200, Math.max(96, Math.round(Math.min(winW * 0.36, winH * 0.2))));
 
   const baseInputStyle = [{ padding: 10, paddingHorizontal: 12, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular, flex: 1 }, inputStyle];
 
   return (
-    <View style={{ flexGrow: 1 }}>
+    <View>
       {onThumbnailChange != null ? (
         <AvatarThumbnailField
           userId={uploadUserId}
@@ -102,7 +101,6 @@ export function GroupAvatarPicker({
           paddingVertical: 24,
           alignItems: 'center',
           justifyContent: 'center',
-          flexGrow: 1,
           minHeight: previewSize + 48,
         }}
       >

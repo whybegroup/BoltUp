@@ -3,9 +3,13 @@ import { NotificationsService, type NotificationInput } from '@moijia/client';
 import { queryKeys } from '../../config/queryClient';
 
 export function useNotifications(userId?: string) {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return useQuery({
-    queryKey: userId ? queryKeys.notifications.user(userId) : queryKeys.notifications.all,
-    queryFn: () => NotificationsService.getNotifications(userId),
+    queryKey: userId
+      ? [...queryKeys.notifications.user(userId), timeZone]
+      : [...queryKeys.notifications.all, timeZone],
+    queryFn: () => NotificationsService.getNotifications(userId, timeZone),
+    enabled: !!userId,
     staleTime: 0,
     gcTime: 0,
     refetchOnWindowFocus: true,

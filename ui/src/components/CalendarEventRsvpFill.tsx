@@ -96,7 +96,7 @@ export function CalendarEventRsvpFill({
   onDarkBackground = false,
 }: CalendarEventRsvpFillProps) {
   if (!striped) {
-    return <View style={[styles.fill, { backgroundColor }]} pointerEvents="none" />;
+    return <View style={[styles.fill, { backgroundColor }]} pointerEvents="none" collapsable={false} />;
   }
 
   if (Platform.OS === 'web') {
@@ -104,12 +104,13 @@ export function CalendarEventRsvpFill({
       <View
         style={[styles.fill, webStripeBackground(stripeTone, onDarkBackground) as object]}
         pointerEvents="none"
+        collapsable={false}
       />
     );
   }
 
   return (
-    <View style={styles.fill} pointerEvents="none">
+    <View style={styles.fill} pointerEvents="none" collapsable={false}>
       <NativeStripePattern patternId={patternId} tone={stripeTone} onDark={onDarkBackground} />
     </View>
   );

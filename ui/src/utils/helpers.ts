@@ -130,23 +130,37 @@ export function getDefaultGroupThemeFromName(groupName: string): string {
 
 // ── Group helpers ─────────────────────────────────────────────────────────────
 export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : null;
+  const raw = (hex || '').trim();
+  const short = /^#?([a-f\d])([a-f\d])([a-f\d])$/i.exec(raw);
+  if (short) {
+    return {
+      r: parseInt(short[1] + short[1], 16),
+      g: parseInt(short[2] + short[2], 16),
+      b: parseInt(short[3] + short[3], 16),
+    };
+  }
+  const long = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})?$/i.exec(raw);
+  if (!long) return null;
+  return {
+    r: parseInt(long[1], 16),
+    g: parseInt(long[2], 16),
+    b: parseInt(long[3], 16),
+  };
 }
 
+function toHex2(n: number): string {
+  return Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+}
+
+/**
+ * Opaque #RRGGBB tint of `hex` over white.
+ * Android drops `rgba()` / `#RRGGBBAA` on borders, headers, and gesture-handler buttons.
+ */
 export function groupColorWithOpacity(hex: string, opacity: number): string {
   const rgb = hexToRgb(hex);
-  if (!rgb) {
-    const a = Math.round(opacity * 255)
-      .toString(16)
-      .padStart(2, '0');
-    return `${hex}${a}`;
-  }
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${opacity})`;
+  if (!rgb) return hex || '#EC4899';
+  const t = Math.max(0, Math.min(1, opacity));
+  return `#${toHex2(rgb.r * t + 255 * (1 - t))}${toHex2(rgb.g * t + 255 * (1 - t))}${toHex2(rgb.b * t + 255 * (1 - t))}`;
 }
 
 /** Border radius for group avatar wrapper - matches My Groups (12 for 44px). */
@@ -156,24 +170,12 @@ export function groupAvatarBorderRadius(size: number): number {
 
 export function getGroupColor(colorHex?: string) {
   const hex = colorHex || '#EC4899';
-  const rgb = hexToRgb(hex);
-  const fill = groupColorWithOpacity(hex, 0.05);
-
-  if (!rgb) return {
-    dot: hex,
-    cal: hex,
-    row: `${hex}10`,
-    label: `${hex}20`,
-    fill,
-    text: hex,
-  };
-
   return {
     dot: hex,
     cal: hex,
-    row: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`,
-    label: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15)`,
-    fill,
+    row: groupColorWithOpacity(hex, 0.08),
+    label: groupColorWithOpacity(hex, 0.15),
+    fill: groupColorWithOpacity(hex, 0.05),
     text: hex,
   };
 }
@@ -227,4 +229,35 @@ export function breadcrumbTruncate(label: string, maxChars = 200): string {
   const t = label.trim();
   if (t.length <= maxChars) return t;
   return `${t.slice(0, maxChars)}...`;
+}
+
+function toMillis(value: Date | string | number): number {
+  if (value instanceof Date) return value.getTime();
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+export function formatCreatedAtLabel(value: Date | string | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/** True when `updatedAt` is meaningfully after `createdAt` (ignores create-time clock skew). */
+export function isContentEdited(
+  createdAt?: Date | string | number | null,
+  updatedAt?: Date | string | number | null,
+  slackMs = 1000,
+): boolean {
+  if (createdAt == null || updatedAt == null) return false;
+  const created = toMillis(createdAt);
+  const updated = toMillis(updatedAt);
+  if (!Number.isFinite(created) || !Number.isFinite(updated)) return false;
+  return updated - created > slackMs;
 }

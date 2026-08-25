@@ -29,6 +29,11 @@ import { listOccurrenceStartsForRule } from '../utils/recurrenceTruncate';
 import { utcInstantFromClient } from '../utils/utcInstantFromClient';
 import { notGroupMemberError } from '../utils/notGroupMemberError';
 import { seriesOccurrenceStartEndFromForm } from '../utils/seriesOccurrenceScheduleFromForm';
+import {
+  formatNotificationEventWhen,
+  newEventNotificationBody,
+  timeSuggestionNotificationBody,
+} from '../utils/formatNotificationEventWhen';
 
 const prisma = new PrismaClient();
 
@@ -375,6 +380,8 @@ export class EventService {
       location: string | null;
       start: Date;
       end: Date;
+      timeZone?: string | null;
+      isAllDay?: boolean;
     }
   ): Promise<void> {
     const normLoc = (l: string | null | undefined) => (l ?? '').trim();
@@ -401,13 +408,15 @@ export class EventService {
       );
     }
     if (changes.timeChanged) {
-      const startDate = new Date(changes.start);
-      const dateStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const timeStr = startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const when = formatNotificationEventWhen(
+        new Date(changes.start),
+        changes.timeZone,
+        changes.isAllDay
+      );
       await notificationService.createForUsers(
         recipientIds,
         'Event time updated',
-        `"${name}" is now ${dateStr} at ${timeStr}`,
+        `"${name}" is now ${when}`,
         {
           type: 'event_time_changed',
           icon: '🕐',
@@ -668,9 +677,12 @@ export class EventService {
     }
 
     // Create in-app notifications for all group members
-    const startDate = start;
-    const dateStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const timeStr = startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const whenBody = newEventNotificationBody(
+      event.name,
+      start,
+      viewerTimeZone,
+      !!eventData.isAllDay
+    );
     
     // Get all active group members
     const members = await prisma.groupMember.findMany({
@@ -685,7 +697,7 @@ export class EventService {
     await notificationService.createForUsers(
       members.map((m) => m.userId).filter((uid) => uid !== createdBy),
       'New Event Created',
-      `${event.name} on ${dateStr} at ${timeStr}`,
+      whenBody,
       {
         type: 'event_created',
         icon: '📅',
@@ -1037,7 +1049,7 @@ export class EventService {
         event.groupId,
         event.name,
         updatedBy,
-        { locChanged, timeChanged, location: event.location, start: event.start, end: event.end }
+        { locChanged, timeChanged, location: event.location, start: event.start, end: event.end, timeZone: viewerTimeZone, isAllDay: event.isAllDay }
       ).catch(() => undefined);
     }
 
@@ -1852,12 +1864,17 @@ export class EventService {
     if (event.createdBy !== input.userId) {
       const suggester = await prisma.user.findUnique({ where: { id: input.userId } });
       if (suggester) {
-        const startStr = start.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        const startStrBody = timeSuggestionNotificationBody(
+          suggester.displayName,
+          start,
+          event.name,
+          input.viewerTimeZone
+        );
         void notificationService
           .createForUser(
             event.createdBy,
             'Suggested time change',
-            `${suggester.displayName} suggested ${startStr} for "${event.name}"`,
+            startStrBody,
             {
               type: 'time_suggestion',
               icon: '🕐',
@@ -1940,6 +1957,7 @@ export class EventService {
         location: updated.location,
         start: updated.start,
         end: updated.end,
+        isAllDay: updated.isAllDay,
       }
     ).catch(() => undefined);
 

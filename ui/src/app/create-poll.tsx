@@ -32,6 +32,8 @@ import { localWallDateTimeToUtcIso } from '../utils/datetimeUtc';
 import { NavBar, Field, Toggle, formSectionTitleStyle } from '../components/ui';
 import { KeyboardSafeScrollView } from '../components/KeyboardSafeScrollView';
 import { EventFormPopoverChrome } from '../components/EventFormPopoverChrome';
+import { edgeToEdgeModalProps } from '../components/edgeToEdgeModalProps';
+import { GroupAvatar } from '../components/GroupAvatar';
 import { useGroups, useCreatePoll, useAllGroupMemberColors, usePoll, useUpdatePoll } from '../hooks/api';
 import { uid } from '../utils/api-helpers';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
@@ -180,9 +182,14 @@ function serializeCreatePollDraft(args: {
 
 export default function CreatePollScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ returnTo?: string | string[]; editId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    returnTo?: string | string[];
+    editId?: string | string[];
+    groupId?: string | string[];
+  }>();
   const editId = firstSearchParam(params.editId);
   const isEditing = !!editId;
+  const paramGroupId = firstSearchParam(params.groupId);
   const createReturnTo = useMemo(
     () => parseReturnToParam(firstSearchParam(params.returnTo)),
     [params.returnTo],
@@ -213,6 +220,9 @@ export default function CreatePollScreen() {
   const [createPollBaselineSerialized, setCreatePollBaselineSerialized] = useState<string | null>(null);
   const initialGroupIdRef = useRef<string | null>(null);
   const hydratedEditRef = useRef(false);
+  const [createStep, setCreateStep] = useState<'group' | 'details'>(() =>
+    isEditing || !!paramGroupId ? 'details' : 'group'
+  );
 
   const joinedGroups = groups.filter(
     (g) =>
@@ -226,15 +236,34 @@ export default function CreatePollScreen() {
   const selectedGroup = joinedGroups.find((g) => g.id === form.groupId);
   const selectedGroupEligible =
     selectedGroup?.membershipStatus === 'member' || selectedGroup?.membershipStatus === 'admin';
+  const selectedGroupTheme = selectedGroup
+    ? getGroupColor(
+        groupColors[selectedGroup.id] || getDefaultGroupThemeFromName(selectedGroup.name)
+      )
+    : null;
 
   useEffect(() => {
-    if (joinedGroups.length > 0 && !form.groupId) {
-      const firstEligible = joinedGroups.find(
-        (g) => g.membershipStatus === 'member' || g.membershipStatus === 'admin',
-      );
-      setForm((p) => ({ ...p, groupId: (firstEligible ?? joinedGroups[0])!.id }));
+    if (isEditing || !paramGroupId || !groupsIsFetched) return;
+    if (!eventEligibleGroups.some((g) => g.id === paramGroupId)) return;
+    setForm((p) => (p.groupId === paramGroupId ? p : { ...p, groupId: paramGroupId }));
+    setCreateStep('details');
+  }, [isEditing, paramGroupId, groupsIsFetched, eventEligibleGroups]);
+
+  useEffect(() => {
+    if (isEditing || paramGroupId || !groupsIsFetched) return;
+    if (form.groupId || createStep !== 'group') return;
+    if (eventEligibleGroups.length === 1) {
+      setForm((p) => ({ ...p, groupId: eventEligibleGroups[0]!.id }));
+      setCreateStep('details');
     }
-  }, [joinedGroups, form.groupId]);
+  }, [
+    isEditing,
+    paramGroupId,
+    groupsIsFetched,
+    form.groupId,
+    createStep,
+    eventEligibleGroups,
+  ]);
 
   useEffect(() => {
     if (!initialGroupIdRef.current && form.groupId) {
@@ -444,7 +473,13 @@ export default function CreatePollScreen() {
   }, [router, createReturnTo]);
 
   const groupsDataReady = !currentUserId || groupsIsFetched;
-  const groupSelectHydrated = !groupsDataReady ? false : joinedGroups.length === 0 ? true : !!form.groupId;
+  const groupSelectHydrated = !groupsDataReady
+    ? false
+    : isEditing
+      ? hydratedEditRef.current && !!form.groupId
+      : createStep === 'details'
+        ? !!form.groupId || eventEligibleGroups.length === 0
+        : false;
 
   useLayoutEffect(() => {
     if (createPollBaselineSerialized != null) return;
@@ -572,7 +607,11 @@ export default function CreatePollScreen() {
       } else {
         await createPollMutation.mutateAsync(body);
         Toast.show({ type: 'success', text1: 'Poll created' });
-        router.replace('/(tabs)/polls');
+        if (createReturnTo) {
+          router.replace(createReturnTo as Href);
+        } else {
+          router.replace('/(tabs)/polls');
+        }
       }
     } catch (e: unknown) {
       const msg =
@@ -583,13 +622,26 @@ export default function CreatePollScreen() {
     }
   };
 
+  const showDetailsStep = isEditing || createStep === 'details';
+  const navTitle = isEditing
+    ? 'Edit Poll'
+    : showDetailsStep
+      ? 'New Poll'
+      : 'Choose group';
+
+  const selectGroupForCreate = (groupId: string) => {
+    setForm((p) => ({ ...p, groupId }));
+    setCreateStep('details');
+  };
+
   return (
     <EventFormPopoverChrome onClose={requestClose}>
       <View style={styles.inner}>
         <NavBar
-          title={isEditing ? 'Edit Poll' : 'New Poll'}
+          title={navTitle}
           onClose={requestClose}
           right={
+            showDetailsStep ? (
             <TouchableOpacity
               onPress={() => void submit()}
               disabled={!ok || createPollMutation.isPending || updatePollMutation.isPending}
@@ -603,43 +655,121 @@ export default function CreatePollScreen() {
                 </Text>
               )}
             </TouchableOpacity>
+            ) : (
+              <View style={{ width: 70 }} />
+            )
           }
         />
         <KeyboardSafeScrollView
           contentContainerStyle={{ padding: 20, paddingBottom: 100, width: '100%', alignSelf: 'stretch' }}
           showsVerticalScrollIndicator={false}
         >
+          {!showDetailsStep ? (
+            <View style={styles.groupStep}>
+              <Text style={styles.groupStepHint}>Which group is this poll for?</Text>
+              {!groupsDataReady ? (
+                <ActivityIndicator color={Colors.textSub} style={{ marginTop: 24 }} />
+              ) : eventEligibleGroups.length === 0 ? (
+                <Text style={styles.groupStepEmpty}>Join a group before creating a poll.</Text>
+              ) : (
+                <View style={styles.groupPickList}>
+                  {eventEligibleGroups.map((g) => {
+                    const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
+                    const p = getGroupColor(userColorHex);
+                    return (
+                      <TouchableOpacity
+                        key={g.id}
+                        onPress={() => selectGroupForCreate(g.id)}
+                        style={styles.groupPickRow}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Choose ${g.name}`}
+                      >
+                        <View style={[styles.groupPickAvatarWrap, { backgroundColor: p.cal }]}>
+                          <GroupAvatar
+                            seed={g.avatarSeed}
+                            thumbnail={g.thumbnail}
+                            name={g.name}
+                            size={44}
+                          />
+                        </View>
+                        <View style={styles.groupPickText}>
+                          <Text style={styles.groupPickName} numberOfLines={1}>
+                            {g.name}
+                          </Text>
+                          {g.memberCount != null ? (
+                            <Text style={styles.groupPickMeta}>
+                              {g.memberCount} {g.memberCount === 1 ? 'member' : 'members'}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          ) : (
+            <>
           <Field label="Group" required>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {joinedGroups.map((g) => {
-                const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
-                const p = getGroupColor(userColorHex);
-                const sel = form.groupId === g.id;
-                const pending = g.membershipStatus === 'pending';
-                return (
+            {selectedGroup && selectedGroupTheme ? (
+              <View
+                style={[
+                  styles.selectedGroupRow,
+                  {
+                    backgroundColor: selectedGroupTheme.row,
+                    borderColor: selectedGroupTheme.dot,
+                    borderWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.groupPickAvatarWrap,
+                    {
+                      width: 36,
+                      height: 36,
+                      borderRadius: 12,
+                      backgroundColor: selectedGroupTheme.cal,
+                    },
+                  ]}
+                >
+                  <GroupAvatar
+                    seed={selectedGroup.avatarSeed}
+                    thumbnail={selectedGroup.thumbnail}
+                    name={selectedGroup.name}
+                    size={36}
+                  />
+                </View>
+                <Text
+                  style={[styles.selectedGroupName, { color: selectedGroupTheme.text }]}
+                  numberOfLines={1}
+                >
+                  {selectedGroup.name}
+                </Text>
+                {!isEditing && !paramGroupId && eventEligibleGroups.length > 1 ? (
                   <TouchableOpacity
-                    key={g.id}
-                    onPress={() => set('groupId', g.id)}
-                    style={[
-                      styles.groupChip,
-                      sel && { borderColor: p.dot, backgroundColor: p.row },
-                      pending && styles.groupChipPending,
-                    ]}
+                    onPress={() => setCreateStep('group')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change group"
                   >
-                    <Text style={[styles.chipText, sel && { color: p.text, fontFamily: Fonts.semiBold }]}>
-                      {g.name}
-                      {pending ? ' (Pending)' : ''}
+                    <Text style={[styles.changeGroupLink, { color: selectedGroupTheme.text }]}>
+                      Change
                     </Text>
                   </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                ) : null}
+              </View>
+            ) : (
+              <Text style={styles.groupStepEmpty}>No group selected</Text>
+            )}
             {!selectedGroupEligible && selectedGroup ? (
               <Text style={styles.deadlineHint}>Pending groups cannot create polls yet.</Text>
             ) : null}
           </Field>
 
-          <Field label="Poll title" required>
+          <Field label="Poll name" required>
             <TextInput
               value={form.title}
               onChangeText={(v) => set('title', v)}
@@ -947,9 +1077,11 @@ export default function CreatePollScreen() {
               </Text>
             )}
           </TouchableOpacity>
+            </>
+          )}
         </KeyboardSafeScrollView>
         {Platform.OS === 'ios' && showDeadlineDatePicker ? (
-          <Modal transparent animationType="fade" statusBarTranslucent visible>
+          <Modal transparent animationType="fade" statusBarTranslucent visible {...edgeToEdgeModalProps}>
             <View style={styles.iosPickerModalRoot}>
               <Pressable
                 style={[StyleSheet.absoluteFillObject, styles.iosPickerBackdrop]}
@@ -985,7 +1117,7 @@ export default function CreatePollScreen() {
           </Modal>
         ) : null}
         {Platform.OS === 'ios' && showDeadlineTimePicker ? (
-          <Modal transparent animationType="fade" statusBarTranslucent visible>
+          <Modal transparent animationType="fade" statusBarTranslucent visible {...edgeToEdgeModalProps}>
             <View style={styles.iosPickerModalRoot}>
               <Pressable
                 style={[StyleSheet.absoluteFillObject, styles.iosPickerBackdrop]}
@@ -1041,21 +1173,55 @@ const styles = StyleSheet.create({
   },
   headerBtnDis: { backgroundColor: Colors.border },
   headerBtnText: { fontSize: 13, fontFamily: Fonts.semiBold, color: Colors.accentFg },
-  groupChip: {
+  groupStep: { gap: 12 },
+  groupStepHint: {
+    fontSize: 15,
+    fontFamily: Fonts.regular,
+    color: Colors.textSub,
+    marginBottom: 4,
+  },
+  groupStepEmpty: {
+    fontSize: 14,
+    fontFamily: Fonts.regular,
+    color: Colors.textMuted,
+    marginTop: 12,
+  },
+  groupPickList: { gap: 8 },
+  groupPickRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 12,
+    paddingVertical: 12,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: Radius.full,
+    borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.surface,
   },
-  groupChipPending: {
-    opacity: 0.72,
+  groupPickAvatarWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
-  chipText: { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.regular },
+  groupPickText: { flex: 1, minWidth: 0 },
+  groupPickName: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text },
+  groupPickMeta: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 2 },
+  selectedGroupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  selectedGroupName: { flex: 1, minWidth: 0, fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text },
+  changeGroupLink: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.accent },
   input: {
     padding: 10,
     paddingHorizontal: 14,

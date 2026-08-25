@@ -15,6 +15,7 @@ import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons } from '@expo/vector-icons';
 import { MembershipRequestAction } from '@moijia/client';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import {
   useGroup,
@@ -312,7 +313,7 @@ export function GroupMembersView({ groupId }: GroupMembersViewProps) {
       </KeyboardSafeScrollView>
 
       {memberMenu && canManageMembers ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setMemberMenu(null)}>
+        <Modal {...edgeToEdgeModalProps} visible transparent animationType="fade" onRequestClose={() => setMemberMenu(null)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setMemberMenu(null)} activeOpacity={1}>
             <View style={styles.menuCard}>
               <View style={styles.menuHeader}>

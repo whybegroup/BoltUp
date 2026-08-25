@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { PollTextFont } from '@moijia/client';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 
 const FONT_LABELS: { key: PollTextFont; label: string }[] = [
   { key: PollTextFont.SANS, label: 'Sans' },
@@ -102,7 +103,7 @@ export function PollOptionTextEditor({ value, onChange, textFont, onTextFontChan
         <Text style={styles.linkBtnText}>Insert link</Text>
       </TouchableOpacity>
 
-      <Modal visible={linkOpen} transparent animationType="fade" onRequestClose={() => setLinkOpen(false)}>
+      <Modal visible={linkOpen} transparent animationType="fade" onRequestClose={() => setLinkOpen(false)} {...edgeToEdgeModalProps}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setLinkOpen(false)} />
           <View style={styles.modalCard}>
@@ -186,6 +187,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
     borderColor: Colors.border,
+    flexGrow: 0,
     zIndex: 1,
   },
   modalTitle: { fontSize: 17, fontFamily: Fonts.bold, color: Colors.text, marginBottom: 12 },

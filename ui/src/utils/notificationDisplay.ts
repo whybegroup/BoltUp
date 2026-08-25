@@ -14,3 +14,15 @@ export function notificationListTitle(n: {
   if (body.includes('mentioned you in a comment')) return 'You were mentioned';
   return n.title;
 }
+
+/** Same local-timezone clock as comments / posts (`toLocaleString(undefined, …)`). */
+export function formatNotificationTimestamp(value: string | Date | number): string {
+  const date = typeof value === 'string' || typeof value === 'number' ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}

@@ -3,11 +3,14 @@ import {
   getAuth,
   initializeAuth,
   GoogleAuthProvider,
+  EmailAuthProvider,
   signInWithCredential,
   signInWithPopup,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
+  reauthenticateWithCredential,
+  updatePassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   browserLocalPersistence,
@@ -146,6 +149,47 @@ export const signUpWithEmail = async (email: string, password: string) => {
 export const sendPasswordReset = async (email: string) => {
   auth.useDeviceLanguage();
   await sendPasswordResetEmail(auth, email.trim());
+};
+
+export const hasPasswordProvider = (user: User | null | undefined): boolean =>
+  !!user?.providerData.some((p) => p.providerId === 'password');
+
+const PROVIDER_LABELS: Record<string, string> = {
+  password: 'Email',
+  'google.com': 'Google',
+  'apple.com': 'Apple',
+  'facebook.com': 'Facebook',
+};
+
+export const signInProviderLabels = (user: User | null | undefined): string => {
+  const labels = [...new Set((user?.providerData ?? []).map((p) => PROVIDER_LABELS[p.providerId] ?? p.providerId))];
+  return labels.length ? labels.join(', ') : '—';
+};
+
+/** Password is managed by an OAuth provider, not Firebase email/password. */
+export const oauthPasswordHint = (user: User | null | undefined): string | null => {
+  if (!user || hasPasswordProvider(user)) return null;
+  const ids = user.providerData.map((p) => p.providerId);
+  if (ids.includes('google.com')) {
+    return 'You signed in with Google. Manage your password in your Google account.';
+  }
+  if (ids.includes('apple.com')) {
+    return 'You signed in with Apple. There is no password to change here.';
+  }
+  if (ids.length) {
+    return 'This account uses a sign-in provider, so there is no password to change here.';
+  }
+  return null;
+};
+
+export const changePassword = async (currentPassword: string, newPassword: string) => {
+  const user = auth.currentUser;
+  if (!user?.email) {
+    throw Object.assign(new Error('No signed-in email account'), { code: 'auth/missing-email' });
+  }
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+  await updatePassword(user, newPassword);
 };
 
 export const signOut = async () => {

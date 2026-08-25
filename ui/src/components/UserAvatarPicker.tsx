@@ -43,12 +43,12 @@ export function UserAvatarPicker({
   deferFileUpload = false,
   pendingAvatarFileRef,
 }: UserAvatarPickerProps) {
-  const { width: winW } = useWindowDimensions();
-  const previewSize = Math.min(240, Math.max(140, Math.round(winW * 0.42)));
+  const { width: winW, height: winH } = useWindowDimensions();
+  const previewSize = Math.min(200, Math.max(96, Math.round(Math.min(winW * 0.36, winH * 0.2))));
   const pickerValue = toValidHex(value);
 
   return (
-    <View style={{ flexGrow: 1 }}>
+    <View>
       {onThumbnailChange != null ? (
         <AvatarThumbnailField
           userId={uploadUserId}
@@ -70,7 +70,6 @@ export function UserAvatarPicker({
           paddingVertical: 24,
           alignItems: 'center',
           justifyContent: 'center',
-          flexGrow: 1,
           minHeight: previewSize + 48,
         }}
       >

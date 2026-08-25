@@ -48,7 +48,6 @@ export interface Event {
   rsvpDeadline?: Date | string | null;
   /**
    * RFC 5545 RRULE (same string on every row in a series). Null on one-off events.
-   * Used when creating/editing; not shown on the event detail screen in the app.
    */
   recurrenceRule?: string | null;
   /** Present on each row that belongs to the same materialized recurrence. */
@@ -301,4 +300,6 @@ export interface EventTimeSuggestionInput {
   userId: string;
   start: Date | string;
   end: Date | string;
+  /** IANA zone from the device so notification copy uses the same wall clock as the rest of the app. */
+  viewerTimeZone?: string;
 }

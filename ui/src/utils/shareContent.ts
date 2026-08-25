@@ -1,7 +1,14 @@
 import { Platform, Share } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import Toast from 'react-native-toast-message';
-import { eventShareLink, pollShareLink, postShareLink } from './shareLinks';
+import { groupInviteLink } from './inviteLink';
+import { eventShareLink, pollShareLink, postShareLink, withShareTimeZone } from './shareLinks';
+import {
+  eventShareCopy,
+  groupInviteShareCopy,
+  pollShareCopy,
+  postShareCopy,
+} from './sharePreviewCopy';
 
 /** RN Modal teardown cancels the Android share intent if Share runs in the same tick. */
 const SHARE_AFTER_MODAL_MS = 350;
@@ -54,29 +61,72 @@ export async function shareUrl(opts: {
   }
 }
 
-export function shareEvent(eventId: string, eventName: string): Promise<void> {
-  const name = eventName.trim() || 'this event';
+export function shareEvent(
+  eventId: string,
+  details: {
+    name: string;
+    start?: Date | string | null;
+    end?: Date | string | null;
+    isAllDay?: boolean | null;
+    location?: string | null;
+    locationName?: string | null;
+    locationAddress?: string | null;
+    groupName?: string | null;
+  },
+): Promise<void> {
+  const { title, message } = eventShareCopy(details);
   return shareUrl({
-    title: `${name} on Moijia`,
-    message: `Check out ${name} on Moijia!`,
-    url: eventShareLink(eventId),
+    title,
+    message,
+    url: withShareTimeZone(eventShareLink(eventId)),
   });
 }
 
-export function sharePoll(pollId: string, pollTitle: string): Promise<void> {
-  const title = pollTitle.trim() || 'this poll';
+export function sharePoll(
+  pollId: string,
+  details: {
+    title: string;
+    description?: string | null;
+    deadline?: Date | string | null;
+    closed?: boolean;
+    groupName?: string | null;
+  },
+): Promise<void> {
+  const { title, message } = pollShareCopy(details);
   return shareUrl({
-    title: `${title} on Moijia`,
-    message: `Vote on ${title} on Moijia!`,
-    url: pollShareLink(pollId),
+    title,
+    message,
+    url: withShareTimeZone(pollShareLink(pollId)),
   });
 }
 
-export function sharePost(groupId: string, postId: string, groupName?: string): Promise<void> {
-  const group = (groupName ?? '').trim() || 'the group';
+export function sharePost(
+  groupId: string,
+  postId: string,
+  details?: {
+    title?: string | null;
+    body?: string | null;
+    authorName?: string | null;
+    groupName?: string | null;
+  },
+): Promise<void> {
+  const { title, message } = postShareCopy(details ?? {});
   return shareUrl({
-    title: `Post in ${group} on Moijia`,
-    message: `Check out this post in ${group} on Moijia!`,
+    title,
+    message,
     url: postShareLink(groupId, postId),
+  });
+}
+
+export function shareGroupInvite(
+  inviteCode: string,
+  details: { name: string; description?: string | null },
+): Promise<void> {
+  const { title, message } = groupInviteShareCopy(details);
+  return shareUrl({
+    title,
+    message,
+    url: groupInviteLink(inviteCode),
+    copiedToast: 'Invite link copied',
   });
 }

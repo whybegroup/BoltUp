@@ -9,9 +9,11 @@ import { useOrderedSwitcherGroups } from '../../hooks/useOrderedSwitcherGroups';
 import { GroupsTopHeader } from '../GroupsTopHeader';
 import { GroupsBreadcrumbTrail } from '../GroupsBreadcrumbTrail';
 import { NotificationsPanelModal } from '../NotificationsPanelModal';
-import { useGroupScopeNav } from './GroupScopeNavContext';
+import { CreateOrJoinButton } from '../CreateOrJoinButton';
+import { useGroupScopeHeaderSlot, useGroupScopeNav } from './GroupScopeNavContext';
 import { useGroupSubpage } from './useGroupSubpage';
 import { useGroupScopeBreadcrumbs } from './useGroupScopeBreadcrumbs';
+import { getGroupColor, getDefaultGroupThemeFromName } from '../../utils/helpers';
 
 type GroupScopeChromeProps = {
   /** When null, breadcrumbs show the All Groups list (no group scope). */
@@ -61,14 +63,59 @@ export function GroupScopeChrome({ groupId }: GroupScopeChromeProps) {
   const [showNotifs, setShowNotifs] = useState(false);
 
   const unreadNotifCount = useMemo(() => notifs.filter((n) => !n.read).length, [notifs]);
+  const eventEligibleGroupCount = useMemo(
+    () =>
+      allGroupsForChrome.filter(
+        (g) => !g.deletedAt && (g.membershipStatus === 'member' || g.membershipStatus === 'admin')
+      ).length,
+    [allGroupsForChrome]
+  );
+  const { headerTrailing } = useGroupScopeHeaderSlot();
+  const showDetailActions = subpage.kind === 'poll' || subpage.kind === 'event';
+  const createAction = !groupId
+    ? { mode: 'group' as const, groupId: undefined as string | undefined }
+    : subpage.kind === 'events'
+      ? { mode: 'event' as const, groupId }
+      : subpage.kind === 'polls'
+        ? { mode: 'poll' as const, groupId }
+        : null;
+  const groupHeaderTheme = useMemo(() => {
+    if (!groupId) return null;
+    const group = allGroupsForChrome.find((g) => g.id === groupId);
+    const hex = groupColors[groupId] || getDefaultGroupThemeFromName(group?.name ?? 'Group');
+    const p = getGroupColor(hex);
+    return { backgroundColor: p.row, borderBottomColor: p.label };
+  }, [groupId, groupColors, allGroupsForChrome]);
 
   return (
     <>
-      <View style={[styles.chrome, { paddingTop: insets.top }]}>
+      <View
+        collapsable={false}
+        style={[
+          styles.chrome,
+          { paddingTop: insets.top },
+          {
+            backgroundColor: groupHeaderTheme?.backgroundColor ?? Colors.bg,
+          },
+        ]}
+      >
         <GroupsTopHeader
           showNotifs={showNotifs}
           onToggleNotifs={() => setShowNotifs((p) => !p)}
           unreadCount={unreadNotifCount}
+          trailingActions={showDetailActions ? headerTrailing : undefined}
+          createAction={
+            createAction ? (
+              <CreateOrJoinButton
+                userId={currentUserId}
+                eventEligibleGroupCount={eventEligibleGroupCount}
+                mode={createAction.mode}
+                groupId={createAction.groupId}
+                variant="header"
+              />
+            ) : undefined
+          }
+          headerTheme={groupHeaderTheme}
         />
         <GroupsBreadcrumbTrail segments={segments} />
       </View>

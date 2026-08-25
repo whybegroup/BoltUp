@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, type MutableRefObject } from 'react';
+import { useRef, useEffect, useState, useMemo, type MutableRefObject } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
+  Modal,
   useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { GroupAvatarPicker } from './GroupAvatarPicker';
 import { UserAvatarPicker } from './UserAvatarPicker';
 import { uploadPendingAvatarFile, type PendingAvatarFile } from '../services/pickAndUploadImage';
@@ -62,13 +65,22 @@ export function AvatarPickerModal({
   pendingAvatarFileRef: pendingAvatarFileRefProp,
 }: AvatarPickerModalProps) {
   const { width: winW, height: winH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const internalPendingRef = useRef<PendingAvatarFile | null>(null);
   const pendingRef = pendingAvatarFileRefProp ?? internalPendingRef;
   const deferLocalFiles = deferFileUploadProp ?? !!onSave;
   const [isCommitting, setIsCommitting] = useState(false);
 
-  const cardWidth = Math.min(winW * 0.94, 720);
-  const cardHeight = Math.min(winH * 0.9, winH - 24);
+  const padX = 16;
+  const padTop = Math.max(insets.top, 12);
+  const padBottom = Math.max(insets.bottom, 12);
+  const cardWidth = Math.min(winW - padX * 2, 720);
+  const cardMaxHeight = Math.max(280, winH - padTop - padBottom);
+
+  const overlayStyle = useMemo(
+    () => [styles.overlay, { paddingTop: padTop, paddingBottom: padBottom, paddingHorizontal: padX }],
+    [padTop, padBottom, padX],
+  );
 
   useEffect(() => {
     if (!visible) {
@@ -77,8 +89,6 @@ export function AvatarPickerModal({
       pendingRef.current = null;
     }
   }, [visible]);
-
-  if (!visible) return null;
 
   const title = variant === 'user' ? 'Choose avatar' : 'Choose group avatar';
   const busy = isCommitting || !!isSaving;
@@ -103,9 +113,16 @@ export function AvatarPickerModal({
   };
 
   return (
-    <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="box-none">
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onRequestClose}
+      {...edgeToEdgeModalProps}
+    >
+      <View style={overlayStyle}>
       <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onRequestClose} activeOpacity={1} />
-      <View style={[styles.card, { width: cardWidth, height: cardHeight }]}>
+      <View style={[styles.card, { width: cardWidth, maxHeight: cardMaxHeight }]}>
         <View style={styles.header}>
           <Text style={styles.title}>{title}</Text>
           <TouchableOpacity
@@ -122,6 +139,8 @@ export function AvatarPickerModal({
           showsVerticalScrollIndicator={false}
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
         >
           {variant === 'group' ? (
             <GroupAvatarPicker
@@ -163,12 +182,18 @@ export function AvatarPickerModal({
           </TouchableOpacity>
         ) : null}
       </View>
-    </View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay:  { backgroundColor: 'rgba(0,0,0,0.32)', alignItems: 'center', justifyContent: 'center', padding: 12 },
+  overlay:  {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.32)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   card:    {
     backgroundColor: Colors.surface,
     borderRadius: 20,
@@ -176,6 +201,8 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: 20,
     flexDirection: 'column',
+    overflow: 'hidden',
+    zIndex: 1,
   },
   header:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 },
   title:   { fontSize: 18, fontFamily: Fonts.semiBold, color: Colors.text },

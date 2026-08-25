@@ -83,14 +83,18 @@ export function EventRow({ ev, group, groupColorHex, onPress, onGroupPress, isLa
         styles.row,
         {
           backgroundColor: isPast ? '#F5F5F4' : Colors.surface,
-          borderLeftWidth: 3,
-          borderLeftColor: isPast ? Colors.border : p.dot,
           opacity: isPast ? 0.5 : 1,
         },
         !isLast && styles.rowBorder,
       ]}
       activeOpacity={0.7}
+      collapsable={false}
     >
+      <View
+        pointerEvents="none"
+        collapsable={false}
+        style={[styles.themeAccent, { backgroundColor: isPast ? Colors.border : p.dot }]}
+      />
       {/* Content */}
       <View style={styles.content}>
         <View style={styles.titleRow}>
@@ -193,6 +197,14 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     gap: 12,
     position: 'relative',
+    overflow: 'hidden',
+  },
+  themeAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
   },
   rowBorder: {
     borderBottomWidth: 1,

@@ -11,6 +11,7 @@ import {
   Image,
 } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import {
   pickImageFromLibrary,
   uploadPickedImageAsset,
@@ -169,6 +170,7 @@ export function PhotoUrlOrUploadModal({
       onRequestClose={() => {
         if (!blockDismissWhileUploading) resetAndClose();
       }}
+      {...edgeToEdgeModalProps}
     >
       {Platform.OS === 'web' && (
         <input
@@ -256,6 +258,7 @@ const styles = StyleSheet.create({
     padding: 16,
     width: '100%',
     maxWidth: 360,
+    flexGrow: 0,
   },
   title: { fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 12 },
   hint: { fontSize: 12, fontFamily: Fonts.regular, color: Colors.textMuted, marginBottom: 10, lineHeight: 18 },

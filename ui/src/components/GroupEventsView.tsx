@@ -87,55 +87,84 @@ export function GroupEventsView({ groupId }: GroupEventsViewProps) {
     return null;
   }
 
-  const body = !fetchGroupEvents ? null : groupEventsLoading && filteredEvents.length === 0 ? (
-    <ScrollView
-      style={styles.list}
-      contentContainerStyle={styles.emptyWrap}
-      refreshControl={refreshControl}
-    >
-      <ActivityIndicator color={Colors.textSub} />
-    </ScrollView>
-  ) : filteredEvents.length === 0 ? (
-    <ScrollView
-      style={styles.list}
-      contentContainerStyle={styles.emptyWrap}
-      refreshControl={refreshControl}
-    >
-      <Ionicons name="calendar-outline" size={56} color={Colors.textMuted} style={styles.emptyGlyph} />
-      <Text style={styles.emptyTitle}>No events</Text>
-      <Text style={styles.emptyDesc}>
-        {hasFilters ? 'Try adjusting your filters' : 'No events in this group yet'}
-      </Text>
-    </ScrollView>
-  ) : (
-    <ListView
-      listContainerStyle={styles.list}
-      events={filteredEvents}
-      groups={[group]}
-      groupColors={groupColors}
-      refreshControl={refreshControl}
-      onSelect={(ev: EventDetailed) => {
-        router.push(buildGroupEventDetailUrl(groupId, ev.id, { isInEventsTab, fromEventId }));
-      }}
-      onSelectGroup={(gid) => {
-        router.push(withReturnTo(`/(tabs)/groups/${gid}`, pathname));
-      }}
-      showGroup={false}
-    />
-  );
+  if (!fetchGroupEvents) {
+    return <View style={styles.page} />;
+  }
 
   return (
     <View style={styles.page}>
-      {fetchGroupEvents ? <EventsListFiltersPanel {...filterState} /> : null}
-      <View style={styles.content}>{body}</View>
+      <EventsListFiltersPanel {...filterState} filtersActive={hasFilters}>
+        {({ toggle, expanded }) => (
+          <View style={styles.content}>
+            {groupEventsLoading && filteredEvents.length === 0 ? (
+              <>
+                <View style={styles.listToolbarRow}>
+                  <View style={styles.toolbarEnd}>{toggle}</View>
+                </View>
+                {expanded}
+                <ScrollView
+                  style={styles.list}
+                  contentContainerStyle={styles.emptyWrap}
+                  refreshControl={refreshControl}
+                >
+                  <ActivityIndicator color={Colors.textSub} />
+                </ScrollView>
+              </>
+            ) : filteredEvents.length === 0 ? (
+              <>
+                <View style={styles.listToolbarRow}>
+                  <View style={styles.toolbarEnd}>{toggle}</View>
+                </View>
+                {expanded}
+                <ScrollView
+                  style={styles.list}
+                  contentContainerStyle={styles.emptyWrap}
+                  refreshControl={refreshControl}
+                >
+                  <Ionicons name="calendar-outline" size={56} color={Colors.textMuted} style={styles.emptyGlyph} />
+                  <Text style={styles.emptyTitle}>No events</Text>
+                  <Text style={styles.emptyDesc}>
+                    {hasFilters ? 'Try adjusting your filters' : 'Create an event to get started'}
+                  </Text>
+                </ScrollView>
+              </>
+            ) : (
+              <ListView
+                listContainerStyle={styles.list}
+                events={filteredEvents}
+                groups={[group]}
+                groupColors={groupColors}
+                refreshControl={refreshControl}
+                toolbarEnd={toggle}
+                belowToolbar={expanded}
+                onSelect={(ev: EventDetailed) => {
+                  router.push(buildGroupEventDetailUrl(groupId, ev.id, { isInEventsTab, fromEventId }));
+                }}
+                onSelectGroup={(gid) => {
+                  router.push(withReturnTo(`/(tabs)/groups/${gid}`, pathname));
+                }}
+                showGroup={false}
+              />
+            )}
+          </View>
+        )}
+      </EventsListFiltersPanel>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: Colors.bg },
-  content: { flex: 1, paddingTop: 8, minHeight: 0 },
-  list: { flex: 1, paddingHorizontal: 20 },
+  content: { flex: 1, paddingTop: 4, minHeight: 0 },
+  list: { flex: 1 },
+  listToolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
+  toolbarEnd: { marginLeft: 'auto' },
   emptyWrap: { flex: 1, paddingTop: 48, paddingHorizontal: 20, alignItems: 'center' },
   emptyGlyph: { marginBottom: 16 },
   emptyTitle: {

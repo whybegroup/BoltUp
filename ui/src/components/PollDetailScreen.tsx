@@ -22,9 +22,15 @@ import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { EventFormPopoverChrome } from './EventFormPopoverChrome';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { modalTopBarStyles } from './modalTopBarStyles';
 import { formSectionTitleStyle } from './ui';
 import { keyboardAwareScrollProps } from './KeyboardSafeScrollView';
+import {
+  createScrollAboveKeyboardOnFocus,
+  useAndroidKeyboardContentPad,
+  useEnsureFocusedInputAboveKeyboard,
+} from '../utils/scrollInputAboveKeyboard';
 import {
   usePoll,
   usePollResults,
@@ -36,7 +42,7 @@ import {
   useSuggestPollOption,
   useDecidePollOptionSuggestion,
   useGroup,
-  useAllGroupMemberColors,
+  useGroupMemberColor,
 } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -60,8 +66,9 @@ import {
 import { PollOptionInputKind, type Poll, type PollQuestionResult, type PollResults } from '@moijia/client';
 import { ResolvableImage } from './ResolvableImage';
 import { UserAvatar } from './UserAvatar';
-import { getDefaultGroupThemeFromName, getGroupColor } from '../utils/helpers';
+import { getDefaultGroupThemeFromName, getGroupColor, formatCreatedAtLabel, isContentEdited } from '../utils/helpers';
 import { sharePoll } from '../utils/shareContent';
+import { ChromeHeaderTrailingRow, DetailActionIcon, RegisterChromeHeader } from './chromeHeaderSlot';
 
 const MAX_OPTIONS_PER_QUESTION = 50;
 const POLL_SIDE_MARGIN = 20;
@@ -665,6 +672,27 @@ function rankingOptionsForEdit(
   return [...ranked, ...unranked];
 }
 
+type RankingSortMode = 'total' | 'mine';
+
+/** Lower average-rank score is better; options with no score stay at the end. */
+function rankingOptionsForTotal(
+  options: Array<{ id: string; label: string }>,
+  placement: Array<{ optionId: string; votes: number }> | undefined,
+): Array<{ id: string; label: string }> {
+  if (!placement?.length) return options;
+  const scoreById = new Map(placement.map((p) => [p.optionId, p.votes]));
+  const indexById = new Map(options.map((o, i) => [o.id, i]));
+  return options.slice().sort((a, b) => {
+    const sa = scoreById.get(a.id) ?? 0;
+    const sb = scoreById.get(b.id) ?? 0;
+    const aHas = sa > 0;
+    const bHas = sb > 0;
+    if (aHas && bHas && sa !== sb) return sa - sb;
+    if (aHas !== bHas) return aHas ? -1 : 1;
+    return (indexById.get(a.id) ?? 0) - (indexById.get(b.id) ?? 0);
+  });
+}
+
 type PollVoteOptionRowProps = {
   opt: { id: string; label: string };
   q: ParsedQuestion;
@@ -689,7 +717,7 @@ type PollVoteOptionRowProps = {
   userId?: string;
   useRankingChartPreview?: boolean;
   rankingPlacementOptions?: Array<{ optionId: string; votes: number }>;
-  /** Row body inside PollRankingReorderList; drag handle is on the shell. */
+  /** Row body inside PollRankingReorderList; long-press the card to drag. */
   embeddedInReorderShell?: boolean;
 };
 
@@ -943,7 +971,11 @@ export function PollDetailScreen({
   const { data: group, refetch: refetchGroup } = useGroup(poll?.groupId ?? '', userId ?? '', {
     enabled: !isError,
   });
-  const { data: groupColors = {}, refetch: refetchGroupColors } = useAllGroupMemberColors(userId ?? '');
+  const colorGroupId = poll?.groupId ?? routeGroupId ?? '';
+  const { data: memberColorData, refetch: refetchMemberColor } = useGroupMemberColor(
+    colorGroupId,
+    userId ?? '',
+  );
   const { data: optionSuggestions = [], refetch: refetchOptionSuggestions } = usePollOptionSuggestions(
     id ?? '',
     userId ?? '',
@@ -951,7 +983,7 @@ export function PollDetailScreen({
   );
   const [rankingDragActive, setRankingDragActive] = useState(false);
   const { refreshControl } = usePullToRefresh(
-    [refetchPoll, refetchResults, refetchGroup, refetchGroupColors, refetchOptionSuggestions],
+    [refetchPoll, refetchResults, refetchGroup, refetchMemberColor, refetchOptionSuggestions],
     { enabled: Platform.OS !== 'android' || !rankingDragActive },
   );
   const submitVoteMutation = useSubmitPollVote(id ?? '', userId ?? '');
@@ -969,6 +1001,7 @@ export function PollDetailScreen({
   const [hasLockedResponse, setHasLockedResponse] = useState(false);
   /** Bumped only when entering ranking edit (Update) so the reorder list remounts cleanly. */
   const [rankingEditSession, setRankingEditSession] = useState(0);
+  const [rankingSortMode, setRankingSortMode] = useState<RankingSortMode>('total');
   const [detailModal, setDetailModal] = useState<{
     title: string;
     rows: Array<{
@@ -987,6 +1020,10 @@ export function PollDetailScreen({
   const [suggestedSuccessQuestionKey, setSuggestedSuccessQuestionKey] = useState<string | null>(null);
   const suggestSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
+  const scrollOffsetYRef = useRef(0);
+  const textAnswerMountRefs = useRef<Record<string, View | null>>({});
+  useEnsureFocusedInputAboveKeyboard(scrollViewRef, scrollOffsetYRef);
+  const androidKbPad = useAndroidKeyboardContentPad();
   const questionYInScrollRef = useRef<Record<string, number>>({});
   const parsedQuestions = useMemo(() => (poll ? parseStructuredPollQuestions(poll) : []), [poll]);
 
@@ -1002,11 +1039,9 @@ export function PollDetailScreen({
   const effectiveWatching = poll ? (poll.viewerWatching ?? watchDefaultForViewer) : false;
   const answersEditable = !hasSavedVote || editingSavedAnswer;
 
-  const palette = useMemo(() => {
-    if (!poll) return getGroupColor(getDefaultGroupThemeFromName('Group'));
-    const hex = groupColors[poll.groupId] || getDefaultGroupThemeFromName(group?.name ?? 'Group');
-    return getGroupColor(hex);
-  }, [poll, group?.name, groupColors]);
+  const userColorHex =
+    memberColorData?.colorHex || getDefaultGroupThemeFromName(group?.name ?? 'Group');
+  const palette = getGroupColor(userColorHex);
 
   const canDeletePoll = useMemo(() => {
     if (!poll || !userId) return false;
@@ -1074,6 +1109,7 @@ export function PollDetailScreen({
     setEditingSavedAnswer(false);
     setHasLockedResponse(false);
     setRankingEditSession(0);
+    setRankingSortMode('total');
     setMissingRequiredKeys([]);
     questionYInScrollRef.current = {};
   }, [id]);
@@ -1277,89 +1313,114 @@ export function PollDetailScreen({
     pollWithCloseState?.closedBy,
   ]);
 
+  const isPageVariant = variant === 'groups' || variant === 'polls';
+  const actionPlacement = isPageVariant ? 'chrome' : 'modal';
+  const pollToolbar = (
+    <>
+      {id ? (
+        <DetailActionIcon
+          placement={actionPlacement}
+          onPress={() =>
+            void sharePoll(id, {
+              title: poll?.title ?? '',
+              description: poll?.description,
+              deadline: poll?.deadline,
+              closed: isPollClosed,
+              groupName: group?.name,
+            })
+          }
+          accessibilityLabel="Share poll"
+        >
+          <Ionicons name="share-outline" size={actionPlacement === 'chrome' ? 18 : 20} color={Colors.text} />
+        </DetailActionIcon>
+      ) : null}
+      {userId ? (
+        <DetailActionIcon
+          placement={actionPlacement}
+          onPress={() => {
+            void (async () => {
+              try {
+                await setWatchMutation.mutateAsync({ watching: !effectiveWatching });
+              } catch (e: unknown) {
+                const err = e as { body?: { message?: string }; message?: string };
+                Alert.alert(
+                  'Could not update poll notifications',
+                  err?.body?.message || err?.message || 'Please try again.',
+                );
+              }
+            })();
+          }}
+          disabled={setWatchMutation.isPending}
+          accessibilityLabel={
+            effectiveWatching
+              ? 'Watching this poll — tap to stop default notifications'
+              : 'Not watching — tap to get default poll notifications'
+          }
+        >
+          <Ionicons
+            name={effectiveWatching ? 'eye' : 'eye-off-outline'}
+            size={actionPlacement === 'chrome' ? 18 : 22}
+            color={Colors.text}
+          />
+        </DetailActionIcon>
+      ) : null}
+      {canEditPoll && id ? (
+        <DetailActionIcon
+          placement={actionPlacement}
+          onPress={() => router.push(withReturnTo(`/create-poll?editId=${encodeURIComponent(id)}`, pathname))}
+          accessibilityLabel="Edit poll"
+        >
+          <Ionicons name="create-outline" size={actionPlacement === 'chrome' ? 18 : 20} color={Colors.text} />
+        </DetailActionIcon>
+      ) : null}
+      {canDeletePoll ? (
+        <DetailActionIcon
+          placement={actionPlacement}
+          onPress={onDeletePoll}
+          disabled={deletePollMutation.isPending}
+          accessibilityLabel="Delete poll"
+        >
+          <Ionicons name="trash-outline" size={actionPlacement === 'chrome' ? 18 : 20} color={Colors.text} />
+        </DetailActionIcon>
+      ) : null}
+    </>
+  );
+
   const sheetBody = (
       <View style={styles.safe}>
-        {variant === 'modal' ? (
-          <View style={modalTopBarStyles.bar}>
-            <TouchableOpacity
-              onPress={dismiss}
-              style={modalTopBarStyles.closeButton}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-            >
-              <Ionicons name="close" size={26} color={Colors.textSub} />
-            </TouchableOpacity>
-            <View style={{ flex: 1 }} />
-            {id ? (
-              <TouchableOpacity
-                onPress={() => void sharePoll(id, poll?.title ?? '')}
-                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Share poll"
-              >
-                <Ionicons name="share-outline" size={20} color={Colors.textSub} />
-              </TouchableOpacity>
-            ) : null}
-            {userId ? (
-              <TouchableOpacity
-                onPress={async () => {
-                  try {
-                    await setWatchMutation.mutateAsync({ watching: !effectiveWatching });
-                  } catch (e: unknown) {
-                    const err = e as { body?: { message?: string }; message?: string };
-                    Alert.alert(
-                      'Could not update poll notifications',
-                      err?.body?.message || err?.message || 'Please try again.',
-                    );
-                  }
-                }}
-                disabled={setWatchMutation.isPending}
-                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  effectiveWatching
-                    ? 'Watching this poll — tap to stop default notifications'
-                    : 'Not watching — tap to get default poll notifications'
-                }
-              >
-                <Ionicons
-                  name={effectiveWatching ? 'eye' : 'eye-off-outline'}
-                  size={22}
-                  color={effectiveWatching ? Colors.accent : Colors.textSub}
-                />
-              </TouchableOpacity>
-            ) : null}
-            {canEditPoll && id ? (
-              <TouchableOpacity
-                onPress={() => router.push(withReturnTo(`/create-poll?editId=${encodeURIComponent(id)}`, pathname))}
-                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-                accessibilityRole="button"
-                accessibilityLabel="Edit poll"
-              >
-                <Ionicons name="pencil-outline" size={21} color={Colors.textSub} />
-              </TouchableOpacity>
-            ) : null}
-            {canDeletePoll ? (
-              <TouchableOpacity
-                onPress={onDeletePoll}
-                disabled={deletePollMutation.isPending}
-                style={[modalTopBarStyles.trailingIconTap, { marginRight: 8 }]}
-                accessibilityRole="button"
-                accessibilityLabel="Delete poll"
-              >
-                <Ionicons name="trash-outline" size={20} color={Colors.text} />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : null}
+        {isPageVariant ? (
+          <RegisterChromeHeader
+            trailing={<ChromeHeaderTrailingRow>{pollToolbar}</ChromeHeaderTrailingRow>}
+            theme={{ backgroundColor: palette.row, borderBottomColor: palette.label }}
+          />
+        ) : (
+        <View style={[modalTopBarStyles.bar, { backgroundColor: palette.row, borderBottomColor: palette.label }]}>
+          <TouchableOpacity
+            onPress={dismiss}
+            style={modalTopBarStyles.closeButton}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Ionicons name="close" size={26} color={Colors.textSub} />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          {pollToolbar}
+        </View>
+        )}
 
         <ScrollViewContainer
           ref={scrollViewRef}
           style={styles.eventScrollView}
-          contentContainerStyle={styles.eventScrollContent}
+          contentContainerStyle={[
+            styles.eventScrollContent,
+            androidKbPad > 0 && { paddingBottom: 14 + androidKbPad },
+          ]}
           showsVerticalScrollIndicator={false}
           refreshControl={refreshControl}
+          onScroll={(e) => {
+            scrollOffsetYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
           {...keyboardAwareScrollProps}
         >
           {!id || !userId ? (
@@ -1373,106 +1434,9 @@ export function PollDetailScreen({
             <View style={styles.eventMainCardWrap}>
               <View style={styles.eventMainCard}>
                 <View style={[styles.pollPad, styles.pollHeaderPad]}>
-                  {variant === 'groups' || variant === 'polls' ? (
-                    <>
-                      <View style={styles.groupNameRow}>
-                        <TouchableOpacity
-                          style={[styles.groupChipAboveTitle, styles.groupChipInRow]}
-                          onPress={openGroupOverview}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
-                          <Text style={styles.navGroupName} numberOfLines={1}>
-                            {group?.name ?? 'Group'}
-                          </Text>
-                          <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
-                        </TouchableOpacity>
-                        <View style={styles.groupPollToolbar}>
-                          {id ? (
-                            <TouchableOpacity
-                              onPress={() => void sharePoll(id, poll.title)}
-                              style={styles.groupPollIconBtn}
-                              hitSlop={8}
-                              accessibilityRole="button"
-                              accessibilityLabel="Share poll"
-                            >
-                              <Ionicons name="share-outline" size={20} color={Colors.textSub} />
-                            </TouchableOpacity>
-                          ) : null}
-                          {userId ? (
-                            <TouchableOpacity
-                              onPress={async () => {
-                                try {
-                                  await setWatchMutation.mutateAsync({ watching: !effectiveWatching });
-                                } catch (e: unknown) {
-                                  const err = e as { body?: { message?: string }; message?: string };
-                                  Alert.alert(
-                                    'Could not update poll notifications',
-                                    err?.body?.message || err?.message || 'Please try again.',
-                                  );
-                                }
-                              }}
-                              disabled={setWatchMutation.isPending}
-                              style={styles.groupPollIconBtn}
-                              accessibilityRole="button"
-                              accessibilityLabel={
-                                effectiveWatching
-                                  ? 'Watching this poll — tap to stop default notifications'
-                                  : 'Not watching — tap to get default poll notifications'
-                              }
-                            >
-                              <Ionicons
-                                name={effectiveWatching ? 'eye' : 'eye-off-outline'}
-                                size={22}
-                                color={effectiveWatching ? Colors.accent : Colors.textSub}
-                              />
-                            </TouchableOpacity>
-                          ) : null}
-                          {canEditPoll && id ? (
-                            <TouchableOpacity
-                              onPress={() =>
-                                router.push(withReturnTo(`/create-poll?editId=${encodeURIComponent(id)}`, pathname))
-                              }
-                              style={styles.groupPollIconBtn}
-                              accessibilityRole="button"
-                              accessibilityLabel="Edit poll"
-                            >
-                              <Ionicons name="pencil-outline" size={21} color={Colors.textSub} />
-                            </TouchableOpacity>
-                          ) : null}
-                          {canDeletePoll ? (
-                            <TouchableOpacity
-                              onPress={onDeletePoll}
-                              disabled={deletePollMutation.isPending}
-                              style={styles.groupPollIconBtn}
-                              accessibilityRole="button"
-                              accessibilityLabel="Delete poll"
-                            >
-                              <Ionicons name="trash-outline" size={20} color={Colors.text} />
-                            </TouchableOpacity>
-                          ) : null}
-                        </View>
-                      </View>
-                      <Text style={styles.pollTitle} numberOfLines={8}>
-                        {poll.title}
-                      </Text>
-                    </>
-                  ) : (
-                    <>
-                      <TouchableOpacity
-                        style={styles.groupChipAboveTitle}
-                        onPress={openGroupOverview}
-                        activeOpacity={0.7}
-                      >
-                        <View style={[styles.groupDot, { backgroundColor: palette.dot }]} />
-                        <Text style={styles.navGroupName} numberOfLines={1}>
-                          {group?.name ?? 'Group'}
-                        </Text>
-                        <Ionicons name="chevron-forward" size={14} color={Colors.textMuted} style={{ marginTop: 1 }} />
-                      </TouchableOpacity>
-                      <Text style={styles.pollTitle}>{poll.title}</Text>
-                    </>
-                  )}
+                  <Text style={styles.pollTitle} numberOfLines={isPageVariant ? 8 : undefined}>
+                    {poll.title}
+                  </Text>
                   {poll.description?.trim() ? (
                     <View style={[styles.descBox, { marginTop: 6 }]}>
                       <Text style={styles.descText}>{poll.description.trim()}</Text>
@@ -1523,6 +1487,19 @@ export function PollDetailScreen({
                       {((poll as Poll & { createdByName?: string }).createdByName?.trim()) || poll.createdBy}
                     </Text>
                   </View>
+                  <View style={styles.infoRow}>
+                    <Ionicons name="time-outline" size={20} color={Colors.textSub} style={styles.infoRowIcon} />
+                    <Text style={styles.infoText} numberOfLines={2}>
+                      Created at {formatCreatedAtLabel(poll.createdAt)}
+                      {isContentEdited(poll.createdAt, poll.updatedAt) ? ' · Edited' : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.infoRow}>
+                    <Ionicons name="people-outline" size={20} color={Colors.textSub} style={styles.infoRowIcon} />
+                    <TouchableOpacity onPress={openGroupOverview} activeOpacity={0.7} style={{ flex: 1 }}>
+                      <Text style={styles.infoText}>{group?.name ?? 'Group'}</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
             </View>
@@ -1542,10 +1519,7 @@ export function PollDetailScreen({
                   if (q.anonymousVotes) questionMeta.push('Anonymous');
                   const resultQuestion = results?.questions.find((rq) => rq.questionKey === q.key);
                   const useRankingList = q.type === 'rating';
-                  const useRankingDrag = answersEditable && useRankingList;
-                  const optionsForDisplay = useRankingList
-                    ? rankingOptionsForEdit(q.options, selectedByQuestion[q.key] ?? [])
-                    : q.options;
+                  const useRankingDrag = answersEditable && useRankingList && !isPollClosed;
                   const questionAnonymousVotes = !!(poll.anonymousVotes || resultQuestion?.anonymousVotes);
                   const useRankingChartPreview =
                     answersEditable && q.type === 'rating' && !!userId && !questionAnonymousVotes;
@@ -1570,6 +1544,12 @@ export function PollDetailScreen({
                           useRankingChartPreview,
                         )
                       : undefined;
+                  const showRankingSortToggle = useRankingList && !useRankingDrag;
+                  const optionsForDisplay = useRankingList
+                    ? showRankingSortToggle && rankingSortMode === 'total'
+                      ? rankingOptionsForTotal(q.options, rankingPlacementOptions)
+                      : rankingOptionsForEdit(q.options, selectedByQuestion[q.key] ?? [])
+                    : q.options;
                   const useChoiceChartPreview =
                     answersEditable &&
                     (q.type === 'single' || q.type === 'multiple') &&
@@ -1715,10 +1695,60 @@ export function PollDetailScreen({
                           {q.index}. {q.title}
                           {q.required ? <Text style={styles.questionRequiredStar}> *</Text> : null}
                         </Text>
-                        {questionMeta.length > 0 ? (
-                          <Text style={styles.questionMetaText}>
-                            {questionMeta.join(' · ')}
-                          </Text>
+                        {questionMeta.length > 0 || showRankingSortToggle ? (
+                          <View style={styles.questionMetaRow}>
+                            {questionMeta.length > 0 ? (
+                              <Text style={styles.questionMetaText} numberOfLines={1}>
+                                {questionMeta.join(' · ')}
+                              </Text>
+                            ) : null}
+                            {showRankingSortToggle ? (
+                              <View
+                                style={styles.rankingSortToggle}
+                                accessibilityRole="tablist"
+                                accessibilityLabel="Ranking sort order"
+                              >
+                                  <TouchableOpacity
+                                    style={[
+                                      styles.rankingSortOption,
+                                      rankingSortMode === 'total' && styles.rankingSortOptionSelected,
+                                    ]}
+                                    onPress={() => setRankingSortMode('total')}
+                                    accessibilityRole="tab"
+                                    accessibilityState={{ selected: rankingSortMode === 'total' }}
+                                    accessibilityLabel="Overall"
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.rankingSortOptionText,
+                                        rankingSortMode === 'total' && styles.rankingSortOptionTextSelected,
+                                      ]}
+                                    >
+                                      Overall
+                                    </Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={[
+                                      styles.rankingSortOption,
+                                      rankingSortMode === 'mine' && styles.rankingSortOptionSelected,
+                                    ]}
+                                    onPress={() => setRankingSortMode('mine')}
+                                    accessibilityRole="tab"
+                                    accessibilityState={{ selected: rankingSortMode === 'mine' }}
+                                    accessibilityLabel="My rankings"
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.rankingSortOptionText,
+                                        rankingSortMode === 'mine' && styles.rankingSortOptionTextSelected,
+                                      ]}
+                                    >
+                                      My rankings
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+                            ) : null}
+                          </View>
                         ) : null}
                       </View>
                     </View>
@@ -1726,6 +1756,12 @@ export function PollDetailScreen({
                       {q.type === 'text' ? (
                         <>
                           {showTextInput ? (
+                          <View
+                            ref={(node) => {
+                              textAnswerMountRefs.current[q.key] = node;
+                            }}
+                            collapsable={false}
+                          >
                           <TextInput
                             value={textAnswerByQuestion[q.key] ?? ''}
                             onChangeText={(v) =>
@@ -1733,6 +1769,13 @@ export function PollDetailScreen({
                                 ...prev,
                                 [q.key]: v.replace(/\r\n|\r|\n/g, ' '),
                               }))
+                            }
+                            onFocus={() =>
+                              createScrollAboveKeyboardOnFocus({
+                                scrollRef: scrollViewRef,
+                                scrollOffsetYRef,
+                                targetRef: { current: textAnswerMountRefs.current[q.key] ?? null },
+                              })()
                             }
                             placeholder="Type your answer"
                             placeholderTextColor={Colors.textMuted}
@@ -1745,6 +1788,7 @@ export function PollDetailScreen({
                             returnKeyType="done"
                             blurOnSubmit
                           />
+                          </View>
                           ) : (
                             <Text
                               style={[
@@ -1773,7 +1817,7 @@ export function PollDetailScreen({
                             });
                           }}
                           renderItem={({ item: opt }) => (
-                            <RankingPollOptionRowShell dragHandleLabel={`Reorder ${opt.label}`}>
+                            <RankingPollOptionRowShell dragLabel={`Reorder ${opt.label}`}>
                               <PollVoteOptionRow
                                 {...buildPollOptionRowProps(opt)}
                                 embeddedInReorderShell
@@ -1811,8 +1855,8 @@ export function PollDetailScreen({
                           accessibilityRole="button"
                           accessibilityLabel="Suggest a new option for this question"
                         >
-                          <Ionicons name="add-circle-outline" size={18} color={palette.text} />
-                          <Text style={[styles.suggestOptionBtnText, { color: palette.text }]}>Suggest option</Text>
+                          <Ionicons name="add-circle-outline" size={18} color={Colors.text} />
+                          <Text style={styles.suggestOptionBtnText}>Suggest option</Text>
                         </TouchableOpacity>
                       ) : null}
                       {editingSavedAnswer &&
@@ -2032,7 +2076,13 @@ export function PollDetailScreen({
           )}
         </ScrollViewContainer>
 
-        <Modal visible={!!detailModal} transparent animationType="fade" onRequestClose={() => setDetailModal(null)}>
+        <Modal
+          visible={!!detailModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setDetailModal(null)}
+          {...edgeToEdgeModalProps}
+        >
           <View style={styles.modalBackdrop}>
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>{detailModal?.title ?? ''}</Text>
@@ -2074,6 +2124,7 @@ export function PollDetailScreen({
           transparent
           animationType="fade"
           onRequestClose={() => setSuggestModal(null)}
+          {...edgeToEdgeModalProps}
         >
           <View style={styles.modalBackdrop}>
             <View style={styles.modalCard}>
@@ -2174,8 +2225,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   pollPad: { paddingHorizontal: POLL_H_PAD },
-  pollHeaderPad: { paddingTop: 4 },
-  pollMetaBlock: { gap: 6, marginTop: 8, paddingBottom: 14 },
+  pollHeaderPad: { paddingTop: 16, paddingBottom: 10 },
+  pollMetaBlock: { gap: 8, marginTop: 8, paddingBottom: 14 },
   pollQuestionsHeading: { marginTop: 14, marginBottom: 10 },
   sectionLabel: {
     fontSize: 11,
@@ -2201,44 +2252,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.borderStrong,
     overflow: 'hidden',
   },
-  groupNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 0,
-    minHeight: 36,
-  },
-  groupChipInRow: {
-    flex: 1,
-    minWidth: 0,
-    marginBottom: 0,
-    alignSelf: 'center',
-  },
-  groupPollToolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    flexShrink: 0,
-  },
-  groupPollIconBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
-  groupChipAboveTitle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
-    marginBottom: 6,
-    paddingVertical: 2,
-    paddingRight: 4,
-  },
-  groupDot: { width: 8, height: 8, borderRadius: 4 },
-  navGroupName: { fontSize: 13, color: Colors.textSub, fontFamily: Fonts.medium, flexShrink: 1 },
   pollTitle: {
     fontSize: 21,
     fontFamily: Fonts.extraBold,
@@ -2280,11 +2293,46 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontFamily: Fonts.bold,
   },
-  questionMetaText: {
+  questionMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    flexWrap: 'wrap',
     marginTop: 3,
+    minWidth: 0,
+  },
+  questionMetaText: {
+    flexShrink: 1,
+    minWidth: 0,
     fontSize: 12,
     fontFamily: Fonts.regular,
     color: Colors.textMuted,
+  },
+  rankingSortToggle: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+    overflow: 'hidden',
+  },
+  rankingSortOption: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  rankingSortOptionSelected: {
+    backgroundColor: Colors.accent,
+  },
+  rankingSortOptionText: {
+    fontSize: 12,
+    fontFamily: Fonts.medium,
+    color: Colors.textSub,
+  },
+  rankingSortOptionTextSelected: {
+    color: Colors.accentFg,
+    fontFamily: Fonts.semiBold,
   },
   voteOptionRow: {
     flexDirection: 'row',
@@ -2309,14 +2357,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
-  },
-  rankingDragHandle: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginRight: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    alignSelf: 'stretch',
   },
   rankingOptionGap: {
     height: 8,
@@ -2579,6 +2619,8 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 460,
+    flexGrow: 0,
+    alignSelf: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: Radius.xl,
     borderWidth: 1,

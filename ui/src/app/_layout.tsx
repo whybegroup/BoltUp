@@ -22,6 +22,7 @@ import { refreshAppOnResume } from '../utils/refreshAppOnResume';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { CurrentUserProvider } from '../contexts/CurrentUserContext';
 import { PushNotificationsRegistrar } from '../components/PushNotificationsRegistrar';
+import { ForegroundNotificationBanner } from '../components/ForegroundNotificationBanner';
 import { NavigationGuardReset } from '../components/NavigationGuardReset';
 import { firstSearchParam, parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
 
@@ -158,6 +159,7 @@ export default function RootLayout() {
                 <StatusBar style="dark" />
                 <RootLayoutNav />
                 <AppToastMount />
+                {Platform.OS !== 'web' ? <ForegroundNotificationBanner /> : null}
               </SafeAreaProvider>
             </GestureHandlerRootView>
           </CurrentUserProvider>

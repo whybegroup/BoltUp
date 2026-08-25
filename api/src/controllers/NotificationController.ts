@@ -25,8 +25,11 @@ export class NotificationController extends Controller {
    * @summary Retrieves notifications, optionally filtered by user
    */
   @Get()
-  public async getNotifications(@Query() userId?: string): Promise<Notification[]> {
-    return this.notificationService.getAll(userId);
+  public async getNotifications(
+    @Query() userId?: string,
+    @Query() timeZone?: string
+  ): Promise<Notification[]> {
+    return this.notificationService.getAll(userId, timeZone);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type Ref } from 'react';
 import {
   View,
   Text,
@@ -47,6 +47,7 @@ type Props = Omit<TextInputProps, 'value' | 'onChangeText'> & {
   onChangeText: (t: string) => void;
   members: MentionMember[];
   currentUserId?: string | null;
+  inputRef?: Ref<TextInput>;
   /** Merged onto the outer wrapper (composer: flex row; omit when using `stacked`). */
   wrapperStyle?: StyleProp<ViewStyle>;
   /**
@@ -64,6 +65,7 @@ export function CommentMentionInput({
   onChangeText,
   members,
   currentUserId,
+  inputRef,
   style,
   wrapperStyle,
   stacked = false,
@@ -121,6 +123,7 @@ export function CommentMentionInput({
       autoCapitalize="sentences"
       underlineColorAndroid="transparent"
       {...rest}
+      ref={inputRef}
     />
   );
 

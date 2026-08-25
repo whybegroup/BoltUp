@@ -613,6 +613,33 @@ export function formatRecurrenceSummary(rule: string | null | undefined, start: 
   return appendRecurrenceEndClause(summary, st, trimmed, start);
 }
 
+function lowercaseFirst(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
+
+/** Compact label for event detail, e.g. "Repeats daily". Null when the event does not repeat. */
+export function formatRecurrenceRepeatsLabel(rule: string | null | undefined, start: Date): string | null {
+  if (!rule?.trim()) return null;
+  const st = parseRecurrenceToForm(rule.trim(), start);
+  switch (st.preset) {
+    case 'none':
+      return null;
+    case 'daily':
+      return 'Repeats daily';
+    case 'weekly':
+      return 'Repeats weekly';
+    case 'monthly':
+      return 'Repeats monthly';
+    case 'yearly':
+      return 'Repeats yearly';
+    case 'custom':
+      return `Repeats ${lowercaseFirst(formatCustomRecurrenceSummary(st, start))}`;
+    default:
+      return `Repeats ${lowercaseFirst(formatCustomRecurrenceSummary(st, start))}`;
+  }
+}
+
 /**
  * Summary for the recurrence picker row: when preset is `custom`, describe from form state so we
  * never collapse to “Weekly” / “Daily” after RRULE round-trip (parseRecurrenceToForm maps many

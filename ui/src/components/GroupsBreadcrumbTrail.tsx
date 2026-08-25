@@ -92,8 +92,8 @@ export function GroupsBreadcrumbTrail({ segments }: GroupsBreadcrumbTrailProps) 
 const styles = StyleSheet.create({
   breadcrumbBar: {
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 14,
+    paddingTop: 8,
+    paddingBottom: 8,
     backgroundColor: Colors.bg,
   },
   breadcrumbInner: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },

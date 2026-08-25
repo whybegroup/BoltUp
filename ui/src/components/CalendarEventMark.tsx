@@ -34,7 +34,7 @@ export function CalendarEventMark({
 
   if (visual === 'none' || visual === 'maybe') {
     return (
-      <View style={[base, styles.ring, { borderColor: accentColor }]}>
+      <View style={[base, styles.ring, { borderColor: accentColor }]} collapsable={false}>
         <CalendarEventRsvpFill
           striped
           backgroundColor={visual === 'maybe' ? '#FFFBEB' : '#E8E8ED'}
@@ -46,7 +46,7 @@ export function CalendarEventMark({
   }
 
   if (visual === 'going') {
-    return <View style={[base, { backgroundColor: accentColor }]} />;
+    return <View style={[base, { backgroundColor: accentColor }]} collapsable={false} />;
   }
 
   if (isGrayedCalendarVisual(visual)) {

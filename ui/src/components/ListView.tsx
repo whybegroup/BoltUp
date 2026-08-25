@@ -1,14 +1,15 @@
-import { Fragment, useMemo, type ReactElement } from 'react';
+import { Fragment, useMemo, useRef, useCallback, type ReactElement, type ReactNode } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
+  TouchableOpacity,
   type RefreshControlProps,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { Colors, Fonts } from '../constants/theme';
+import { Colors, Fonts, Radius } from '../constants/theme';
 import { dayShort, fmtDateShort } from '../utils/helpers';
 import { EventRow } from './EventRow';
 import { useUsers } from '../hooks/api';
@@ -27,6 +28,10 @@ interface ListViewProps {
   /** Applied to the scroll variant’s FlatList (e.g. `{ flex: 1 }` in a modal). */
   listContainerStyle?: StyleProp<ViewStyle>;
   refreshControl?: ReactElement<RefreshControlProps>;
+  /** Right side of the Today row (e.g. Filters). */
+  toolbarEnd?: ReactNode;
+  /** Rendered under the toolbar (e.g. expanded filters). */
+  belowToolbar?: ReactNode;
 }
 
 type Row =
@@ -71,6 +76,8 @@ export function ListView({
   variant = 'scroll',
   listContainerStyle,
   refreshControl,
+  toolbarEnd,
+  belowToolbar,
 }: ListViewProps) {
   const { data: allUsers = [] } = useUsers();
   const { userId: meId } = useCurrentUserContext();
@@ -117,6 +124,38 @@ export function ListView({
     return r;
   }, [events]);
 
+  const listRef = useRef<FlatList<Row>>(null);
+  const todayIndex = useMemo(
+    () => rows.findIndex((r) => r.type === 'dateDivider' && isLocalToday(r.date)),
+    [rows]
+  );
+
+  const scrollToToday = useCallback(() => {
+    if (todayIndex < 0) return;
+    listRef.current?.scrollToIndex({
+      index: todayIndex,
+      animated: true,
+      viewPosition: 0,
+    });
+  }, [todayIndex]);
+
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      listRef.current?.scrollToOffset({
+        offset: Math.max(0, info.averageItemLength * info.index),
+        animated: false,
+      });
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToIndex({
+          index: info.index,
+          animated: true,
+          viewPosition: 0,
+        });
+      });
+    },
+    []
+  );
+
   const renderItem = ({ item }: { item: Row }) => {
     if (item.type === 'dateDivider') {
       const d = item.date;
@@ -133,7 +172,7 @@ export function ListView({
     const group = groupsMap[item.event.groupId];
     const userColorHex = groupColors[item.event.groupId];
     return (
-      <View style={styles.cardWrapper}>
+      <View style={styles.cardWrapper} collapsable={false}>
         <EventRow
           ev={item.event}
           group={group}
@@ -160,20 +199,62 @@ export function ListView({
   }
 
   return (
-    <FlatList
-      style={listContainerStyle}
-      data={rows}
-      keyExtractor={item => item.key}
-      renderItem={renderItem}
-      showsVerticalScrollIndicator={false}
-      maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-      ListFooterComponent={<View style={{ height: 100 }} />}
-      refreshControl={refreshControl}
-    />
+    <View style={[styles.root, listContainerStyle]}>
+      <View style={styles.toolbarRow}>
+        <TouchableOpacity
+          onPress={scrollToToday}
+          style={styles.todayBtn}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Scroll to today"
+        >
+          <Text style={styles.todayBtnText}>Today</Text>
+        </TouchableOpacity>
+        {toolbarEnd ? <View style={styles.toolbarEnd}>{toolbarEnd}</View> : null}
+      </View>
+      {belowToolbar}
+      <FlatList
+        ref={listRef}
+        style={styles.list}
+        data={rows}
+        keyExtractor={item => item.key}
+        renderItem={renderItem}
+        showsVerticalScrollIndicator={false}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        onScrollToIndexFailed={onScrollToIndexFailed}
+        ListFooterComponent={<View style={{ height: 100 }} />}
+        refreshControl={refreshControl}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, minHeight: 0 },
+  list: { flex: 1, paddingHorizontal: 16 },
+  toolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
+  toolbarEnd: {
+    marginLeft: 'auto',
+  },
+  todayBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  todayBtnText: {
+    fontSize: 14,
+    fontFamily: Fonts.semiBold,
+    color: Colors.text,
+  },
   cardWrapper: {
     backgroundColor: Colors.surface,
     borderRadius: 16,

@@ -15,6 +15,7 @@ import { usePathname } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import type { Poll } from '@moijia/client';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import {
   useAllGroupMemberColors,
@@ -29,8 +30,8 @@ import {
 import { loadPollsScreenPrefs, savePollsScreenPrefs } from '../utils/pollsScreenPrefs';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { Pill } from './ui';
+import { CollapsibleFiltersButton } from './CollapsibleFiltersButton';
 import { PollRow, getDeadlineUrgency } from './PollRow';
-import Svg, { Path } from 'react-native-svg';
 
 function deadlineForPoll(poll: Poll): Date | null {
   if ((poll as Poll & { deadline?: string | null }).deadline) {
@@ -313,87 +314,59 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
   const inner = (
     <>
       <View style={styles.filtersContainer}>
-        {!lockedGroupId ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.pillsRow}
-            contentContainerStyle={{ gap: 6, paddingRight: 20 }}
-          >
-            <Pill label="All" selected={selectedGroupIds.length === 0} onPress={() => setSelectedGroupIds([])} />
-            {groups.map((g) => {
-              const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
-              const p = getGroupColor(userColorHex);
-              const isSelected = selectedGroupIds.includes(g.id);
-              return (
-                <Pill
-                  key={g.id}
-                  label={g.name}
-                  selected={isSelected}
-                  activeColor={p.dot}
-                  activeBg={p.label}
-                  activeText={p.text}
-                  inactiveBorderColor={p.dot}
-                  onPress={() =>
-                    setSelectedGroupIds((prev) =>
-                      isSelected ? prev.filter((id) => id !== g.id) : [...prev, g.id]
-                    )
-                  }
-                  onLongPress={() => setSelectedGroupIds([g.id])}
-                />
-              );
-            })}
-          </ScrollView>
-        ) : null}
+        <View style={styles.filterToggleRow}>
+          <CollapsibleFiltersButton
+            expanded={showAdvancedFilters}
+            onToggle={() => setShowAdvancedFilters((p) => !p)}
+            filtersActive={hasFilters}
+            onReset={() => {
+              setSelectedGroupIds(lockedGroupId ? [lockedGroupId] : []);
+              setStartMode('now');
+              setEndMode('allTime');
+              setStartDateText(defaultStartSpecificText);
+              setEndDateText(defaultEndSpecificText);
+            }}
+          />
+        </View>
 
-        <View
-          style={[
-            styles.filterPanel,
-            { position: 'relative' },
-            lockedGroupId && styles.filterPanelTopWhenNoPills,
-          ]}
-        >
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingVertical: 8 }}
-          >
-            <TouchableOpacity
-              onPress={() => setShowAdvancedFilters((p) => !p)}
-              style={[
-                styles.filterIconBtn,
-                showAdvancedFilters && { borderColor: Colors.text, backgroundColor: Colors.text },
-              ]}
-            >
-              <Svg
-                width={14}
-                height={14}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={showAdvancedFilters ? Colors.surface : Colors.text}
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <Path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
-              </Svg>
-            </TouchableOpacity>
-            {hasFilters ? (
-              <Pill
-                label="Reset filters"
-                onPress={() => {
-                  setSelectedGroupIds(lockedGroupId ? [lockedGroupId] : []);
-                  setStartMode('now');
-                  setEndMode('allTime');
-                  setStartDateText(defaultStartSpecificText);
-                  setEndDateText(defaultEndSpecificText);
-                }}
-                selected={false}
-              />
+        {showAdvancedFilters ? (
+          <>
+            {!lockedGroupId ? (
+              <View style={styles.filterExpandedRow}>
+                <Text style={styles.filterExpandedHeader}>Groups</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.pillsRow}
+                  contentContainerStyle={{ gap: 6, paddingRight: 20 }}
+                >
+                  <Pill label="All" selected={selectedGroupIds.length === 0} onPress={() => setSelectedGroupIds([])} />
+                  {groups.map((g) => {
+                    const userColorHex = groupColors[g.id] || getDefaultGroupThemeFromName(g.name);
+                    const p = getGroupColor(userColorHex);
+                    const isSelected = selectedGroupIds.includes(g.id);
+                    return (
+                      <Pill
+                        key={g.id}
+                        label={g.name}
+                        selected={isSelected}
+                        activeColor={p.dot}
+                        activeBg={p.label}
+                        activeText={p.text}
+                        inactiveBorderColor={p.dot}
+                        onPress={() =>
+                          setSelectedGroupIds((prev) =>
+                            isSelected ? prev.filter((id) => id !== g.id) : [...prev, g.id]
+                          )
+                        }
+                        onLongPress={() => setSelectedGroupIds([g.id])}
+                      />
+                    );
+                  })}
+                </ScrollView>
+              </View>
             ) : null}
-          </ScrollView>
 
-          {showAdvancedFilters ? (
             <View style={styles.filterExpandedRow}>
               <Text style={styles.filterExpandedHeader}>Time Range</Text>
               <View style={styles.dateFilterColumn}>
@@ -508,13 +481,13 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
                 </View>
               </View>
             </View>
-          ) : null}
-        </View>
+          </>
+        ) : null}
       </View>
 
       <ScrollView
         style={styles.pollsScroll}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 100 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 100 }}
         refreshControl={refreshControl}
       >
         {sortedPolls.length === 0 ? (
@@ -542,9 +515,6 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
                         : `/(tabs)/polls/${poll.id}`) as import('expo-router').Href
                     )
                   }
-                  onGroupPress={(gid) =>
-                    router.push(`/(tabs)/groups/${gid}` as import('expo-router').Href)
-                  }
                   isLast={i === sortedPolls.length - 1}
                 />
               </View>
@@ -563,7 +533,7 @@ export function PollsListScreen({ lockedGroupId, embedded }: PollsListScreenProp
             closeDatetimeFilterModal();
           }
         }}
-        statusBarTranslucent
+        {...edgeToEdgeModalProps}
       >
         <View style={styles.filterDatetimeModalRoot}>
           <Pressable
@@ -773,30 +743,18 @@ const styles = StyleSheet.create({
     marginBottom: 0.5,
   },
   filtersContainer: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.bg,
+  },
+  filterToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
   pillsRow: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  filterPanel: { borderBottomWidth: 1, borderBottomColor: Colors.border },
-  filterPanelTopWhenNoPills: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: Colors.border,
-  },
-  filterIconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surface,
+    width: '100%',
+    flexGrow: 0,
   },
   filterExpandedRow: {
     flexDirection: 'row',
@@ -898,6 +856,7 @@ const styles = StyleSheet.create({
   filterDatetimeModalCard: {
     width: '100%',
     maxWidth: 400,
+    flexGrow: 0,
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
     padding: 20,

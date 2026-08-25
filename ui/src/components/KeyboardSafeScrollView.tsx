@@ -1,11 +1,16 @@
-import { forwardRef } from 'react';
+import { forwardRef, useRef, type ForwardedRef, type ReactNode } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  View,
   type KeyboardAvoidingViewProps,
   type ScrollViewProps,
 } from 'react-native';
+import {
+  useAndroidKeyboardContentPad,
+  useEnsureFocusedInputAboveKeyboard,
+} from '../utils/scrollInputAboveKeyboard';
 
 /** Props applied to vertical scroll areas that contain text fields (native only). */
 export const keyboardAwareScrollProps: Partial<ScrollViewProps> =
@@ -17,27 +22,55 @@ export const keyboardAwareScrollProps: Partial<ScrollViewProps> =
         keyboardDismissMode: 'interactive',
       };
 
+function assignRef<T>(ref: ForwardedRef<T>, value: T | null) {
+  if (typeof ref === 'function') ref(value);
+  else if (ref) ref.current = value;
+}
+
 export const KeyboardSafeScrollView = forwardRef<ScrollView, ScrollViewProps>(
   function KeyboardSafeScrollView(
-    { keyboardShouldPersistTaps = 'handled', keyboardDismissMode, ...rest },
+    {
+      keyboardShouldPersistTaps = 'handled',
+      keyboardDismissMode,
+      onScroll,
+      children,
+      scrollEventThrottle,
+      ...rest
+    },
     ref
   ) {
+    const innerRef = useRef<ScrollView | null>(null);
+    const offsetYRef = useRef(0);
+    const androidKbPad = useAndroidKeyboardContentPad();
+    useEnsureFocusedInputAboveKeyboard(innerRef, offsetYRef);
+
     return (
       <ScrollView
-        ref={ref}
+        ref={(node) => {
+          innerRef.current = node;
+          assignRef(ref, node);
+        }}
         {...keyboardAwareScrollProps}
         {...rest}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
         keyboardDismissMode={
           keyboardDismissMode ?? (Platform.OS === 'ios' ? 'interactive' : undefined)
         }
-      />
+        onScroll={(e) => {
+          offsetYRef.current = e.nativeEvent.contentOffset.y;
+          onScroll?.(e);
+        }}
+        scrollEventThrottle={scrollEventThrottle ?? 16}
+      >
+        {children}
+        {androidKbPad > 0 ? <View style={{ height: androidKbPad }} pointerEvents="none" /> : null}
+      </ScrollView>
     );
   }
 );
 
 type KeyboardFormRootProps = KeyboardAvoidingViewProps & {
-  children: React.ReactNode;
+  children: ReactNode;
   /** Extra offset when a nav bar sits above the form (modal header). */
   headerOffset?: number;
 };

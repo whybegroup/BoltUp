@@ -12,6 +12,7 @@ import {
   type TextStyle,
 } from 'react-native';
 import { KeyboardFormRoot, KeyboardSafeScrollView } from './KeyboardSafeScrollView';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { usePathname } from 'expo-router';
@@ -35,9 +36,19 @@ type Props = {
   eventEligibleGroupCount: number;
   /** Limits Add to the current tab’s action (event / poll / group+join). */
   mode: CreateOrJoinMode;
+  /** When set, create event/poll in this group (skips the group picker). */
+  groupId?: string;
+  /** Header matches the 34px tab-bar icons; fab is the bottom-right overlay. */
+  variant?: 'fab' | 'header';
 };
 
-export function CreateOrJoinButton({ userId, eventEligibleGroupCount, mode }: Props) {
+export function CreateOrJoinButton({
+  userId,
+  eventEligibleGroupCount,
+  mode,
+  groupId,
+  variant = 'fab',
+}: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const joinByCode = useJoinByInviteCode();
@@ -57,11 +68,14 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount, mode }: Pr
 
   const goNewEvent = () => {
     closeMenu();
-    if (eventEligibleGroupCount === 0) {
+    if (!groupId && eventEligibleGroupCount === 0) {
       setNoGroupFor('event');
       return;
     }
-    router.push(withReturnTo('/create-event', pathname));
+    const path = groupId
+      ? `/create-event?groupId=${encodeURIComponent(groupId)}`
+      : '/create-event';
+    router.push(withReturnTo(path, pathname));
   };
 
   const goNewGroup = () => {
@@ -71,11 +85,14 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount, mode }: Pr
 
   const goNewPoll = () => {
     closeMenu();
-    if (eventEligibleGroupCount === 0) {
+    if (!groupId && eventEligibleGroupCount === 0) {
       setNoGroupFor('poll');
       return;
     }
-    router.push(withReturnTo('/create-poll', pathname));
+    const path = groupId
+      ? `/create-poll?groupId=${encodeURIComponent(groupId)}`
+      : '/create-poll';
+    router.push(withReturnTo(path, pathname));
   };
 
   const onNewGroup = useGuardedPress(goNewGroup);
@@ -118,16 +135,21 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount, mode }: Pr
     <>
       <TouchableOpacity
         onPress={onAddPress}
-        style={[styles.fab, menuOpen && styles.fabActive]}
+        style={
+          variant === 'header'
+            ? [styles.headerBtn, menuOpen && styles.headerBtnActive]
+            : [styles.fab, menuOpen && styles.fabActive]
+        }
         accessibilityLabel="Add"
         accessibilityRole="button"
         activeOpacity={0.85}
+        hitSlop={variant === 'header' ? 8 : undefined}
       >
-        <Ionicons name="add" size={32} color={Colors.text} />
+        <Ionicons name="add" size={variant === 'header' ? 20 : 32} color={Colors.text} />
       </TouchableOpacity>
 
       {mode === 'group' ? (
-        <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu}>
+        <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu} {...edgeToEdgeModalProps}>
           <KeyboardFormRoot style={styles.menuRoot}>
             <Pressable style={styles.menuBackdropFill} onPress={closeMenu} />
             <View style={styles.menuCardOuter}>
@@ -199,6 +221,20 @@ export function CreateOrJoinButton({ userId, eventEligibleGroupCount, mode }: Pr
 }
 
 const styles = StyleSheet.create({
+  headerBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBtnActive: {
+    borderColor: Colors.borderStrong,
+    backgroundColor: Colors.bg,
+  },
   fab: {
     position: 'absolute',
     right: 20,
@@ -235,6 +271,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 360,
     maxHeight: '88%',
+    flexGrow: 0,
     paddingHorizontal: 20,
     zIndex: 1,
   },
@@ -244,6 +281,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     width: '100%',
+    flexGrow: 0,
     maxHeight: '100%',
     overflow: 'hidden',
   },

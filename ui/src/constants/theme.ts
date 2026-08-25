@@ -62,9 +62,9 @@ export const Spacing = {
   xxl: 28,
 };
 
-/** Tab chrome: top bar height matches 16px vertical padding + 34px controls (icon buttons). */
+/** Tab chrome: top bar height matches 12px vertical padding + 34px controls (icon buttons). */
 export const Layout = {
-  tabHeaderMinHeight: Spacing.lg * 2 + 34,
+  tabHeaderMinHeight: Spacing.md * 2 + 34,
   /** Modal NavBar / event detail header; tightened to reduce vertical chrome. */
   modalTopBarHeight: 60,
 };

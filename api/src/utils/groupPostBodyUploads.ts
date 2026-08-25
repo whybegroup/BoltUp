@@ -64,3 +64,16 @@ export function extractUploadUrlsFromForumBody(body: string | null | undefined):
 
   return [...urls];
 }
+
+const IMAGE_URL_EXT = /\.(png|jpe?g|gif|webp|bmp)(\?.*)?$/i;
+const NON_IMAGE_URL_EXT = /\.(pdf|docx?|xlsx?|pptx?|zip|json|txt)(\?.*)?$/i;
+
+export function firstImageUrlFromForumBody(body: string | null | undefined): string | null {
+  for (const u of extractUploadUrlsFromForumBody(body)) {
+    const url = u.trim();
+    if (!url || NON_IMAGE_URL_EXT.test(url)) continue;
+    if (IMAGE_URL_EXT.test(url) || /\/storage\/files\//i.test(url)) return url;
+  }
+  const md = (body ?? '').match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/);
+  return md?.[1]?.trim() || null;
+}

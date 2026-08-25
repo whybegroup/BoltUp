@@ -20,6 +20,7 @@ import { shareFromModal, sharePost } from '../utils/shareContent';
 import { useShareLinkJoinPrompt } from '../hooks/useShareLinkJoinPrompt';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
 import { COMMENT_REACTION_EMOJIS } from '../constants/commentReactionEmojis';
 import { DEFAULT_COMMENT_QUICK_REACTIONS_LIST } from '../utils/commentQuickReactionsPrefs';
@@ -57,12 +58,16 @@ import { ImageLightboxModal } from './ImageLightboxModal';
 import { AddImageButton } from './AddImageButton';
 import { ForumPostMarkdownBody, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import { type GroupPost, type GroupPostComment, type GroupScoped } from '@moijia/client';
+import { formatCreatedAtLabel, isContentEdited } from '../utils/helpers';
 import { CommentMentionInput } from './CommentMentionInput';
 import {
   computeMentionUserIdsForPost,
   type MentionMemberRow,
 } from '../utils/mentionUtils';
-import { createScrollAboveKeyboardOnFocus } from '../utils/scrollInputAboveKeyboard';
+import {
+  createScrollAboveKeyboardOnFocus,
+  scrollNodeToTopOfViewport,
+} from '../utils/scrollInputAboveKeyboard';
 import {
   pickAndUploadCoverPhoto,
   takeAndUploadCoverPhoto,
@@ -99,17 +104,6 @@ function forumId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function formatCreatedAt(value: string | number): string {
-  const date = typeof value === 'string' ? new Date(value) : new Date(value);
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
 function mapGroupCommentsToThread(comments: GroupPostComment[]): ThreadComment[] {
   return comments.map((c) => ({
     id: c.id,
@@ -117,6 +111,7 @@ function mapGroupCommentsToThread(comments: GroupPostComment[]): ThreadComment[]
     body: c.body,
     parentCommentId: c.parentCommentId ?? null,
     createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
     reactions: c.reactions,
   }));
 }
@@ -291,6 +286,8 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const pendingScrollToEditPostIdRef = useRef<string | null>(null);
   /** Scroll to post from mention notification deep link. */
   const pendingScrollToFocusPostIdRef = useRef<string | null>(null);
+  const pendingScrollToCommentsPostIdRef = useRef<string | null>(null);
+  const commentsBlockRefs = useRef<Record<string, View | null>>({});
   /** Persisted edit drafts per post id (survives reloads). */
   const postEditsRef = useRef<ForumGroupDraftV1['postEdits']>({});
   const editingPostIdRef = useRef<string | null>(null);
@@ -1773,7 +1770,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                         thumbnail={usersById.get(post.userId)?.thumbnail}
                         size={18}
                       />
-                      <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={1}>
+                      <Text style={[styles.metaText, styles.postMetaTextGrow]} numberOfLines={2}>
                         {post.userId === currentUserId ? (
                           <Text style={[styles.metaText, styles.metaPostMe]}>{getUserDisplayName(post.userId)}</Text>
                         ) : (
@@ -1782,7 +1779,8 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                         {post.userId === currentUserId ? (
                           <Text style={[styles.metaText, styles.metaPostMe]}> (me)</Text>
                         ) : null}{' '}
-                        · {formatCreatedAt(post.createdAt)}
+                        · {formatCreatedAtLabel(post.createdAt)}
+                        {isContentEdited(post.createdAt, post.updatedAt) ? ' · Edited' : ''}
                       </Text>
                     </View>
                     {post.userId === currentUserId &&
@@ -1967,6 +1965,28 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                     ))}
                   </View>
                 ) : null}
+                <View
+                  collapsable={false}
+                  ref={(node) => {
+                    commentsBlockRefs.current[post.id] = node;
+                  }}
+                  onLayout={() => {
+                    if (pendingScrollToCommentsPostIdRef.current !== post.id) return;
+                    pendingScrollToCommentsPostIdRef.current = null;
+                    const run = () => {
+                      scrollNodeToTopOfViewport({
+                        scrollRef,
+                        scrollViewportYRef,
+                        scrollOffsetYRef,
+                        targetRef: { current: commentsBlockRefs.current[post.id] },
+                      });
+                    };
+                    requestAnimationFrame(() => {
+                      requestAnimationFrame(run);
+                    });
+                    setTimeout(run, 250);
+                  }}
+                >
                 <View style={styles.reactionRow}>
                   <TouchableOpacity
                     ref={(node) => {
@@ -1983,7 +2003,11 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                   <TouchableOpacity
                     style={styles.iconActionBtn}
                     onPress={() =>
-                      setExpandedCommentsByPost((prev) => ({ ...prev, [post.id]: !prev[post.id] }))
+                      setExpandedCommentsByPost((prev) => {
+                        const opening = !prev[post.id];
+                        if (opening) pendingScrollToCommentsPostIdRef.current = post.id;
+                        return { ...prev, [post.id]: opening };
+                      })
                     }
                   >
                     <Ionicons name="chatbubble-outline" size={15} color={Colors.textSub} />
@@ -2001,7 +2025,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                     scrollOffsetYRef={scrollOffsetYRef}
                     currentUserId={currentUserId}
                     getUserDisplayName={getUserDisplayName}
-                    formatCommentTime={formatCreatedAt}
+                    formatCommentTime={formatCreatedAtLabel}
                     draftText={draftComments[post.id] ?? ''}
                     onDraftTextChange={(v) =>
                       setDraftComments((prev) => ({ ...prev, [post.id]: v }))
@@ -2094,6 +2118,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                     }}
                   />
                 ) : null}
+                </View>
               </View>
             </View>
           ))
@@ -2101,7 +2126,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       </KeyboardSafeScrollView>
 
       {postMenuTarget && postMenuPopoverLayout ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -2133,7 +2158,15 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                     const name = group?.name;
                     shareFromModal(
                       () => setPostMenuTarget(null),
-                      () => sharePost(groupId, id, name),
+                      () =>
+                        sharePost(groupId, id, {
+                          title: postMenuTargetPost?.title,
+                          body: postMenuTargetPost?.body,
+                          authorName: postMenuTargetPost
+                            ? getUserDisplayName(postMenuTargetPost.userId)
+                            : undefined,
+                          groupName: name,
+                        }),
                     );
                   }}
                 >
@@ -2172,7 +2205,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       ) : null}
 
       {reactionQuickPickerTarget && currentUserId ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -2210,7 +2243,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       ) : null}
 
       {reactionPickerTarget && currentUserId ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -2256,7 +2289,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       ) : null}
 
       {reactionDetailModal ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"
@@ -2335,7 +2368,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       />
 
       {composerLinkPopover ? (
-        <Modal
+        <Modal {...edgeToEdgeModalProps}
           visible
           transparent
           animationType="fade"

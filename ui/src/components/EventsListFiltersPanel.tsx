@@ -11,10 +11,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from './AppDateTimePicker';
-import Svg, { Path } from 'react-native-svg';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { formatFilterDatetimeTwelveHour } from '../utils/helpers';
 import { Pill } from './ui';
+import { CollapsibleFiltersButton } from './CollapsibleFiltersButton';
 import {
   RSVP_FILTER_OPTIONS,
   formatLocalDateTime,
@@ -44,6 +45,12 @@ export type EventsListFiltersPanelProps = {
   defaultStartSpecificText: string;
   defaultEndSpecificText: string;
   groupPillsRow?: ReactNode;
+  /** Extra active-filter signal (e.g. selected groups) beyond this panel's own fields. */
+  filtersActive?: boolean;
+  /** Clears caller-owned filter state (e.g. selected groups) in addition to this panel's fields. */
+  onResetExtra?: () => void;
+  /** When set, caller places the toggle and expanded panel (e.g. on the Today toolbar row). */
+  children?: (chrome: { toggle: ReactNode; expanded: ReactNode }) => ReactNode;
 };
 
 export function EventsListFiltersPanel({
@@ -64,6 +71,9 @@ export function EventsListFiltersPanel({
   defaultStartSpecificText,
   defaultEndSpecificText,
   groupPillsRow,
+  filtersActive: filtersActiveProp = false,
+  onResetExtra,
+  children,
 }: EventsListFiltersPanelProps) {
   const [datetimeFilterModal, setDatetimeFilterModal] = useState<null | 'start' | 'end'>(null);
   const [filterModalDraft, setFilterModalDraft] = useState(() => new Date());
@@ -75,56 +85,60 @@ export function EventsListFiltersPanel({
     setDatetimeFilterModal(null);
   };
 
+  const filtersActive =
+    filtersActiveProp ||
+    filterNeeds ||
+    filterRsvp.length > 0 ||
+    startMode !== 'now' ||
+    endMode !== 'allTime';
+
   return (
     <>
-      <View style={styles.filtersContainer}>
-        {groupPillsRow}
-
-        <View style={[styles.filterPanel, { position: 'relative' }]}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 6, paddingHorizontal: 20, paddingVertical: 8 }}
-          >
-            <TouchableOpacity
-              onPress={() => setShowAdvancedFilters((p) => !p)}
-              style={[
-                styles.filterIconBtn,
-                showAdvancedFilters && { borderColor: Colors.text, backgroundColor: Colors.text },
-              ]}
-            >
-              <Svg
-                width={14}
-                height={14}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={showAdvancedFilters ? Colors.surface : Colors.text}
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <Path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
-              </Svg>
-            </TouchableOpacity>
-            <Pill
-              label="Needs people"
-              leading={
-                <Ionicons
-                  name="warning-outline"
-                  size={14}
-                  color={filterNeeds ? '#92400E' : Colors.textSub}
-                />
-              }
-              selected={filterNeeds}
-              onPress={() => setFilterNeeds((p) => !p)}
-              activeColor="#FDE68A"
-              activeBg="#FFFBEB"
-              activeText="#92400E"
-            />
-          </ScrollView>
-
-          {showAdvancedFilters && (
+      {(() => {
+        const toggle = (
+          <CollapsibleFiltersButton
+            expanded={showAdvancedFilters}
+            onToggle={() => setShowAdvancedFilters((p) => !p)}
+            filtersActive={filtersActive}
+            onReset={() => {
+              setFilterRsvp([]);
+              setFilterNeeds(false);
+              setStartMode('now');
+              setEndMode('allTime');
+              setStartDateText(defaultStartSpecificText);
+              setEndDateText(defaultEndSpecificText);
+              onResetExtra?.();
+            }}
+          />
+        );
+        const expanded = showAdvancedFilters ? (
             <>
+              {groupPillsRow ? (
+                <View style={styles.filterExpandedRow}>
+                  <Text style={styles.filterExpandedHeader}>Groups</Text>
+                  <View style={styles.filterGroupsSlot}>{groupPillsRow}</View>
+                </View>
+              ) : null}
+
+              <View style={styles.filterExpandedRow}>
+                <Text style={styles.filterExpandedHeader}>People</Text>
+                <Pill
+                  label="Needs people"
+                  leading={
+                    <Ionicons
+                      name="warning-outline"
+                      size={14}
+                      color={filterNeeds ? '#92400E' : Colors.textSub}
+                    />
+                  }
+                  selected={filterNeeds}
+                  onPress={() => setFilterNeeds((p) => !p)}
+                  activeColor="#FDE68A"
+                  activeBg="#FFFBEB"
+                  activeText="#92400E"
+                />
+              </View>
+
               <View style={styles.filterExpandedRow}>
                 <Text style={styles.filterExpandedHeader}>RSVP</Text>
                 {RSVP_FILTER_OPTIONS.map(([v, label]) => {
@@ -291,9 +305,17 @@ export function EventsListFiltersPanel({
                 </View>
               </View>
             </>
-          )}
-        </View>
-      </View>
+        ) : null;
+        if (children) return children({ toggle, expanded });
+        return (
+          <View style={styles.filtersContainer}>
+            <View style={[styles.filterPanel, { position: 'relative' }]}>
+              <View style={styles.filterToggleRow}>{toggle}</View>
+              {expanded}
+            </View>
+          </View>
+        );
+      })()}
 
       <Modal
         transparent
@@ -306,7 +328,7 @@ export function EventsListFiltersPanel({
             closeDatetimeFilterModal();
           }
         }}
-        statusBarTranslucent
+        {...edgeToEdgeModalProps}
       >
         <View style={styles.filterDatetimeModalRoot}>
           <Pressable
@@ -506,20 +528,18 @@ export function EventsListFiltersPanel({
 
 const styles = StyleSheet.create({
   filtersContainer: {
-    backgroundColor: Colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    backgroundColor: Colors.bg,
   },
-  filterPanel: { paddingBottom: 6 },
-  filterIconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
+  filterPanel: { paddingBottom: 4 },
+  filterToggleRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  filterGroupsSlot: {
+    width: '100%',
   },
   filterExpandedRow: {
     flexDirection: 'row',
@@ -618,6 +638,7 @@ const styles = StyleSheet.create({
   filterDatetimeModalCard: {
     width: '100%',
     maxWidth: 400,
+    flexGrow: 0,
     backgroundColor: Colors.surface,
     borderRadius: Radius['2xl'],
     padding: 20,

@@ -10,7 +10,6 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  Share,
   Image,
 } from 'react-native';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
@@ -19,6 +18,7 @@ import { usePathname, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { getGroupColor, getDefaultGroupThemeFromName, groupAvatarBorderRadius } from '../utils/helpers';
 import { formSectionTitleStyle, Avatar, Sheet } from './ui';
 import {
@@ -61,6 +61,7 @@ import {
 } from '../utils/breadcrumbUrl';
 import { withReturnTo } from '../utils/navigationReturn';
 import { groupInviteLink } from '../utils/inviteLink';
+import { shareGroupInvite } from '../utils/shareContent';
 
 const AVATAR_SIZE = 56;
 
@@ -497,35 +498,8 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   };
 
   const shareInvite = async () => {
-    const title = `Join ${group.name} on Moijia`;
-    const message = `Join the ${group.name} group on Moijia!\n${inviteLink}`;
-    const copyFallback = async () => {
-      await Clipboard.setStringAsync(inviteLink).catch(() => {});
-      Toast.show({ type: 'success', text1: 'Invite link copied' });
-    };
-    try {
-      if (Platform.OS === 'web') {
-        const nav = typeof navigator !== 'undefined' ? navigator : undefined;
-        if (nav && typeof nav.share === 'function') {
-          try {
-            await nav.share({ title, text: message, url: inviteLink });
-            return;
-          } catch (e: any) {
-            if (e?.name === 'AbortError') return;
-          }
-        }
-        await copyFallback();
-        return;
-      }
-      await Share.share(
-        Platform.OS === 'ios'
-          ? { url: inviteLink, message: `Join the ${group.name} group on Moijia!` }
-          : { message, title },
-      );
-    } catch (e: any) {
-      if (e?.name === 'AbortError') return;
-      await copyFallback();
-    }
+    if (!inviteCode) return;
+    await shareGroupInvite(inviteCode, { name: group.name, description: group.desc });
   };
 
   const confirmRegenerateInviteCode = () => {
@@ -1240,7 +1214,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
 
       {/* Leave confirm */}
       {showLeave && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowLeave(false)}>
+        <Modal {...edgeToEdgeModalProps} visible transparent animationType="fade" onRequestClose={() => setShowLeave(false)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowLeave(false)} activeOpacity={1}>
             <View style={styles.confirmCard}>
               <Text style={styles.confirmTitle}>
@@ -1267,7 +1241,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
 
       {/* Deactivate confirm (owner) */}
       {showDeactivateConfirm && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeactivateConfirm(false)}>
+        <Modal {...edgeToEdgeModalProps} visible transparent animationType="fade" onRequestClose={() => setShowDeactivateConfirm(false)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowDeactivateConfirm(false)} activeOpacity={1}>
             <View style={styles.confirmCard}>
               <Text style={styles.confirmTitle}>Deactivate {group.name}?</Text>
@@ -1289,7 +1263,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
 
       {/* Delete confirm (owner) */}
       {showDeleteConfirm && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
+        <Modal {...edgeToEdgeModalProps} visible transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
           <TouchableOpacity style={styles.menuOverlay} onPress={() => setShowDeleteConfirm(false)} activeOpacity={1}>
             <View style={styles.confirmCard}>
               <Text style={styles.confirmTitle}>Delete {group.name}?</Text>
@@ -1310,7 +1284,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
       )}
 
       {showAnnouncementReadModal ? (
-        <Modal visible animationType="slide" onRequestClose={closeAnnouncementModal}>
+        <Modal {...edgeToEdgeModalProps} visible animationType="slide" onRequestClose={closeAnnouncementModal}>
           {/* Modal has its own window; provider keeps top inset reliable. */}
           <SafeAreaProvider>
             <AnnouncementModalBody

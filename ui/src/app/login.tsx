@@ -10,17 +10,17 @@ import {
   Alert,
   Platform,
   TextInput,
-  useWindowDimensions,
   Modal,
   Pressable,
   Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { signInWithGoogle, signInWithEmail, signUpWithEmail, sendPasswordReset } from '../config/firebase';
 import { googleIosClientId, googleWebClientId } from '../config/googleAuth';
 import { signInWithGoogleIdTokenNative } from '../config/googleSignIn';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
+import { edgeToEdgeModalProps } from '../components/edgeToEdgeModalProps';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -54,7 +54,7 @@ function nativeGoogleSignInHint(err: unknown): string | undefined {
 }
 
 export default function LoginScreen() {
-  const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [emailMode, setEmailMode] = useState<AuthMode | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -191,11 +191,11 @@ export default function LoginScreen() {
   return (
     <ImageBackground
       source={require('../../assets/splash.png')}
-      style={[styles.container, { width, height }]}
+      style={styles.container}
       resizeMode="cover"
     >
       <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
-        <View style={[styles.actions, { paddingTop: height * 0.48 }]}>
+        <View style={styles.actions}>
           <TouchableOpacity
             style={[styles.googleButton, (loading || !googleReady) && styles.buttonDisabled]}
             onPress={handleGoogleSignIn}
@@ -249,6 +249,7 @@ export default function LoginScreen() {
         transparent
         animationType="slide"
         onRequestClose={closeEmail}
+        {...edgeToEdgeModalProps}
       >
         <View style={styles.modalRoot}>
           <Pressable
@@ -257,7 +258,7 @@ export default function LoginScreen() {
             accessibilityRole="button"
             accessibilityLabel="Close"
           />
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { paddingBottom: 24 + insets.bottom }]}>
             <Pressable style={styles.modalCardPress} onPress={Keyboard.dismiss}>
             <View style={styles.modalTopBar}>
               <TouchableOpacity
@@ -381,10 +382,13 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#FAFAF9',
   },
   safe: {
-    top: 100,
+    flex: 1,
+    justifyContent: 'flex-end',
   },
   actions: {
     paddingHorizontal: 24,
@@ -400,16 +404,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalCard: {
-    height: '92%',
+    maxHeight: '92%',
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 24,
   },
   modalCardPress: {
-    flex: 1,
+    flexGrow: 0,
   },
   modalTopBar: {
     flexDirection: 'row',

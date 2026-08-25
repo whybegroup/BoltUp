@@ -7,6 +7,7 @@ import {
   useRef,
   type ComponentRef,
   type ReactElement,
+  type ReactNode,
 } from 'react';
 import {
   View,
@@ -30,11 +31,13 @@ import {
   ScrollView as GestureScrollView,
 } from 'react-native-gesture-handler';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { getGroupColor, getDefaultGroupThemeFromName } from '../utils/helpers';
 import {
   filterCalendarEvents,
   getMyCalendarRsvpVisual,
   calendarAppearanceForEvent,
+  type CalendarEventAppearance,
 } from '../utils/calendarEventRsvp';
 import { CalendarEventRsvpFill } from './CalendarEventRsvpFill';
 import { CalendarEventMark } from './CalendarEventMark';
@@ -75,6 +78,10 @@ interface CalendarViewProps {
   /** RSVP filter from events screen; can't-go events show only when `notGoing` is included. */
   filterRsvp?: string[];
   refreshControl?: ReactElement<RefreshControlProps>;
+  /** Right side of the Today / scope row (e.g. Filters). */
+  toolbarEnd?: ReactNode;
+  /** Rendered under the toolbar (e.g. expanded filters). */
+  belowToolbar?: ReactNode;
 }
 
 const YEAR_STRIP_PAD_H = 12;
@@ -98,11 +105,12 @@ function yearStripScrollToCenterMonth(monthIndex: number, cardSize: number, view
 const HOUR_HEIGHT = 40;
 const TIMELINE_HEIGHT = 24 * HOUR_HEIGHT;
 /** Matches week day header row height (frozen gutter spacer) */
-const WEEK_HEADER_ROW_HEIGHT = 56;
+const WEEK_HEADER_ROW_HEIGHT = 50;
 const ALLDAY_CHIP_BLOCK = 30;
+const ALLDAY_ROW_MIN_HEIGHT = 28;
 
 function estimateAllDayBandHeight(eventCount: number): number {
-  if (eventCount <= 0) return 0;
+  if (eventCount <= 0) return ALLDAY_ROW_MIN_HEIGHT;
   return Math.min(6 + eventCount * ALLDAY_CHIP_BLOCK, 160);
 }
 
@@ -316,6 +324,30 @@ const MONTH_CELL_MARGIN_H = 2;
 const MONTH_COL_COUNT = 7;
 const MONTH_CELL_H_GUTTER = MONTH_CELL_MARGIN_H * 2;
 
+function CalendarEventChipChrome({
+  appearance,
+  patternId,
+}: {
+  appearance: CalendarEventAppearance;
+  patternId: string;
+}) {
+  return (
+    <View pointerEvents="none" collapsable={false} style={styles.eventChipChrome}>
+      <CalendarEventRsvpFill
+        striped={appearance.striped}
+        backgroundColor={appearance.backgroundColor}
+        patternId={patternId}
+        stripeTone={appearance.stripeTone}
+      />
+      <View
+        pointerEvents="none"
+        collapsable={false}
+        style={[styles.eventChipAccent, { backgroundColor: appearance.borderLeftColor }]}
+      />
+    </View>
+  );
+}
+
 export function CalendarView({
   events,
   groups,
@@ -333,6 +365,8 @@ export function CalendarView({
   onCalendarYearMonthStripCommit,
   filterRsvp = [],
   refreshControl,
+  toolbarEnd,
+  belowToolbar,
 }: CalendarViewProps) {
   const { userId: meId } = useCurrentUserContext();
   const { data: allUsers = [] } = useUsers();
@@ -848,10 +882,77 @@ export function CalendarView({
         })}
       </View>
     );
+    const allDayRow = (
+      <View
+        style={[
+          styles.weekAllDayDaysRow,
+          { minHeight: maxAllDayBandHeight, alignSelf: 'stretch', width: '100%' },
+        ]}
+      >
+        {timelineDays.map((day) => {
+          const allDay = allDayEventsForDay(day, calendarEvents);
+          return (
+            <View
+              key={dateKey(day)}
+              style={[
+                styles.weekDayColumn,
+                colLayoutStyle,
+                scopeMode === 'day' && styles.dayScopeColumnStretch,
+              ]}
+            >
+              <View
+                style={[
+                  styles.allDayBand,
+                  styles.allDayBandFrozen,
+                  { minHeight: maxAllDayBandHeight },
+                ]}
+              >
+                {allDay.map((ev) => {
+                  const group = groupsMap[ev.groupId];
+                  const userColorHex =
+                    groupColors[ev.groupId] ||
+                    (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
+                  const p = getGroupColor(userColorHex);
+                  const appearance = calendarAppearanceForEvent(
+                    ev,
+                    p,
+                    meId ?? undefined
+                  );
+                  const occKey = eventOccurrenceKey(ev);
+                  return (
+                    <RectButton
+                      key={occKey}
+                      onPress={() => onSelectEvent(ev)}
+                      underlayColor="rgba(0,0,0,0.2)"
+                      style={styles.allDayChip}
+                    >
+                      <CalendarEventChipChrome
+                        appearance={appearance}
+                        patternId={`allday-${occKey}`}
+                      />
+                      <Text
+                        style={[
+                          styles.allDayChipText,
+                          styles.calendarEventForeground,
+                          { color: appearance.textColor },
+                        ]}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                      >
+                        {ev.name}
+                      </Text>
+                    </RectButton>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
     const body = (
       <View style={[styles.weekTimelineBody, { alignSelf: 'stretch', width: '100%' }]}>
         {timelineDays.map((day) => {
-            const allDay = allDayEventsForDay(day, calendarEvents);
             const timed: TimedSeg[] = [];
             for (const ev of calendarEvents) {
               const seg = timedSegmentForDay(ev, day);
@@ -869,56 +970,6 @@ export function CalendarView({
                   scopeMode === 'day' && styles.dayScopeColumnStretch,
                 ]}
               >
-                <View
-                  style={[
-                    styles.allDayBand,
-                    maxAllDayBandHeight > 0 && { minHeight: maxAllDayBandHeight },
-                  ]}
-                >
-                  {allDay.map((ev) => {
-                    const group = groupsMap[ev.groupId];
-                    const userColorHex =
-                      groupColors[ev.groupId] ||
-                      (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
-                    const p = getGroupColor(userColorHex);
-                    const appearance = calendarAppearanceForEvent(
-                      ev,
-                      p,
-                      meId ?? undefined
-                    );
-                    const occKey = eventOccurrenceKey(ev);
-                    return (
-                      <RectButton
-                        key={occKey}
-                        onPress={() => onSelectEvent(ev)}
-                        underlayColor="rgba(0,0,0,0.2)"
-                        style={[
-                          styles.allDayChip,
-                          {
-                            borderLeftColor: appearance.borderLeftColor,
-                            backgroundColor: appearance.striped
-                              ? 'transparent'
-                              : appearance.backgroundColor,
-                          },
-                        ]}
-                      >
-                        <CalendarEventRsvpFill
-                          striped={appearance.striped}
-                          backgroundColor={appearance.backgroundColor}
-                          patternId={`allday-${occKey}`}
-                          stripeTone={appearance.stripeTone}
-                        />
-                        <Text
-                          style={[styles.allDayChipText, styles.calendarEventForeground, { color: appearance.textColor }]}
-                          numberOfLines={1}
-                          ellipsizeMode="tail"
-                        >
-                          {ev.name}
-                        </Text>
-                      </RectButton>
-                    );
-                  })}
-                </View>
                 <View style={[styles.hourGrid, { height: TIMELINE_HEIGHT }]}>
                   {Array.from({ length: 24 }, (_, h) => (
                     <View
@@ -957,18 +1008,12 @@ export function CalendarView({
                             height,
                             left: `${leftPct}%`,
                             width: `${wPct}%`,
-                            borderLeftColor: appearance.borderLeftColor,
-                            backgroundColor: appearance.striped
-                              ? 'transparent'
-                              : appearance.backgroundColor,
                           },
                         ]}
                       >
-                        <CalendarEventRsvpFill
-                          striped={appearance.striped}
-                          backgroundColor={appearance.backgroundColor}
+                        <CalendarEventChipChrome
+                          appearance={appearance}
                           patternId={`timed-${segKey}`}
-                          stripeTone={appearance.stripeTone}
                         />
                         <Text
                           style={[
@@ -1008,7 +1053,7 @@ export function CalendarView({
           })}
       </View>
     );
-    return { header, body };
+    return { header, allDayRow, body };
   }, [
     timelineDays,
     focusDate,
@@ -1027,28 +1072,32 @@ export function CalendarView({
   ]);
 
   const weekHeaderHRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
+  const weekAllDayHRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
   const weekBodyHRef = useRef<ComponentRef<typeof GestureScrollView>>(null);
   const weekHSyncLock = useRef(false);
 
-  const onWeekHeaderHScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const syncWeekHScroll = useCallback((x: number, source: 'header' | 'allDay' | 'body') => {
     if (weekHSyncLock.current || !needsWeekHorizontalScroll) return;
-    const x = e.nativeEvent.contentOffset.x;
     weekHSyncLock.current = true;
-    weekBodyHRef.current?.scrollTo({ x, animated: false });
+    if (source !== 'header') weekHeaderHRef.current?.scrollTo({ x, animated: false });
+    if (source !== 'allDay') weekAllDayHRef.current?.scrollTo({ x, animated: false });
+    if (source !== 'body') weekBodyHRef.current?.scrollTo({ x, animated: false });
     requestAnimationFrame(() => {
       weekHSyncLock.current = false;
     });
   }, [needsWeekHorizontalScroll]);
 
+  const onWeekHeaderHScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    syncWeekHScroll(e.nativeEvent.contentOffset.x, 'header');
+  }, [syncWeekHScroll]);
+
+  const onWeekAllDayHScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    syncWeekHScroll(e.nativeEvent.contentOffset.x, 'allDay');
+  }, [syncWeekHScroll]);
+
   const onWeekBodyHScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (weekHSyncLock.current || !needsWeekHorizontalScroll) return;
-    const x = e.nativeEvent.contentOffset.x;
-    weekHSyncLock.current = true;
-    weekHeaderHRef.current?.scrollTo({ x, animated: false });
-    requestAnimationFrame(() => {
-      weekHSyncLock.current = false;
-    });
-  }, [needsWeekHorizontalScroll]);
+    syncWeekHScroll(e.nativeEvent.contentOffset.x, 'body');
+  }, [syncWeekHScroll]);
 
   const renderMonthNavigation = () => (
     <View style={styles.monthNav}>
@@ -1076,9 +1125,11 @@ export function CalendarView({
             <Ionicons name="chevron-down" size={16} color={Colors.text} />
           </TouchableOpacity>
         </View>
+        {toolbarEnd ? <View style={styles.toolbarEnd}>{toolbarEnd}</View> : null}
       </View>
+      {belowToolbar}
 
-      <Modal visible={scopeMenuOpen} transparent animationType="fade" onRequestClose={closeScopeMenu}>
+      <Modal {...edgeToEdgeModalProps} visible={scopeMenuOpen} transparent animationType="fade" onRequestClose={closeScopeMenu}>
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={closeScopeMenu} />
           {scopeMenuPosition ? (
@@ -1158,6 +1209,43 @@ export function CalendarView({
                 </View>
               )}
             </View>
+            <View style={styles.weekPinnedAllDayRow}>
+              <View
+                style={[
+                  styles.weekAllDayGutter,
+                  { width: TIME_GUTTER_W, minHeight: maxAllDayBandHeight },
+                ]}
+              >
+                <Text style={styles.allDayGutterLabel}>all{'\n'}day</Text>
+              </View>
+              {needsWeekHorizontalScroll ? (
+                <GestureScrollView
+                  ref={weekAllDayHRef}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="always"
+                  style={styles.weekScrollableDays}
+                  contentContainerStyle={{ width: weekScrollContentWidth }}
+                  onScroll={onWeekAllDayHScroll}
+                  scrollEventThrottle={16}
+                >
+                  <View style={{ width: weekScrollContentWidth }}>{timelineParts.allDayRow}</View>
+                </GestureScrollView>
+              ) : (
+                <View style={styles.weekScrollableDays}>
+                  <View
+                    style={[
+                      styles.weekDaysInnerStretch,
+                      weekStripLayoutWidth != null && styles.weekDaysInnerFixedWidth,
+                      weekStripLayoutWidth != null && { width: weekStripLayoutWidth },
+                    ]}
+                  >
+                    {timelineParts.allDayRow}
+                  </View>
+                </View>
+              )}
+            </View>
             <GestureScrollView
               ref={weekBodyVerticalRef}
               style={styles.weekBodyVerticalScroll}
@@ -1172,7 +1260,6 @@ export function CalendarView({
             >
               <View style={styles.weekTimelineWithFrozenGutter}>
                 <View style={[styles.weekFrozenGutter, { width: TIME_GUTTER_W }]}>
-                  <View style={{ height: maxAllDayBandHeight }} />
                   <View style={[styles.timeGutter, styles.weekFrozenTimeGutter]}>
                     {Array.from({ length: 24 }, (_, h) => (
                       <View key={h} style={[styles.timeGutterHour, { height: HOUR_HEIGHT }]}>
@@ -1332,7 +1419,7 @@ export function CalendarView({
                     groupColors[ev.groupId] ||
                     (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                   return (
-                    <View key={eventOccurrenceKey(ev)} style={styles.monthDayEventRowWrap}>
+                    <View key={eventOccurrenceKey(ev)} style={styles.monthDayEventRowWrap} collapsable={false}>
                       <EventRow
                         ev={ev}
                         group={group}
@@ -1508,7 +1595,7 @@ export function CalendarView({
                     groupColors[ev.groupId] ||
                     (group ? getDefaultGroupThemeFromName(group.name) : '#EC4899');
                   return (
-                    <View key={eventOccurrenceKey(ev)} style={styles.monthDayEventRowWrap}>
+                    <View key={eventOccurrenceKey(ev)} style={styles.monthDayEventRowWrap} collapsable={false}>
                       <EventRow
                         ev={ev}
                         group={group}
@@ -1540,14 +1627,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 4,
-    paddingBottom: 8,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
+  toolbarEnd: {
+    marginLeft: 'auto',
   },
   todayBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -1561,9 +1651,9 @@ const styles = StyleSheet.create({
   scopeDropdown: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: Radius.lg,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -1631,11 +1721,11 @@ const styles = StyleSheet.create({
     width: '100%',
     minWidth: 0,
     paddingHorizontal: 8,
-    paddingVertical: 12,
+    paddingVertical: 6,
   },
   navBtn: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1666,7 +1756,7 @@ const styles = StyleSheet.create({
   weekdayRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
     alignSelf: 'stretch',
     width: '100%',
   },
@@ -1696,6 +1786,36 @@ const styles = StyleSheet.create({
   weekPinnedHeaderRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  weekPinnedAllDayRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    alignSelf: 'stretch',
+    width: '100%',
+    backgroundColor: Colors.bg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  weekAllDayGutter: {
+    flexShrink: 0,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    paddingRight: 4,
+    backgroundColor: Colors.bg,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: Colors.border,
+  },
+  allDayGutterLabel: {
+    fontSize: 8,
+    lineHeight: 10,
+    fontFamily: Fonts.medium,
+    color: Colors.textMuted,
+    textAlign: 'right',
+  },
+  weekAllDayDaysRow: {
+    flexDirection: 'row',
     alignSelf: 'stretch',
     width: '100%',
   },
@@ -1762,12 +1882,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    paddingBottom: 8,
+    paddingBottom: 6,
   },
   weekDayHeaderCell: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
     borderRadius: Radius.md,
     marginHorizontal: 2,
   },
@@ -1820,7 +1940,6 @@ const styles = StyleSheet.create({
   },
   weekTimelineBody: {
     flexDirection: 'row',
-    marginTop: 4,
     overflow: 'visible',
   },
   timeGutter: {
@@ -1846,8 +1965,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     paddingHorizontal: 2,
   },
+  allDayBandFrozen: {
+    marginBottom: 0,
+    paddingVertical: 4,
+    overflow: 'hidden',
+    maxHeight: 160,
+  },
   allDayChip: {
-    borderLeftWidth: 3,
     borderRadius: Radius.sm,
     paddingHorizontal: 6,
     paddingVertical: 4,
@@ -1893,9 +2017,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical: 2,
     borderRadius: Radius.sm,
-    borderLeftWidth: 3,
     overflow: 'hidden',
     zIndex: 20,
+  },
+  eventChipChrome: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  eventChipAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
+    zIndex: 2,
   },
   timedEventName: {
     fontSize: 10,
