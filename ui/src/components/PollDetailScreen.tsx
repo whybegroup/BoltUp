@@ -50,7 +50,7 @@ import {
   isMissingQueryError,
   useMissingResourceAlert,
 } from '../hooks/useMissingResourceAlert';
-import { parseNotGroupMemberError } from '../utils/apiErrors';
+import { apiErrorMessage, parseNotGroupMemberError } from '../utils/apiErrors';
 import { useShareLinkJoinPrompt } from '../hooks/useShareLinkJoinPrompt';
 import Toast from 'react-native-toast-message';
 import { parseReturnToParam, withReturnTo } from '../utils/navigationReturn';
@@ -990,7 +990,6 @@ export function PollDetailScreen({
   const deletePollMutation = useDeletePoll(userId ?? '');
   const closePollMutation = useClosePoll(userId ?? '');
   const setWatchMutation = useSetPollWatch(id ?? '', userId ?? undefined);
-  const isPollCreator = !!(poll && userId && poll.createdBy === userId);
   const suggestOptionMutation = useSuggestPollOption(id ?? '', userId ?? '');
   const decideSuggestionMutation = useDecidePollOptionSuggestion(id ?? '', userId ?? '');
   const [selectedByQuestion, setSelectedByQuestion] = useState<Record<string, string[]>>({});
@@ -1089,6 +1088,11 @@ export function PollDetailScreen({
     [poll, userId, isPollClosed],
   );
   const canClosePoll = useMemo(() => {
+    if (!poll || !userId || isPollClosed) return false;
+    if (poll.createdBy === userId) return true;
+    return group?.membershipStatus === 'admin' || group?.ownerId === userId;
+  }, [poll, userId, group?.membershipStatus, group?.ownerId, isPollClosed]);
+  const canDecideSuggestions = useMemo(() => {
     if (!poll || !userId || isPollClosed) return false;
     if (poll.createdBy === userId) return true;
     return group?.membershipStatus === 'admin' || group?.ownerId === userId;
@@ -1512,6 +1516,9 @@ export function PollDetailScreen({
 
                 {parsedQuestions.map((q, qIdx) => {
                   const showTextInput = q.type === 'text' && answersEditable;
+                  const pendingForQuestion = optionSuggestions.filter(
+                    (s) => s.questionKey === q.key && s.status === 'pending',
+                  );
                   const showRequiredHighlight = missingRequiredKeys.includes(q.key);
                   const questionMeta: string[] = [];
                   if (q.type === 'multiple') questionMeta.push('Multiple choice');
@@ -1878,20 +1885,19 @@ export function PollDetailScreen({
                       {suggestedSuccessQuestionKey === q.key ? (
                         <Text style={styles.suggestSuccessText}>Option submitted successfully.</Text>
                       ) : null}
-                      {isPollCreator && q.type !== 'text' ? (
+                      {q.type !== 'text' && pendingForQuestion.length > 0 ? (
                         <View style={styles.pendingSuggestionsBox}>
-                          {optionSuggestions
-                            .filter((s) => s.questionKey === q.key && s.status === 'pending')
-                            .map((s) => (
-                              <View key={s.id} style={styles.pendingSuggestionRow}>
-                                <View style={{ flex: 1, minWidth: 0 }}>
-                                  <Text style={styles.pendingSuggestionLabel} numberOfLines={2}>
-                                    {s.label}
-                                  </Text>
-                                  <Text style={styles.pendingSuggestionMeta} numberOfLines={1}>
-                                    {(s.suggesterName || 'Member').trim() || 'Member'} · pending
-                                  </Text>
-                                </View>
+                          {pendingForQuestion.map((s) => (
+                            <View key={s.id} style={styles.pendingSuggestionRow}>
+                              <View style={{ flex: 1, minWidth: 0 }}>
+                                <Text style={styles.pendingSuggestionLabel} numberOfLines={2}>
+                                  {s.label}
+                                </Text>
+                                <Text style={styles.pendingSuggestionMeta} numberOfLines={1}>
+                                  {(s.suggesterName || 'Member').trim() || 'Member'} · pending
+                                </Text>
+                              </View>
+                              {canDecideSuggestions ? (
                                 <View style={styles.pendingSuggestionActions}>
                                   <TouchableOpacity
                                     style={[styles.pendingSuggestionBtn, styles.pendingSuggestionBtnDecline]}
@@ -1904,8 +1910,7 @@ export function PollDetailScreen({
                                             decision: 'decline',
                                           });
                                         } catch (e: unknown) {
-                                          const err = e as { body?: { message?: string }; message?: string };
-                                          Alert.alert('Could not update', err?.body?.message || err?.message || 'Please try again.');
+                                          Alert.alert('Could not update', apiErrorMessage(e));
                                         }
                                       })();
                                     }}
@@ -1930,8 +1935,7 @@ export function PollDetailScreen({
                                             decision: 'accept',
                                           });
                                         } catch (e: unknown) {
-                                          const err = e as { body?: { message?: string }; message?: string };
-                                          Alert.alert('Could not update', err?.body?.message || err?.message || 'Please try again.');
+                                          Alert.alert('Could not update', apiErrorMessage(e));
                                         }
                                       })();
                                     }}
@@ -1939,8 +1943,9 @@ export function PollDetailScreen({
                                     <Text style={styles.pendingSuggestionBtnTextAccept}>Accept</Text>
                                   </TouchableOpacity>
                                 </View>
-                              </View>
-                            ))}
+                              ) : null}
+                            </View>
+                          ))}
                         </View>
                       ) : null}
                       {questionResponderTotal !== null ? (
@@ -2178,11 +2183,7 @@ export function PollDetailScreen({
                       setSuggestModal(null);
                       setSuggestLabelDraft('');
                     } catch (e: unknown) {
-                      const err = e as { body?: { message?: string }; message?: string };
-                      Alert.alert(
-                        'Could not send suggestion',
-                        err?.body?.message || err?.message || 'Please try again.',
-                      );
+                      Alert.alert('Could not send suggestion', apiErrorMessage(e));
                     }
                   }}
                 >

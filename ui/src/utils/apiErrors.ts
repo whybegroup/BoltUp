@@ -47,6 +47,40 @@ export function isNotGroupMemberError(error: unknown): boolean {
   return parseNotGroupMemberError(error) != null;
 }
 
+const GENERIC_HTTP_MESSAGES = new Set([
+  'Bad Request',
+  'Unauthorized',
+  'Forbidden',
+  'Not Found',
+  'Conflict',
+  'Internal Server Error',
+]);
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** User-facing message from an API/client error (`{ error }` body), skipping generic HTTP status text. */
+export function apiErrorMessage(error: unknown, fallback = 'Please try again.'): string {
+  const body = errorBody(error);
+  const nested =
+    error && typeof error === 'object' && 'response' in error
+      ? (error as { response?: { data?: Record<string, unknown> } }).response?.data
+      : undefined;
+  for (const src of [body, nested]) {
+    if (!src) continue;
+    const fromError = stringField(src.error);
+    const fromMessage = stringField(src.message);
+    if (fromError && !GENERIC_HTTP_MESSAGES.has(fromError)) return fromError;
+    if (fromMessage && !GENERIC_HTTP_MESSAGES.has(fromMessage)) return fromMessage;
+  }
+  if (error instanceof Error) {
+    const msg = error.message.trim();
+    if (msg && !GENERIC_HTTP_MESSAGES.has(msg)) return msg;
+  }
+  return fallback;
+}
+
 /**
  * For React Query `refetchInterval`: stop polling while the query is in error.
  * Covers 404 plus any case where `error` is not shaped like ApiError (e.g. duplicate bundles).

@@ -1313,7 +1313,7 @@ export class PollService {
       const meta = parseQuestionMetaFromOptionText(plainOptionLine(o.textHtml));
       if (!meta || meta.questionKey !== qk) continue;
       if ((meta.optionLabel || '').trim().toLowerCase() === tl) {
-        throw Object.assign(new Error('That option already exists on this question'), { status: 400 });
+        throw Object.assign(new Error('This option was already suggested'), { status: 400 });
       }
     }
 
@@ -1322,7 +1322,7 @@ export class PollService {
     });
     for (const p of pending) {
       if (p.label.trim().toLowerCase() === tl) {
-        throw Object.assign(new Error('A pending suggestion already uses this label'), { status: 400 });
+        throw Object.assign(new Error('This option was already suggested'), { status: 400 });
       }
     }
 
@@ -1354,16 +1354,15 @@ export class PollService {
   public async listPollOptionSuggestions(pollId: string, userId: string): Promise<PollOptionSuggestion[]> {
     const poll = await prisma.poll.findUnique({
       where: { id: pollId },
-      select: { id: true, createdBy: true, groupId: true },
+      select: { id: true, groupId: true },
     });
     if (!poll) throw Object.assign(new Error('Poll not found'), { status: 404 });
     if (!(await this.userCanAccessPoll(poll, userId))) {
       throw Object.assign(new Error('Forbidden'), { status: 403 });
     }
-    const isCreator = poll.createdBy === userId;
 
     const rows = await prisma.pollOptionSuggestion.findMany({
-      where: isCreator ? { pollId } : { pollId, status: 'accepted' },
+      where: { pollId },
       orderBy: { createdAt: 'desc' },
       include: { suggester: { select: { displayName: true, name: true } } },
     });
@@ -1381,8 +1380,11 @@ export class PollService {
       include: { options: true },
     });
     if (!poll) throw Object.assign(new Error('Poll not found'), { status: 404 });
-    if (poll.createdBy !== userId) {
-      throw Object.assign(new Error('Only the poll creator can decide suggestions'), { status: 403 });
+    const isCreator = poll.createdBy === userId;
+    const role = await this.getActiveMemberRole(poll.groupId, userId);
+    const isAdmin = role === 'admin' || role === 'owner';
+    if (!isCreator && !isAdmin) {
+      throw Object.assign(new Error('Only the poll creator or a group admin can decide suggestions'), { status: 403 });
     }
     if (poll.closedAt) {
       throw Object.assign(new Error('Poll is closed'), { status: 400 });

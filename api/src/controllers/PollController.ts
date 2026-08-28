@@ -150,7 +150,7 @@ export class PollController extends Controller {
   }
 
   /**
-   * List option suggestions (poll creator only).
+   * List option suggestions (active group members).
    */
   @Get('{id}/option-suggestions')
   public async listPollOptionSuggestions(@Path() id: string, @Query() userId: string): Promise<PollOptionSuggestion[]> {
@@ -162,7 +162,7 @@ export class PollController extends Controller {
   }
 
   /**
-   * Accept or decline a suggested option (poll creator only).
+   * Accept or decline a suggested option (poll creator or group admin).
    */
   @Post('{id}/option-suggestions/{suggestionId}/decide')
   public async decidePollOptionSuggestion(
