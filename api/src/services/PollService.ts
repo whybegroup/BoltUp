@@ -545,7 +545,7 @@ export class PollService {
         sortOrder: o.sortOrder,
         inputKind: o.inputKind,
         textHtml: o.textHtml ?? null,
-        textFont: o.textFont ?? null,
+        textFont: parseFont(o.textFont ?? undefined),
         dateTimeValue: o.dateTimeValue ? o.dateTimeValue.getTime() : null,
       }));
     const newSignature = optionRows
@@ -555,16 +555,13 @@ export class PollService {
         sortOrder: o.sortOrder,
         inputKind: o.inputKind,
         textHtml: o.textHtml ?? null,
-        textFont: o.textFont ?? null,
+        textFont: parseFont(o.textFont),
         dateTimeValue: o.dateTimeValue ? o.dateTimeValue.getTime() : null,
       }));
     const structureChanged = JSON.stringify(oldSignature) !== JSON.stringify(newSignature);
 
     const row = await prisma.$transaction(async (tx) => {
       await tx.pollPhoto.deleteMany({ where: { pollId: id } });
-
-      let migratedVotesToCreate: Array<{ userId: string; pollOptionId: string; rank: number }> = [];
-      let migratedTextAnswersToCreate: Array<{ userId: string; questionKey: string; answer: string }> = [];
 
       if (structureChanged) {
         type QuestionInfo = {
@@ -585,6 +582,11 @@ export class PollService {
           dateMs: number | null;
         };
         const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+        const optionIdentityMatch = (a: OptionInfo, b: OptionInfo) => {
+          if (a.inputKind !== b.inputKind) return false;
+          if (a.inputKind === 'datetime') return a.dateMs === b.dateMs;
+          return a.normalizedLabel === b.normalizedLabel;
+        };
         const toQuestions = (options: OptionInfo[]): QuestionInfo[] => {
           const map = new Map<string, QuestionInfo>();
           for (const o of options) {
@@ -675,11 +677,13 @@ export class PollService {
             .sort((a, b) => a.sortOrder - b.sortOrder);
           const candidatePool = [...(newOptionsByQuestion.get(newQ) ?? [])];
           for (const oldOpt of oldOpts) {
-            const idx = candidatePool.findIndex((cand) => {
-              if (oldOpt.inputKind !== cand.inputKind) return false;
-              if (oldOpt.inputKind === 'datetime') return oldOpt.dateMs === cand.dateMs;
-              return oldOpt.normalizedLabel === cand.normalizedLabel;
-            });
+            const idIdx = candidatePool.findIndex(
+              (cand) => cand.id === oldOpt.id && optionIdentityMatch(oldOpt, cand),
+            );
+            const idx =
+              idIdx >= 0
+                ? idIdx
+                : candidatePool.findIndex((cand) => optionIdentityMatch(oldOpt, cand));
             if (idx >= 0) {
               const [match] = candidatePool.splice(idx, 1);
               if (match) optionMapOldToNew.set(oldOpt.id, match.id);
@@ -687,58 +691,49 @@ export class PollService {
           }
         }
 
-        const oldVotes = await tx.pollOptionVote.findMany({
-          where: { pollId: id },
-          select: { userId: true, pollOptionId: true, rank: true },
-        });
+        const newRowById = new Map(optionRows.map((o) => [o.id, o]));
+        const matchedNewIds = new Set(optionMapOldToNew.values());
+        const idsToDelete = existing.options.filter((o) => !optionMapOldToNew.has(o.id)).map((o) => o.id);
+        const rowsToCreate = optionRows.filter((o) => !matchedNewIds.has(o.id));
+
+        if (idsToDelete.length > 0) {
+          await tx.pollOption.deleteMany({ where: { pollId: id, id: { in: idsToDelete } } });
+        }
+        for (const [oldId, newId] of optionMapOldToNew) {
+          const data = newRowById.get(newId);
+          if (!data) continue;
+          await tx.pollOption.update({
+            where: { id: oldId },
+            data: {
+              sortOrder: data.sortOrder,
+              inputKind: data.inputKind,
+              textHtml: data.textHtml,
+              textFont: data.textFont,
+              dateTimeValue: data.dateTimeValue,
+            },
+          });
+        }
+        if (rowsToCreate.length > 0) {
+          await tx.pollOption.createMany({
+            data: rowsToCreate.map((o) => ({
+              id: o.id,
+              pollId: id,
+              sortOrder: o.sortOrder,
+              inputKind: o.inputKind,
+              textHtml: o.textHtml,
+              textFont: o.textFont,
+              dateTimeValue: o.dateTimeValue,
+            })),
+          });
+        }
+
         const oldTextAnswers = await tx.pollTextAnswer.findMany({
           where: { pollId: id },
           select: { userId: true, questionKey: true, answer: true, updatedAt: true },
           orderBy: { updatedAt: 'desc' },
         });
-
-        await tx.pollOptionVote.deleteMany({ where: { pollId: id } });
-        await tx.pollTextAnswer.deleteMany({ where: { pollId: id } });
-        await tx.pollOption.deleteMany({ where: { pollId: id } });
-
-        const newOptionById = new Map(newOptionInfos.map((o) => [o.id, o]));
-        const migratedVotes = oldVotes
-          .map((v) => {
-            const mappedOptionId = optionMapOldToNew.get(v.pollOptionId);
-            if (!mappedOptionId) return null;
-            const mappedInfo = newOptionById.get(mappedOptionId);
-            if (!mappedInfo || mappedInfo.questionType === 'text') return null;
-            return {
-              userId: v.userId,
-              pollOptionId: mappedOptionId,
-              questionKey: mappedInfo.questionKey,
-              questionType: mappedInfo.questionType,
-              rank: v.rank ?? 1,
-            };
-          })
-          .filter((v): v is NonNullable<typeof v> => !!v);
-        const rankingGroups = new Map<string, typeof migratedVotes>();
-        for (const vote of migratedVotes) {
-          if (vote.questionType !== 'rating') continue;
-          const key = `${vote.userId}::${vote.questionKey}`;
-          const arr = rankingGroups.get(key) ?? [];
-          arr.push(vote);
-          rankingGroups.set(key, arr);
-        }
-        for (const arr of rankingGroups.values()) {
-          arr.sort((a, b) => a.rank - b.rank);
-          arr.forEach((vote, idx) => {
-            vote.rank = idx + 1;
-          });
-        }
-        migratedVotesToCreate = migratedVotes.map((v) => ({
-          userId: v.userId,
-          pollOptionId: v.pollOptionId,
-          rank: v.questionType === 'rating' ? v.rank : 1,
-        }));
-
         const seenText = new Set<string>();
-        migratedTextAnswersToCreate = oldTextAnswers
+        const nextTextAnswers = oldTextAnswers
           .map((ans) => {
             const mappedQuestionKey = questionMapOldToNew.get(ans.questionKey);
             if (!mappedQuestionKey) return null;
@@ -754,9 +749,62 @@ export class PollService {
             };
           })
           .filter((v): v is NonNullable<typeof v> => !!v);
+        const textAnswerChanged =
+          oldTextAnswers.length !== nextTextAnswers.length ||
+          oldTextAnswers.some((ans) => {
+            return !nextTextAnswers.some(
+              (n) => n.userId === ans.userId && n.questionKey === ans.questionKey && n.answer === ans.answer,
+            );
+          });
+        if (textAnswerChanged) {
+          await tx.pollTextAnswer.deleteMany({ where: { pollId: id } });
+          if (nextTextAnswers.length > 0) {
+            await tx.pollTextAnswer.createMany({
+              data: nextTextAnswers.map((a) => ({
+                id: randomUUID(),
+                pollId: id,
+                questionKey: a.questionKey,
+                userId: a.userId,
+                answer: a.answer,
+              })),
+            });
+          }
+        }
+
+        if (idsToDelete.length > 0) {
+          const keptRatingIds = oldOptionInfos
+            .filter((o) => o.questionType === 'rating' && optionMapOldToNew.has(o.id))
+            .map((o) => o.id);
+          if (keptRatingIds.length > 0) {
+            const rankVotes = await tx.pollOptionVote.findMany({
+              where: { pollId: id, pollOptionId: { in: keptRatingIds } },
+              select: { id: true, userId: true, pollOptionId: true, rank: true },
+            });
+            const oldInfoById = new Map(oldOptionInfos.map((o) => [o.id, o]));
+            const groups = new Map<string, typeof rankVotes>();
+            for (const v of rankVotes) {
+              const info = oldInfoById.get(v.pollOptionId);
+              const mappedKey = info ? questionMapOldToNew.get(info.questionKey) : undefined;
+              if (!mappedKey) continue;
+              const key = `${v.userId}::${mappedKey}`;
+              const arr = groups.get(key) ?? [];
+              arr.push(v);
+              groups.set(key, arr);
+            }
+            for (const arr of groups.values()) {
+              arr.sort((a, b) => a.rank - b.rank);
+              for (let i = 0; i < arr.length; i++) {
+                const nextRank = i + 1;
+                if (arr[i]!.rank !== nextRank) {
+                  await tx.pollOptionVote.update({ where: { id: arr[i]!.id }, data: { rank: nextRank } });
+                }
+              }
+            }
+          }
+        }
       }
 
-      const updated = await tx.poll.update({
+      return tx.poll.update({
         where: { id },
         data: {
           groupId: existing.groupId,
@@ -768,20 +816,6 @@ export class PollService {
           multipleChoice: !!input.multipleChoice,
           ranking: !!input.ranking,
           photos: { create: photoRows },
-          ...(structureChanged
-            ? {
-                options: {
-                  create: optionRows.map((o) => ({
-                    id: o.id,
-                    sortOrder: o.sortOrder,
-                    inputKind: o.inputKind,
-                    textHtml: o.textHtml,
-                    textFont: o.textFont,
-                    dateTimeValue: o.dateTimeValue,
-                  })),
-                },
-              }
-            : {}),
         },
         include: {
           photos: { orderBy: { id: 'asc' } },
@@ -790,32 +824,6 @@ export class PollService {
           closer: { select: { id: true, displayName: true, name: true } },
         },
       });
-
-      if (structureChanged) {
-        if (migratedVotesToCreate.length > 0) {
-          await tx.pollOptionVote.createMany({
-            data: migratedVotesToCreate.map((v) => ({
-              id: randomUUID(),
-              pollId: id,
-              pollOptionId: v.pollOptionId,
-              userId: v.userId,
-              rank: v.rank,
-            })),
-          });
-        }
-        if (migratedTextAnswersToCreate.length > 0) {
-          await tx.pollTextAnswer.createMany({
-            data: migratedTextAnswersToCreate.map((a) => ({
-              id: randomUUID(),
-              pollId: id,
-              questionKey: a.questionKey,
-              userId: a.userId,
-              answer: a.answer,
-            })),
-          });
-        }
-      }
-      return updated;
     });
 
     void this.notifyActiveGroupMembers(

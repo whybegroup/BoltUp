@@ -57,7 +57,7 @@ function webPollDatetimeInputStyle(): Record<string, string | number> {
     padding: '6px 10px',
     borderRadius: 8,
     border: '1.5px solid #E5E5E5',
-    backgroundColor: '#FAFAFA',
+    backgroundColor: Colors.surface,
     fontSize: 13,
     color: '#1A1A1A',
     fontFamily: 'DMSans_400Regular',
@@ -74,6 +74,9 @@ type QuestionDraft = {
   id: string;
   title: string;
   options: string[];
+  /** Existing poll option ids aligned with `options`; omitted for newly added blanks. */
+  optionIds: Array<string | undefined>;
+  textOptionId?: string;
   multipleChoice: boolean;
   enableRating: boolean;
   type: QuestionType;
@@ -86,6 +89,7 @@ function newQuestionDraft(): QuestionDraft {
     id: uid(),
     title: '',
     options: ['', ''],
+    optionIds: [undefined, undefined],
     multipleChoice: false,
     enableRating: false,
     type: 'choice',
@@ -124,6 +128,8 @@ function parseQuestionDraftsFromPoll(poll: Poll): QuestionDraft[] {
         id: uid(),
         title,
         options: isText ? [] : [],
+        optionIds: isText ? [] : [],
+        textOptionId: isText ? o.id : undefined,
         multipleChoice: isRating || isMultiple,
         enableRating: isRating,
         type: isText ? 'text' : 'choice',
@@ -132,14 +138,26 @@ function parseQuestionDraftsFromPoll(poll: Poll): QuestionDraft[] {
       });
     }
     const q = map.get(key)!;
-    if (q.type === 'choice' && optionLabel && optionLabel !== '__TEXT_RESPONSE__') q.options.push(optionLabel);
+    if (q.type === 'text' && !q.textOptionId) q.textOptionId = o.id;
+    if (q.type === 'choice' && optionLabel && optionLabel !== '__TEXT_RESPONSE__') {
+      q.options.push(optionLabel);
+      q.optionIds.push(o.id);
+    }
   }
   const out = Array.from(map.entries())
     .sort((a, b) => Number(a[0].slice(2)) - Number(b[0].slice(2)))
-    .map(([, q]) => ({
-      ...q,
-      options: q.type === 'choice' ? (q.options.length >= 2 ? q.options : [...q.options, '', ''].slice(0, 2)) : ['', ''],
-    }));
+    .map(([, q]) => {
+      if (q.type !== 'choice') {
+        return { ...q, options: ['', ''], optionIds: [undefined, undefined] };
+      }
+      const options = [...q.options];
+      const optionIds = [...q.optionIds];
+      while (options.length < 2) {
+        options.push('');
+        optionIds.push(undefined);
+      }
+      return { ...q, options, optionIds };
+    });
   return out.length > 0 ? out : [newQuestionDraft()];
 }
 
@@ -387,7 +405,7 @@ export default function CreatePollScreen() {
           Alert.alert('Option limit reached', `Each question can have up to ${MAX_OPTIONS_PER_QUESTION} options.`);
           return q;
         }
-        return { ...q, options: [...q.options, ''] };
+        return { ...q, options: [...q.options, ''], optionIds: [...q.optionIds, undefined] };
       })
     );
   };
@@ -404,7 +422,11 @@ export default function CreatePollScreen() {
     setQuestionDrafts((rows) =>
       rows.map((q) =>
         q.id === id && q.options.length > 2
-          ? { ...q, options: q.options.filter((_, i) => i !== idx) }
+          ? {
+              ...q,
+              options: q.options.filter((_, i) => i !== idx),
+              optionIds: q.optionIds.filter((_, i) => i !== idx),
+            }
           : q
       )
     );
@@ -554,19 +576,21 @@ export default function CreatePollScreen() {
       if (q.type === 'text') {
         return [
           {
-            id: uid(),
+            id: q.textOptionId || uid(),
             inputKind: PollOptionInputKind.TEXT,
             sortOrder: qi * 1000,
             textHtml: `Q${qi + 1}: ${q.title.trim()} [${metaLabel}] - __TEXT_RESPONSE__`,
           },
         ];
       }
-      const cleanOptions = q.options.map((o) => o.trim()).filter((o) => o.length > 0);
+      const cleanOptions = q.options
+        .map((o, oi) => ({ label: o.trim(), id: q.optionIds[oi] }))
+        .filter((o) => o.label.length > 0);
       return cleanOptions.map((opt, oi) => ({
-        id: uid(),
+        id: opt.id || uid(),
         inputKind: PollOptionInputKind.TEXT,
         sortOrder: qi * 1000 + oi,
-        textHtml: `Q${qi + 1}: ${q.title.trim()} [${metaLabel}] - ${opt}`,
+        textHtml: `Q${qi + 1}: ${q.title.trim()} [${metaLabel}] - ${opt.label}`,
       }));
     });
 
@@ -1331,9 +1355,9 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
     borderRadius: Radius.lg,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: Colors.border,
-    backgroundColor: Colors.bg,
+    backgroundColor: Colors.surface,
   },
   dtLabel: { fontSize: 11, color: Colors.textMuted, fontFamily: Fonts.regular, marginBottom: 4 },
   dtValue: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
