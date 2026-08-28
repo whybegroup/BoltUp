@@ -110,6 +110,7 @@ import {
   useMissingResourceAlert,
 } from '../hooks/useMissingResourceAlert';
 import { parseNotGroupMemberError } from '../utils/apiErrors';
+import { openContentLink } from '../utils/inAppLinks';
 import { useShareLinkJoinPrompt } from '../hooks/useShareLinkJoinPrompt';
 import { LocationSuggestionCard } from './LocationSuggestionCard';
 import { resolvePlaceSuggestionDetails } from '../utils/locationSuggestions';
@@ -250,6 +251,7 @@ function CommentPhotoGallery({
 
 // ── Description with clickable links ─────────────────────────────────────────
 function DescText({ text }: { text: string }) {
+  const router = useRouter();
   const URL_RE = /https?:\/\/[^\s]+/g;
   return (
     <Text>
@@ -261,7 +263,7 @@ function DescText({ text }: { text: string }) {
           if (m.index > last) parts.push(<Text key={`t${i}-${last}`}>{line.slice(last, m.index)}</Text>);
           const url = m[0];
           parts.push(
-            <Text key={`u${i}-${m.index}`} style={styles.link} onPress={() => Linking.openURL(uploadUrlToDownloadUrl(url))}>{url}</Text>
+            <Text key={`u${i}-${m.index}`} style={styles.link} onPress={() => openContentLink(router, url)}>{url}</Text>
           );
           last = m.index + m[0].length;
         }
@@ -274,6 +276,7 @@ function DescText({ text }: { text: string }) {
 
 /** Highlight @mentions in comment bodies */
 function CommentMentionText({ text, style }: { text: string; style?: StyleProp<TextStyle> }) {
+  const router = useRouter();
   const MENTION_RE = /(?:^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]+)/g;
   const URL_RE = /https?:\/\/[^\s]+/g;
   const lines = text.split('\n');
@@ -305,7 +308,7 @@ function CommentMentionText({ text, style }: { text: string; style?: StyleProp<T
       const slice = line.slice(r.start, r.end);
       if (r.kind === 'url') {
         parts.push(
-          <Text key={`u${r.start}`} style={styles.link} onPress={() => Linking.openURL(uploadUrlToDownloadUrl(slice))}>
+          <Text key={`u${r.start}`} style={styles.link} onPress={() => openContentLink(router, slice)}>
             {slice}
           </Text>
         );

@@ -75,7 +75,7 @@ export function AvatarPickerModal({
   const padTop = Math.max(insets.top, 12);
   const padBottom = Math.max(insets.bottom, 12);
   const cardWidth = Math.min(winW - padX * 2, 720);
-  const cardMaxHeight = Math.max(280, winH - padTop - padBottom);
+  const cardHeight = Math.max(400, winH - padTop - padBottom);
 
   const overlayStyle = useMemo(
     () => [styles.overlay, { paddingTop: padTop, paddingBottom: padBottom, paddingHorizontal: padX }],
@@ -121,67 +121,71 @@ export function AvatarPickerModal({
       {...edgeToEdgeModalProps}
     >
       <View style={overlayStyle}>
-      <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onRequestClose} activeOpacity={1} />
-      <View style={[styles.card, { width: cardWidth, maxHeight: cardMaxHeight }]}>
-        <View style={styles.header}>
-          <Text style={styles.title}>{title}</Text>
-          <TouchableOpacity
-            onPress={onRequestClose}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Close"
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onRequestClose}
+        />
+        <View style={[styles.card, { width: cardWidth, height: cardHeight }]}>
+          <View style={styles.header}>
+            <Text style={styles.title}>{title}</Text>
+            <TouchableOpacity
+              onPress={onRequestClose}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={22} color={Colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            bounces={false}
           >
-            <Ionicons name="close" size={22} color={Colors.textMuted} />
-          </TouchableOpacity>
-        </View>
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          bounces={false}
-        >
-          {variant === 'group' ? (
-            <GroupAvatarPicker
-              defaultSeed={DEFAULT_AVATAR_SEED}
-              value={seed}
-              onChangeText={onSeedChange}
-              thumbnail={thumbnail}
-              onThumbnailChange={onThumbnailChange}
-              uploadUserId={userId}
-              inputStyle={styles.input}
-              deferFileUpload={deferLocalFiles}
-              pendingAvatarFileRef={pendingRef}
-            />
-          ) : (
-            <UserAvatarPicker
-              value={seed}
-              onChangeBackgroundColor={(colors) => onSeedChange(colors.hex)}
-              thumbnail={thumbnail}
-              onThumbnailChange={onThumbnailChange}
-              uploadUserId={userId}
-              userName={userName}
-              deferFileUpload={deferLocalFiles}
-              pendingAvatarFileRef={pendingRef}
-            />
-          )}
-        </ScrollView>
-        {onSave ? (
-          <TouchableOpacity
-            onPress={handleSave}
-            disabled={busy}
-            style={[styles.saveBtn, busy && styles.saveBtnDisabled]}
-            activeOpacity={0.8}
-          >
-            {busy ? (
-              <ActivityIndicator size="small" color={Colors.textMuted} />
+            {variant === 'group' ? (
+              <GroupAvatarPicker
+                defaultSeed={DEFAULT_AVATAR_SEED}
+                value={seed}
+                onChangeText={onSeedChange}
+                thumbnail={thumbnail}
+                onThumbnailChange={onThumbnailChange}
+                uploadUserId={userId}
+                inputStyle={styles.input}
+                deferFileUpload={deferLocalFiles}
+                pendingAvatarFileRef={pendingRef}
+              />
             ) : (
-              <Text style={styles.saveBtnText}>Save</Text>
+              <UserAvatarPicker
+                value={seed}
+                onChangeBackgroundColor={(colors) => onSeedChange(colors.hex)}
+                thumbnail={thumbnail}
+                onThumbnailChange={onThumbnailChange}
+                uploadUserId={userId}
+                userName={userName}
+                deferFileUpload={deferLocalFiles}
+                pendingAvatarFileRef={pendingRef}
+              />
             )}
-          </TouchableOpacity>
-        ) : null}
-      </View>
+          </ScrollView>
+          {onSave ? (
+            <TouchableOpacity
+              onPress={handleSave}
+              disabled={busy}
+              style={[styles.saveBtn, busy && styles.saveBtnDisabled]}
+              activeOpacity={0.8}
+            >
+              {busy ? (
+                <ActivityIndicator size="small" color={Colors.textMuted} />
+              ) : (
+                <Text style={styles.saveBtnText}>Save</Text>
+              )}
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
     </Modal>
   );
@@ -200,14 +204,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     padding: 20,
-    flexDirection: 'column',
+    flex: 1,
+    maxHeight: undefined,
     overflow: 'hidden',
     zIndex: 1,
   },
   header:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 },
   title:   { fontSize: 18, fontFamily: Fonts.semiBold, color: Colors.text },
-  scroll:  { flex: 1, minHeight: 0 },
-  scrollContent: { flexGrow: 1, paddingBottom: 8 },
+  scroll:  { flexGrow: 1, flexShrink: 1 },
+  scrollContent: { paddingBottom: 8 },
   input:   { padding: 10, paddingHorizontal: 12, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.surface, fontSize: 14, color: Colors.text, fontFamily: Fonts.regular },
   saveBtn: { marginTop: 12, paddingVertical: 12, borderRadius: Radius.lg, backgroundColor: Colors.accent, alignItems: 'center', flexShrink: 0 },
   saveBtnDisabled: { backgroundColor: Colors.border },

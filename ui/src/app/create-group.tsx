@@ -148,6 +148,11 @@ export default function CreateGroupScreen() {
     setShowAvatarPicker(false);
   };
 
+  const saveAvatarPicker = () => {
+    // Don't restore snapshot - keep the changes
+    setShowAvatarPicker(false);
+  };
+
   const addCoverPhotoFromPicker = async () => {
     if (!user?.uid || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
@@ -480,6 +485,7 @@ export default function CreateGroupScreen() {
         variant="group"
         visible={showAvatarPicker}
         onRequestClose={closeAvatarPicker}
+        onAfterSave={saveAvatarPicker}
         seed={draftSeed}
         onSeedChange={setDraftSeed}
         thumbnail={draftThumbnail}
@@ -487,6 +493,9 @@ export default function CreateGroupScreen() {
         userId={user?.uid ?? ''}
         deferFileUpload
         pendingAvatarFileRef={pendingAvatarFileRef}
+        onSave={async () => {
+          // Changes already applied to draft state via onSeedChange/onThumbnailChange
+        }}
       />
     </>
   );

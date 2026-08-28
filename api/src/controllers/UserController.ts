@@ -62,7 +62,7 @@ export class UserController extends Controller {
 
   /**
    * Sync user from auth provider (upsert)
-   * @summary Ensures the user row exists and refreshes name fields from the client
+   * @summary Ensures the user row exists; provider name is refreshed, display name is not overwritten
    */
   @Post('sync')
   public async syncUser(@Body() body: UserInput): Promise<User> {

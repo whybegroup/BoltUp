@@ -18,3 +18,5 @@ secrets/
 
 ui/ios
 ui/android
+
+google-services.json

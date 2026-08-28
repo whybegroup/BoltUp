@@ -44,7 +44,9 @@ export class UserService {
   }
 
   /**
-   * Create or update user from auth (idempotent; avoids GET 404 on first sign-in)
+   * Create or update user from auth (idempotent; avoids GET 404 on first sign-in).
+   * displayName is only set on create so a later auth refresh cannot overwrite a
+   * name the user chose in profile.
    */
   public async upsertFromAuth(input: UserInput): Promise<User> {
     const row = await prisma.user.upsert({
@@ -58,7 +60,6 @@ export class UserService {
       },
       update: {
         name: input.name,
-        displayName: input.displayName,
         ...(input.avatarSeed !== undefined ? { avatarSeed: input.avatarSeed } : {}),
         ...(input.thumbnail !== undefined ? { thumbnail: input.thumbnail } : {}),
       },

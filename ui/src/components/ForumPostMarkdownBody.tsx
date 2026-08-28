@@ -1,10 +1,19 @@
 import { memo, useCallback, useMemo, type ComponentProps, type Dispatch, type SetStateAction } from 'react';
-import { Linking, StyleSheet, TouchableOpacity, View } from 'react-native';
-import Markdown from 'react-native-markdown-display';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 import { Colors, Fonts, Radius } from '../constants/theme';
-import { uploadUrlToDownloadUrl } from '../services/pickAndUploadImage';
+import { useAppRouter } from '../hooks/useAppRouter';
+import { openContentLink } from '../utils/inAppLinks';
 import { MentionText } from './MentionText';
 import { ResolvableImage } from './ResolvableImage';
+
+/**
+ * The library's default parser leaves markdown-it's `linkify` off, so bare URLs stay inert
+ * text. Fuzzy matching stays off so only explicit http(s) URLs autolink, matching the
+ * behaviour of event comments.
+ */
+const markdownParser = MarkdownIt({ typographer: true, linkify: true });
+markdownParser.linkify.set({ fuzzyLink: false, fuzzyEmail: false });
 
 export type ForumPostImageLightboxState = {
   urls: string[];
@@ -32,6 +41,8 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
   ownerThumbnail,
   setImageLightbox,
 }: ForumPostMarkdownBodyProps) {
+  const router = useAppRouter();
+
   const rules = useMemo(
     () => ({
       paragraph: (node: any, children: any, _parent: any, mdStyles: any) => (
@@ -79,13 +90,22 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
     [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox]
   );
 
-  const onLinkPress = useCallback((url: string) => {
-    Linking.openURL(uploadUrlToDownloadUrl(url));
-    return false;
-  }, []);
+  const onLinkPress = useCallback(
+    (url: string) => {
+      openContentLink(router, url);
+      return false;
+    },
+    [router]
+  );
 
   return (
-    <Markdown style={markdownStyles} mergeStyle rules={rules} onLinkPress={onLinkPress}>
+    <Markdown
+      style={markdownStyles}
+      mergeStyle
+      rules={rules}
+      markdownit={markdownParser}
+      onLinkPress={onLinkPress}
+    >
       {markdownBody}
     </Markdown>
   );
@@ -99,6 +119,17 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     backgroundColor: Colors.border,
   },
-  markdownParagraphColumn: { flexDirection: 'column', alignItems: 'stretch' },
+  /**
+   * Paragraph inherits `flexWrap: 'wrap'` from the library's row-based default. In a
+   * wrapping column, a flex line is sized from its content, so `stretch` would size text
+   * to its intrinsic width and long lines would never break. `nowrap` keeps one line whose
+   * cross size is the paragraph width.
+   */
+  markdownParagraphColumn: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    flexWrap: 'nowrap',
+    width: '100%',
+  },
   markdownImageWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
 });

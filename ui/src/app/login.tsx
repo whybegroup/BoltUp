@@ -13,6 +13,7 @@ import {
   Modal,
   Pressable,
   Keyboard,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -55,6 +56,8 @@ function nativeGoogleSignInHint(err: unknown): string | undefined {
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const sheetHeight = Math.round(windowHeight * 0.92);
   const [emailMode, setEmailMode] = useState<AuthMode | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -248,17 +251,23 @@ export default function LoginScreen() {
         visible={emailMode != null}
         transparent
         animationType="slide"
+        presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
         onRequestClose={closeEmail}
         {...edgeToEdgeModalProps}
       >
-        <View style={styles.modalRoot}>
+        <View style={[styles.modalRoot, { height: windowHeight }]}>
           <Pressable
-            style={styles.modalDismiss}
+            style={StyleSheet.absoluteFill}
             onPress={closeEmail}
             accessibilityRole="button"
             accessibilityLabel="Close"
           />
-          <View style={[styles.modalCard, { paddingBottom: 24 + insets.bottom }]}>
+          <View
+            style={[
+              styles.modalCard,
+              { height: sheetHeight, paddingBottom: Math.max(24, insets.bottom + 12) },
+            ]}
+          >
             <Pressable style={styles.modalCardPress} onPress={Keyboard.dismiss}>
             <View style={styles.modalTopBar}>
               <TouchableOpacity
@@ -397,14 +406,16 @@ const styles = StyleSheet.create({
   },
   modalRoot: {
     flex: 1,
+    width: '100%',
     backgroundColor: 'transparent',
     justifyContent: 'flex-end',
   },
-  modalDismiss: {
-    flex: 1,
-  },
   modalCard: {
-    maxHeight: '92%',
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
@@ -412,7 +423,7 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   modalCardPress: {
-    flexGrow: 0,
+    flex: 1,
   },
   modalTopBar: {
     flexDirection: 'row',

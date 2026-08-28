@@ -11,6 +11,7 @@ import {
   sendPasswordResetEmail,
   reauthenticateWithCredential,
   updatePassword,
+  updateProfile,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   browserLocalPersistence,
@@ -142,7 +143,13 @@ export const signInWithEmail = async (email: string, password: string) => {
 };
 
 export const signUpWithEmail = async (email: string, password: string) => {
-  const result = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  const trimmedEmail = email.trim();
+  const result = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
+  
+  // Set display name to the part before @ in the email
+  const displayName = trimmedEmail.split('@')[0] || 'User';
+  await updateProfile(result.user, { displayName });
+  
   return result.user;
 };
 

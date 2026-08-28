@@ -89,6 +89,7 @@ module.exports = {
       },
     },
     android: {
+      googleServicesFile: './google-services.json',
       adaptiveIcon: {
         backgroundColor: '#FAFAF9',
       },

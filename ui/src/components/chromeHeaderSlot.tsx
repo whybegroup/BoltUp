@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { TouchableOpacity, View, StyleSheet } from 'react-native';
+import { useIsFocused } from 'expo-router';
 import { Colors } from '../constants/theme';
 import { modalTopBarStyles } from './modalTopBarStyles';
 import type { ChromeHeaderSlotSetters, ChromeHeaderTheme } from './chromeHeaderTypes';
@@ -29,25 +30,30 @@ export function useRegisterChromeHeader(
   const setHeaderTrailing = setters?.setHeaderTrailing;
   const setHeaderTheme = setters?.setHeaderTheme;
   const themeKeyRef = useRef<string | null>(null);
+  // The slot is shared by every screen in the tab's stack, so ownership has to follow
+  // focus: otherwise a screen pushed on top clears the slot when it pops and the screen
+  // underneath never re-registers.
+  const isFocused = useIsFocused();
+  const active = enabled && isFocused;
 
   useLayoutEffect(() => {
-    if (!setHeaderTrailing || !setHeaderTheme || !enabled) return;
+    if (!setHeaderTrailing || !setHeaderTheme || !active) return;
     setHeaderTrailing(trailing);
     const key = theme ? `${theme.backgroundColor}|${theme.borderBottomColor}` : '';
     if (themeKeyRef.current !== key) {
       themeKeyRef.current = key;
       setHeaderTheme(theme);
     }
-  }, [setHeaderTrailing, setHeaderTheme, enabled, trailing, theme]);
+  }, [setHeaderTrailing, setHeaderTheme, active, trailing, theme]);
 
   useLayoutEffect(() => {
-    if (!setHeaderTrailing || !setHeaderTheme || !enabled) return;
+    if (!setHeaderTrailing || !setHeaderTheme || !active) return;
     return () => {
       themeKeyRef.current = null;
       setHeaderTrailing(null);
       setHeaderTheme(null);
     };
-  }, [setHeaderTrailing, setHeaderTheme, enabled]);
+  }, [setHeaderTrailing, setHeaderTheme, active]);
 }
 
 /** Mount on a page-variant detail screen to hoist actions into the tab header. */
