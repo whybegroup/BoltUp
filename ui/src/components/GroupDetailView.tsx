@@ -47,6 +47,7 @@ import { ResolvableImage } from './ResolvableImage';
 import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 import Toast from 'react-native-toast-message';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { GroupStorageUsageBar } from './GroupStorageUsageBar';
 import { groupSubpageFromPathname } from './groupScope/useGroupSubpage';
 import { groupsTabParentHref, navigateGroupsTabTo } from '../utils/tabBreadcrumbNav';
 import { useGroupScopeNav } from './groupScope/GroupScopeNavContext';
@@ -651,7 +652,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const urls = await pickAndUploadCoverPhoto(currentUserId);
+      const urls = await pickAndUploadCoverPhoto(currentUserId, { groupId });
       if (urls?.length) await addCoverPhoto(urls);
     } finally {
       setCoverPhotoBusy(false);
@@ -662,7 +663,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const url = await takeAndUploadCoverPhoto(currentUserId);
+      const url = await takeAndUploadCoverPhoto(currentUserId, { groupId });
       if (url) await addCoverPhoto(url);
     } finally {
       setCoverPhotoBusy(false);
@@ -939,6 +940,16 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
           </View>
         </View>
 
+        {typeof group.usedStorageBytes === 'number' ? (
+          <GroupStorageUsageBar
+            usedBytes={group.usedStorageBytes}
+            maxBytes={group.maxStorageBytes}
+            groupId={groupId}
+            userId={currentUserId ?? undefined}
+            canRequest={!isPending && (group.membershipStatus === 'member' || group.membershipStatus === 'admin')}
+          />
+        ) : null}
+
         {groupPhotosBlock}
 
         {isPending ? (
@@ -1113,6 +1124,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
         thumbnail={avatarThumbnailDraft}
         onThumbnailChange={setAvatarThumbnailDraft}
         userId={currentUserId ?? ''}
+        groupId={groupId}
         onSave={async (avatarSeed, thumbnail) => {
           try {
             await updateGroup.mutateAsync({

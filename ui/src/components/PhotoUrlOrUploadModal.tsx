@@ -35,6 +35,7 @@ export type PhotoUrlOrUploadModalProps = {
   onUploadFailed?: (uploadId: string) => void;
   userId: string;
   title?: string;
+  groupId?: string;
 };
 
 export function PhotoUrlOrUploadModal({
@@ -45,6 +46,7 @@ export function PhotoUrlOrUploadModal({
   onUploadFailed,
   userId,
   title = 'Add photo',
+  groupId,
 }: PhotoUrlOrUploadModalProps) {
   const [busy, setBusy] = useState(false);
   /** Local preview inside this modal when upload runs without {@link onPickPreview}. */
@@ -87,14 +89,14 @@ export function PhotoUrlOrUploadModal({
           const uploadId = uid();
           previewIds.push(uploadId);
           onPickPreview(asset.uri, uploadId);
-          const url = await uploadPickedImageAsset(userId, asset);
+          const url = await uploadPickedImageAsset(userId, asset, { groupId });
           onAdd(url, uploadId);
         }
         return;
       }
       setInlinePreviewUri(assets[0]?.uri ?? null);
       for (const asset of assets) {
-        const url = await uploadPickedImageAsset(userId, asset);
+        const url = await uploadPickedImageAsset(userId, asset, { groupId });
         onAdd(url);
       }
       resetAndClose();
@@ -143,7 +145,7 @@ export function PhotoUrlOrUploadModal({
           previewIds.push(uploadId);
           previewUris.push(previewUri);
           onPickPreview(previewUri, uploadId);
-          const url = await uploadWebImageFile(userId, file);
+          const url = await uploadWebImageFile(userId, file, { groupId });
           onAdd(url, uploadId);
           URL.revokeObjectURL(previewUri);
         }
@@ -164,7 +166,7 @@ export function PhotoUrlOrUploadModal({
     setBusy(true);
     try {
       for (const file of files) {
-        const url = await uploadWebImageFile(userId, file);
+        const url = await uploadWebImageFile(userId, file, { groupId });
         onAdd(url);
       }
       clearInlinePreview();

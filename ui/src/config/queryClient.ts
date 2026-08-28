@@ -30,6 +30,7 @@ export const queryKeys = {
     members: (id: string) => ['groups', id, 'members'] as const,
     pendingRequests: (id: string) => ['groups', id, 'requests', 'pending'] as const,
     posts: (groupId: string, userId: string) => ['groups', groupId, 'posts', userId] as const,
+    storageRequests: (groupId: string) => ['groups', groupId, 'storage-requests'] as const,
     memberColor: (groupId: string, userId: string) => ['groups', groupId, 'members', userId, 'color'] as const,
     memberNotifPrefs: (groupId: string, userId: string) =>
       ['groups', groupId, 'members', userId, 'notification-preferences'] as const,

@@ -23,6 +23,7 @@ interface GroupAvatarPickerProps {
   buttonTextStyle?: object;
   deferFileUpload?: boolean;
   pendingAvatarFileRef?: MutableRefObject<PendingAvatarFile | null>;
+  groupId?: string;
 }
 
 export function GroupAvatarPicker({
@@ -35,6 +36,7 @@ export function GroupAvatarPicker({
   inputStyle,
   deferFileUpload = false,
   pendingAvatarFileRef,
+  groupId,
 }: GroupAvatarPickerProps) {
   const { width: winW, height: winH } = useWindowDimensions();
   const previewSize = Math.min(200, Math.max(96, Math.round(Math.min(winW * 0.36, winH * 0.2))));
@@ -50,6 +52,7 @@ export function GroupAvatarPicker({
           onThumbnailChange={onThumbnailChange}
           deferFileUpload={deferFileUpload}
           pendingAvatarFileRef={pendingAvatarFileRef}
+          groupId={groupId}
         />
       ) : null}
       <View style={{ marginBottom: 12 }}>

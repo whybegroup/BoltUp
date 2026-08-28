@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   Alert,
   Platform,

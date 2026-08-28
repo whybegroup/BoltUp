@@ -23,7 +23,7 @@ import {
   resolveCanonicalMemberUserId,
   type MemberRow,
 } from '../utils/commentMentions';
-import { LocalUploadService } from './LocalUploadService';
+import { S3UploadService } from './S3UploadService';
 import { normalizeRecurrenceRule } from '../utils/recurrenceRuleValidate';
 import { listOccurrenceStartsForRule } from '../utils/recurrenceTruncate';
 import { utcInstantFromClient } from '../utils/utcInstantFromClient';
@@ -38,7 +38,7 @@ import {
 const prisma = new PrismaClient();
 
 const notificationService = new NotificationService();
-const localUploads = new LocalUploadService();
+const objectStore = new S3UploadService();
 
 const COMMENT_MENTION_NOTIFICATION_TITLE = 'You were mentioned';
 /** Shown when a group admin removes someone else's comment (soft-delete). */
@@ -801,7 +801,7 @@ export class EventService {
           });
         }
       });
-      await Promise.all(removedUrls.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+      await Promise.all(removedUrls.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
     };
 
     if (coverPhotos !== undefined) {
@@ -1176,7 +1176,7 @@ export class EventService {
     await prisma.event.delete({
       where: { id },
     });
-    await Promise.all(urlsToPurge.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+    await Promise.all(urlsToPurge.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
   }
 
   /**
@@ -1803,7 +1803,7 @@ export class EventService {
     const photoUrls = [...new Set(comment.photos.map((p) => p.photoUrl?.trim()).filter(Boolean))] as string[];
 
     const purgeCommentPhotos = async () => {
-      await Promise.all(photoUrls.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+      await Promise.all(photoUrls.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
     };
 
     if (isPlaceholder) {

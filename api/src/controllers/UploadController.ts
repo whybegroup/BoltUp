@@ -1,21 +1,22 @@
 import { Body, Controller, Post, Query, Route, Tags } from 'tsoa';
 import {
+  CompleteUploadRequest,
   DeleteUploadRequest,
   PresignGetBatchRequest,
   PresignGetBatchResponse,
   PresignUploadRequest,
   PresignUploadResponse,
 } from '../models/Upload';
-import { LocalUploadService } from '../services/LocalUploadService';
+import { S3UploadService } from '../services/S3UploadService';
 
 @Route('storage')
 @Tags('Storage')
 export class UploadController extends Controller {
-  private uploads = new LocalUploadService();
+  private uploads = new S3UploadService();
 
   /**
-   * Get a short-lived signed PUT URL for direct client upload into `api/data`.
-   * @summary Presign file upload (local disk)
+   * Get a short-lived signed PUT URL for direct client upload to S3.
+   * @summary Presign file upload (S3)
    */
   @Post('presign')
   public async presignUpload(@Body() body: PresignUploadRequest): Promise<PresignUploadResponse> {
@@ -31,11 +32,33 @@ export class UploadController extends Controller {
       userId: body.userId.trim(),
       contentType: body.contentType.trim(),
       filename: body.filename?.trim(),
+      groupId: body.groupId?.trim(),
+      contentLength: body.contentLength,
     });
   }
 
   /**
-   * Resolve stored file URLs for display. Local uploads are already public paths; externals pass through.
+   * Record an S3 upload against a group's storage quota after the client PUT succeeds.
+   */
+  @Post('complete')
+  public async completeUpload(@Body() body: CompleteUploadRequest): Promise<void> {
+    if (!body.userId?.trim()) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    if (!body.publicUrl?.trim()) {
+      this.setStatus(400);
+      throw new Error('publicUrl is required');
+    }
+    await this.uploads.completeUpload({
+      userId: body.userId.trim(),
+      publicUrl: body.publicUrl.trim(),
+      groupId: body.groupId?.trim(),
+    });
+  }
+
+  /**
+   * Resolve stored file URLs for display. S3 uploads return the public object URL; externals pass through.
    */
   @Post('presign-get')
   public async presignGetBatch(@Body() body: PresignGetBatchRequest): Promise<PresignGetBatchResponse> {

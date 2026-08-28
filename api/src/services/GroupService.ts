@@ -17,13 +17,18 @@ import {
   User,
   NotifPrefs,
   NotifPrefsPartial,
+  GroupStorageRequest,
+  GroupStorageRequestInput,
 } from '../models';
 import { mergeNotifPrefs, parseNotifPrefsJson } from '../utils/notifPrefsCore';
 import { extractUploadUrlsFromForumBody } from '../utils/groupPostBodyUploads';
 import { NotificationService } from './NotificationService';
-import { LocalUploadService } from './LocalUploadService';
+import { S3UploadService } from './S3UploadService';
+import { groupStorage } from './GroupStorageService';
 import { UserService } from './UserService';
 import { sortByGroupOrder } from '../utils/groupOrder';
+import { DEFAULT_GROUP_MAX_STORAGE_BYTES } from '../utils/groupStorageLimits';
+import { httpError } from '../utils/httpError';
 import {
   extractMentionTokens,
   resolveMentionRecipientIds,
@@ -33,7 +38,7 @@ import {
 
 const prisma = new PrismaClient();
 const notificationService = new NotificationService();
-const localUploads = new LocalUploadService();
+const objectStore = new S3UploadService();
 const userService = new UserService();
 
 const FORUM_MENTION_NOTIFICATION_TITLE = 'You were mentioned';
@@ -214,7 +219,7 @@ export class GroupService {
       },
     });
 
-    return group ? this.mapGroupWithMembers(group) : null;
+    return group ? await this.mapGroupWithMembersAsync(group) : null;
   }
 
   /**
@@ -241,7 +246,7 @@ export class GroupService {
       );
       if (!isOwner) return null;
     }
-    return this.mapGroupScoped(group, userId);
+    return this.mapGroupScopedAsync(group, userId);
   }
 
   private mapGroupCoverUrls(group: { coverPhotos?: { photoUrl: string }[] }): string[] {
@@ -278,6 +283,7 @@ export class GroupService {
       coverPhotos: this.mapGroupCoverUrls(group),
       avatarSeed: group.avatarSeed,
       requireApprovalToJoin: group.requireApprovalToJoin ?? true,
+      maxStorageBytes: group.maxStorageBytes ?? DEFAULT_GROUP_MAX_STORAGE_BYTES,
       memberCount,
       membershipStatus,
       deletedAt: group.deletedAt ?? undefined,
@@ -303,6 +309,12 @@ export class GroupService {
     return base;
   }
 
+  private async mapGroupScopedAsync(group: any, userId: string): Promise<GroupScoped> {
+    const base = this.mapGroupScoped(group, userId);
+    base.usedStorageBytes = await groupStorage.getUsedStorageBytes(group.id);
+    return base;
+  }
+
   /**
    * Create a new group with members
    */
@@ -319,6 +331,12 @@ export class GroupService {
 
     if (!ownerId?.trim() || !createdBy?.trim()) {
       throw Object.assign(new Error('ownerId and createdBy are required'), { status: 400 });
+    }
+
+    const maxStorageBytes = DEFAULT_GROUP_MAX_STORAGE_BYTES;
+    const pendingUsed = await groupStorage.getUsedStorageBytes(input.id);
+    if (pendingUsed > maxStorageBytes) {
+      throw httpError(400, groupStorage.usedExceedsMaxMessage(pendingUsed));
     }
     const actorIds = Array.from(
       new Set([ownerId, createdBy, ...adminIds, ...memberIds].map((x) => x?.trim()).filter(Boolean) as string[]),
@@ -361,6 +379,7 @@ export class GroupService {
     const group = await prisma.group.create({
       data: {
         ...groupData,
+        maxStorageBytes,
         inviteCode: finalInviteCode,
         createdBy,
         updatedBy: createdBy,
@@ -394,7 +413,9 @@ export class GroupService {
       },
     });
 
-    return this.mapGroupWithMembers(group);
+    const mapped = this.mapGroupWithMembers(group);
+    mapped.usedStorageBytes = await groupStorage.getUsedStorageBytes(group.id);
+    return mapped;
   }
 
   /**
@@ -469,7 +490,7 @@ export class GroupService {
           }
         });
 
-        await Promise.all(removedUrls.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+        await Promise.all(removedUrls.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
       }
     }
 
@@ -512,7 +533,7 @@ export class GroupService {
       },
     });
 
-    return this.mapGroupWithMembers(group!);
+    return this.mapGroupWithMembersAsync(group!);
   }
 
   /**
@@ -534,50 +555,22 @@ export class GroupService {
 
   /**
    * Hard-delete a group (removes group and all related data). Owner only.
-   * Best-effort removal of group thumbnail and all event / comment photos from S3.
+   * Best-effort removal of group images and file attachments from S3 (and leftover local files).
    */
   public async hardDelete(id: string, userId: string): Promise<void> {
     await this.requireOwner(id, userId);
-    const snapshot = await prisma.group.findUnique({
-      where: { id },
-      select: {
-        thumbnail: true,
-        coverPhotos: { select: { photoUrl: true } },
-        events: {
-          select: {
-            coverPhotos: { select: { photoUrl: true } },
-            comments: {
-              select: {
-                photos: { select: { photoUrl: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!snapshot) {
+    const exists = await prisma.group.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) {
       throw Object.assign(new Error('Group not found'), { status: 404 });
     }
 
-    const urls: string[] = [];
-    const t = snapshot.thumbnail?.trim();
-    if (t) urls.push(t);
-    for (const gp of snapshot.coverPhotos) {
-      const u = gp.photoUrl?.trim();
-      if (u) urls.push(u);
-    }
-    for (const ev of snapshot.events) {
-      for (const p of ev.coverPhotos) urls.push(p.photoUrl);
-      for (const c of ev.comments) {
-        for (const p of c.photos) urls.push(p.photoUrl);
-      }
-    }
-    const urlsToPurge = [...new Set(urls)];
+    const urlsToPurge = await groupStorage.collectAllManagedUrlsForPurge(id);
 
     await prisma.group.delete({
       where: { id },
     });
-    await Promise.all(urlsToPurge.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+    await Promise.all(urlsToPurge.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
+    await groupStorage.deleteTrackingForGroup(id);
   }
 
   /**
@@ -605,6 +598,24 @@ export class GroupService {
         deletedAt: null,
         deletedBy: null,
       },
+    });
+  }
+
+  public async listStorageRequests(groupId: string, userId: string): Promise<GroupStorageRequest[]> {
+    await this.requireActiveMember(groupId, userId);
+    return groupStorage.listRequests(groupId);
+  }
+
+  public async createStorageRequest(
+    groupId: string,
+    userId: string,
+    input: GroupStorageRequestInput
+  ): Promise<GroupStorageRequest> {
+    return groupStorage.createRequest({
+      groupId,
+      userId,
+      requestedBytes: input.requestedBytes,
+      note: input.note,
     });
   }
 
@@ -939,7 +950,7 @@ export class GroupService {
       ]),
     ];
     await prisma.groupPost.delete({ where: { id: postId } });
-    await Promise.all(urlsToPurge.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+    await Promise.all(urlsToPurge.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
   }
 
   public async toggleGroupPostReaction(postId: string, input: GroupPostReactionInput): Promise<GroupPost> {
@@ -1176,7 +1187,7 @@ export class GroupService {
     await this.requireActiveMember(comment.post.groupId, userId);
     const urlsToPurge = extractUploadUrlsFromForumBody(comment.body);
     await prisma.groupPostComment.delete({ where: { id: commentId } });
-    await Promise.all(urlsToPurge.map((u) => localUploads.deleteManagedUploadBestEffort(u)));
+    await Promise.all(urlsToPurge.map((u) => objectStore.deleteManagedUploadBestEffort(u)));
   }
 
   public async toggleGroupPostCommentReaction(
@@ -1740,6 +1751,7 @@ export class GroupService {
       avatarSeed: group.avatarSeed,
       inviteCode: group.inviteCode,
       requireApprovalToJoin: group.requireApprovalToJoin ?? true,
+      maxStorageBytes: group.maxStorageBytes ?? DEFAULT_GROUP_MAX_STORAGE_BYTES,
       ownerId: owner ? owner.userId : '',
       adminIds: admins.map((m: any) => m.userId),
       memberIds: activeMembers.map((m: any) => m.userId),
@@ -1749,5 +1761,11 @@ export class GroupService {
       createdAt: group.createdAt,
       updatedAt: group.updatedAt,
     };
+  }
+
+  private async mapGroupWithMembersAsync(group: any): Promise<Group> {
+    const mapped = this.mapGroupWithMembers(group);
+    mapped.usedStorageBytes = await groupStorage.getUsedStorageBytes(group.id);
+    return mapped;
   }
 }

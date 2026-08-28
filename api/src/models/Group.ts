@@ -23,6 +23,10 @@ export interface Group {
   inviteCode?: string | null;
   /** When true, new members must be approved; when false, join is immediate */
   requireApprovalToJoin: boolean;
+  /** Max bytes this group may store in S3. Default 1 GiB; raised by a developer grant. */
+  maxStorageBytes: number;
+  /** Bytes used by this group's images and file attachments. */
+  usedStorageBytes?: number;
   /** ID of the group's owner */
   ownerId: string;
   /** Array of admin user IDs */
@@ -53,6 +57,10 @@ export interface GroupScoped {
   coverPhotos: string[];
   avatarSeed?: string | null;
   requireApprovalToJoin: boolean;
+  /** Max bytes this group may store in S3. Default 1 GiB; raised by a developer grant. */
+  maxStorageBytes: number;
+  /** Bytes used by this group's images and file attachments. Present on group detail. */
+  usedStorageBytes?: number;
   memberCount: number;
   membershipStatus: MembershipStatus;
   /** Present when member or admin */
@@ -194,3 +202,22 @@ export interface GroupPostReactionInput {
   userId: string;
   emoji: string;
 }
+
+export type GroupStorageRequestStatus = 'pending' | 'approved' | 'denied';
+
+export interface GroupStorageRequest {
+  id: string;
+  groupId: string;
+  userId: string;
+  requestedBytes: number;
+  note?: string | null;
+  status: GroupStorageRequestStatus;
+  createdAt: Date;
+  decidedAt?: Date | null;
+}
+
+export interface GroupStorageRequestInput {
+  requestedBytes: number;
+  note?: string;
+}
+

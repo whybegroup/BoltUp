@@ -46,6 +46,8 @@ interface AvatarPickerModalProps {
   deferFileUpload?: boolean;
   /** Optional shared ref (e.g. create-group reads on Create). Uses internal ref when omitted. */
   pendingAvatarFileRef?: MutableRefObject<PendingAvatarFile | null>;
+  /** When set, avatar photo uploads count toward this group's storage quota. */
+  groupId?: string;
 }
 
 export function AvatarPickerModal({
@@ -63,6 +65,7 @@ export function AvatarPickerModal({
   isSaving,
   deferFileUpload: deferFileUploadProp,
   pendingAvatarFileRef: pendingAvatarFileRefProp,
+  groupId,
 }: AvatarPickerModalProps) {
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -100,7 +103,7 @@ export function AvatarPickerModal({
       let thumb = thumbnail;
       if (deferLocalFiles && pendingRef.current && userId.trim()) {
         const p = pendingRef.current;
-        thumb = await uploadPendingAvatarFile(userId.trim(), p);
+        thumb = await uploadPendingAvatarFile(userId.trim(), p, { groupId });
         onThumbnailChange(thumb);
         if (p.kind === 'web') URL.revokeObjectURL(p.objectUrl);
         pendingRef.current = null;
@@ -157,6 +160,7 @@ export function AvatarPickerModal({
                 inputStyle={styles.input}
                 deferFileUpload={deferLocalFiles}
                 pendingAvatarFileRef={pendingRef}
+                groupId={groupId}
               />
             ) : (
               <UserAvatarPicker

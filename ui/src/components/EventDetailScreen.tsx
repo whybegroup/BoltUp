@@ -1135,7 +1135,7 @@ export function EventDetailScreen({
     if (!currentUserId || commentDraftPhotoBusy) return;
     try {
       setCommentDraftPhotoBusy(true);
-      const urls = await pickAndUploadCoverPhoto(currentUserId);
+      const urls = await pickAndUploadCoverPhoto(currentUserId, { groupId: ev?.groupId });
       if (!urls?.length) return;
       setCommentDraftPhotos((prev) => [...prev, ...urls]);
     } catch (e) {
@@ -1149,7 +1149,7 @@ export function EventDetailScreen({
     if (!currentUserId || commentDraftPhotoBusy) return;
     try {
       setCommentDraftPhotoBusy(true);
-      const url = await takeAndUploadCoverPhoto(currentUserId);
+      const url = await takeAndUploadCoverPhoto(currentUserId, { groupId: ev?.groupId });
       if (!url) return;
       setCommentDraftPhotos((prev) => [...prev, url]);
     } catch (e) {
@@ -1163,7 +1163,7 @@ export function EventDetailScreen({
     if (!currentUserId || commentDraftPhotoBusy) return;
     try {
       setCommentDraftPhotoBusy(true);
-      const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+      const uploaded = await pickAndUploadFileFromDevice(currentUserId, { groupId: ev?.groupId });
       if (!uploaded?.publicUrl) return;
       setCommentDraft((prev) =>
         appendFileLinkLine(prev, uploaded.fileName, uploadUrlToDownloadUrl(uploaded.publicUrl))
@@ -1174,7 +1174,7 @@ export function EventDetailScreen({
     } finally {
       setCommentDraftPhotoBusy(false);
     }
-  }, [appendFileLinkLine, commentDraftPhotoBusy, currentUserId]);
+  }, [appendFileLinkLine, commentDraftPhotoBusy, currentUserId, ev?.groupId]);
 
   const beginEditEventComment = useCallback(
     (commentId: string) => {
@@ -1930,7 +1930,7 @@ export function EventDetailScreen({
     if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const urls = await pickAndUploadCoverPhoto(currentUserId);
+      const urls = await pickAndUploadCoverPhoto(currentUserId, { groupId: ev?.groupId });
       if (urls?.length) await addCoverPhoto(urls);
     } finally {
       setCoverPhotoBusy(false);
@@ -1941,7 +1941,7 @@ export function EventDetailScreen({
     if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const url = await takeAndUploadCoverPhoto(currentUserId);
+      const url = await takeAndUploadCoverPhoto(currentUserId, { groupId: ev?.groupId });
       if (url) await addCoverPhoto(url);
     } finally {
       setCoverPhotoBusy(false);

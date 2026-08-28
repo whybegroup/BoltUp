@@ -64,6 +64,8 @@ model Group {
   inviteCode String?   @unique
   /// When true, new joins start as pending until an admin approves.
   requireApprovalToJoin Boolean @default(true)
+  /// Max bytes this group may store in S3. Default 1 GiB; raised by a developer grant.
+  maxStorageBytes Int @default(1073741824)
   createdBy  String
   updatedBy  String
   createdAt  DateTime  @default(now())
@@ -79,6 +81,35 @@ model Group {
   posts       GroupPost[]
 
   @@map("groups")
+}
+
+/// Tracks managed S3 uploads billed against a group's storage quota.
+/// No FK: files may be uploaded with a client-generated group id before the group row exists.
+model GroupStorageFile {
+  id        String   @id @default(uuid())
+  groupId   String
+  objectKey String   @unique
+  publicUrl String
+  byteSize  Int
+  createdAt DateTime @default(now())
+
+  @@index([groupId])
+  @@map("group_storage_files")
+}
+
+model GroupStorageRequest {
+  id             String    @id @default(uuid())
+  groupId        String
+  userId         String
+  requestedBytes Int
+  note           String?
+  status         String    @default("pending") // pending | approved | denied
+  createdAt      DateTime  @default(now())
+  decidedAt      DateTime?
+
+  @@index([groupId, status])
+  @@index([status])
+  @@map("group_storage_requests")
 }
 
 model GroupPost {

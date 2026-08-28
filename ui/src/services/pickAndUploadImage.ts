@@ -4,10 +4,13 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { StorageService } from '@moijia/client';
+import { apiErrorMessage } from '../utils/apiErrors';
 import {
   loadImageUploadQuality,
   type ImageUploadQuality,
 } from '../utils/imageUploadQualityPrefs';
+
+export type UploadOpts = { groupId?: string };
 
 function isCancelled(e: unknown): boolean {
   return e instanceof Error && e.message === 'cancelled';
@@ -269,122 +272,163 @@ export async function pickFileFromDevice(): Promise<PickedFileAsset> {
   };
 }
 
-/**
- * Presign + PUT to the API (local `api/data` storage; set API_PUBLIC_URL if clients use another host).
- */
-export async function uploadPickedImageAsset(userId: string, asset: PickedImageAsset): Promise<string> {
-  if (!userId) throw new Error('You must be signed in to upload photos.');
-  const ready = await convertPickedImage(asset, 'original');
-
-  const presign = await StorageService.presignUpload({
-    userId,
-    contentType: ready.contentType,
-    filename: ready.fileName,
-  });
-
-  let body: Blob | ArrayBuffer;
+async function readUploadBody(uri: string): Promise<Blob | ArrayBuffer> {
   if (Platform.OS === 'web') {
-    body = await (await fetch(ready.uri)).blob();
-  } else {
-    const file = new ExpoFile(ready.uri);
-    body = await file.arrayBuffer();
+    return (await fetch(uri)).blob();
+  }
+  const file = new ExpoFile(uri);
+  return file.arrayBuffer();
+}
+
+function bodyByteLength(body: Blob | ArrayBuffer): number {
+  return body instanceof Blob ? body.size : body.byteLength;
+}
+
+async function throwIfPutFailed(put: Response): Promise<void> {
+  if (put.ok) return;
+  let message = `Upload failed (${put.status}).`;
+  try {
+    const text = await put.text();
+    try {
+      const json = JSON.parse(text) as { error?: string };
+      if (typeof json.error === 'string' && json.error.trim()) {
+        message = json.error.trim();
+      } else if (text.trim()) {
+        message = text.trim();
+      }
+    } catch {
+      if (text.trim()) message = text.trim();
+    }
+  } catch {
+    /* keep default */
+  }
+  throw new Error(message);
+}
+
+async function presignAndPut(input: {
+  userId: string;
+  contentType: string;
+  filename?: string;
+  body: Blob | ArrayBuffer;
+  groupId?: string;
+}): Promise<string> {
+  let presign;
+  try {
+    presign = await StorageService.presignUpload({
+      userId: input.userId,
+      contentType: input.contentType,
+      filename: input.filename,
+      groupId: input.groupId?.trim() || undefined,
+      contentLength: bodyByteLength(input.body),
+    });
+  } catch (e) {
+    throw new Error(apiErrorMessage(e, 'Upload failed'));
   }
 
   const put = await fetch(presign.uploadUrl, {
     method: 'PUT',
-    body,
-    headers: { 'Content-Type': ready.contentType },
+    body: input.body,
+    headers: { 'Content-Type': input.contentType },
   });
-  if (!put.ok) {
-    throw new Error(`Upload failed (${put.status}). Check S3 CORS and credentials.`);
+  await throwIfPutFailed(put);
+  if (input.groupId?.trim()) {
+    try {
+      await StorageService.completeUpload({
+        userId: input.userId,
+        publicUrl: presign.publicUrl,
+        groupId: input.groupId.trim(),
+      });
+    } catch (e) {
+      throw new Error(apiErrorMessage(e, 'Upload failed'));
+    }
   }
-
   return presign.publicUrl;
 }
 
-export async function uploadPickedFileAsset(userId: string, asset: PickedFileAsset): Promise<string> {
-  if (!userId) throw new Error('You must be signed in to upload files.');
+/**
+ * Presign + PUT to S3. Public URL is the S3 object URL.
+ */
+export async function uploadPickedImageAsset(
+  userId: string,
+  asset: PickedImageAsset,
+  opts?: UploadOpts
+): Promise<string> {
+  if (!userId) throw new Error('You must be signed in to upload photos.');
+  const ready = await convertPickedImage(asset, 'original');
+  const body = await readUploadBody(ready.uri);
+  return presignAndPut({
+    userId,
+    contentType: ready.contentType,
+    filename: ready.fileName,
+    body,
+    groupId: opts?.groupId,
+  });
+}
 
-  const presign = await StorageService.presignUpload({
+export async function uploadPickedFileAsset(
+  userId: string,
+  asset: PickedFileAsset,
+  opts?: UploadOpts
+): Promise<string> {
+  if (!userId) throw new Error('You must be signed in to upload files.');
+  const body = await readUploadBody(asset.uri);
+  return presignAndPut({
     userId,
     contentType: asset.contentType,
     filename: asset.fileName,
-  });
-
-  let body: Blob | ArrayBuffer;
-  if (Platform.OS === 'web') {
-    body = await (await fetch(asset.uri)).blob();
-  } else {
-    const file = new ExpoFile(asset.uri);
-    body = await file.arrayBuffer();
-  }
-
-  const put = await fetch(presign.uploadUrl, {
-    method: 'PUT',
     body,
-    headers: { 'Content-Type': asset.contentType },
+    groupId: opts?.groupId,
   });
-  if (!put.ok) {
-    throw new Error(`Upload failed (${put.status}). Check upload settings.`);
-  }
-
-  return presign.publicUrl;
 }
 
 /** Picks any file from the device and uploads it. Throws `cancelled` when picker closes. */
 export async function pickAndUploadFileFromDevice(
-  userId: string
+  userId: string,
+  opts?: UploadOpts
 ): Promise<{ publicUrl: string; fileName: string }> {
   const asset = await pickFileFromDevice();
-  const publicUrl = await uploadPickedFileAsset(userId, asset);
+  const publicUrl = await uploadPickedFileAsset(userId, asset, opts);
   return { publicUrl, fileName: asset.fileName };
 }
 
-/** Converts a managed `/storage/files/...` URL to forced-download endpoint. */
+/** File attachments use the public S3 URL. */
 export function uploadUrlToDownloadUrl(sourceUrl: string): string {
-  const trimmed = sourceUrl?.trim();
-  if (!trimmed) return sourceUrl;
-  try {
-    const u = new URL(trimmed);
-    const prefix = '/storage/files/';
-    if (!u.pathname.startsWith(prefix)) return sourceUrl;
-    const rest = u.pathname.slice(prefix.length);
-    return `${u.origin}/storage/download/${rest}`;
-  } catch {
-    return sourceUrl;
-  }
+  return sourceUrl?.trim() || sourceUrl;
 }
 
 /** Picks from library then presigns + PUT. Throws `cancelled` if the user backs out of the picker. */
-export async function pickAndUploadImageFromLibrary(userId: string): Promise<string> {
+export async function pickAndUploadImageFromLibrary(userId: string, opts?: UploadOpts): Promise<string> {
   const assets = await pickImagesFromLibrary({ multiple: false, useQualityPreference: true });
-  return uploadPickedImageAsset(userId, assets[0]);
+  return uploadPickedImageAsset(userId, assets[0], opts);
 }
 
-export async function pickAndUploadImagesFromLibrary(userId: string): Promise<string[]> {
+export async function pickAndUploadImagesFromLibrary(userId: string, opts?: UploadOpts): Promise<string[]> {
   const assets = await pickImagesFromLibrary({ multiple: true, useQualityPreference: true });
   const urls: string[] = [];
   for (const asset of assets) {
-    urls.push(await uploadPickedImageAsset(userId, asset));
+    urls.push(await uploadPickedImageAsset(userId, asset, opts));
   }
   return urls;
 }
 
-export async function pickAndUploadImageFromCamera(userId: string): Promise<string> {
+export async function pickAndUploadImageFromCamera(userId: string, opts?: UploadOpts): Promise<string> {
   const asset = await pickCameraImageForUpload();
-  return uploadPickedImageAsset(userId, asset);
+  return uploadPickedImageAsset(userId, asset, opts);
 }
 
 /**
  * Opens the image picker immediately (no intermediate dialog). Returns public URLs, or undefined if cancelled / not signed in.
  */
-export async function pickAndUploadCoverPhoto(userId: string): Promise<string[] | undefined> {
+export async function pickAndUploadCoverPhoto(
+  userId: string,
+  opts?: UploadOpts
+): Promise<string[] | undefined> {
   if (!userId.trim()) {
     Alert.alert('Upload', 'You must be signed in to upload photos.');
     return undefined;
   }
   try {
-    return await pickAndUploadImagesFromLibrary(userId);
+    return await pickAndUploadImagesFromLibrary(userId, opts);
   } catch (e) {
     if (isCancelled(e)) return undefined;
     Alert.alert('Upload', e instanceof Error ? e.message : 'Upload failed');
@@ -392,13 +436,13 @@ export async function pickAndUploadCoverPhoto(userId: string): Promise<string[] 
   }
 }
 
-export async function takeAndUploadCoverPhoto(userId: string): Promise<string | undefined> {
+export async function takeAndUploadCoverPhoto(userId: string, opts?: UploadOpts): Promise<string | undefined> {
   if (!userId.trim()) {
     Alert.alert('Upload', 'You must be signed in to upload photos.');
     return undefined;
   }
   try {
-    return await pickAndUploadImageFromCamera(userId);
+    return await pickAndUploadImageFromCamera(userId, opts);
   } catch (e) {
     if (isCancelled(e)) return undefined;
     Alert.alert('Upload', e instanceof Error ? e.message : 'Upload failed');
@@ -416,11 +460,15 @@ export type CoverPhotoDraft =
   | { kind: 'remote'; url: string }
   | { kind: 'pending'; previewUri: string; pending: PendingAvatarFile };
 
-export async function uploadPendingAvatarFile(userId: string, pending: PendingAvatarFile): Promise<string> {
+export async function uploadPendingAvatarFile(
+  userId: string,
+  pending: PendingAvatarFile,
+  opts?: UploadOpts
+): Promise<string> {
   if (pending.kind === 'web') {
-    return uploadWebImageFile(userId, pending.file);
+    return uploadWebImageFile(userId, pending.file, opts);
   }
-  return uploadPickedImageAsset(userId, pending.asset);
+  return uploadPickedImageAsset(userId, pending.asset, opts);
 }
 
 export function revokeCoverPhotoDraftPreview(d: CoverPhotoDraft) {
@@ -430,13 +478,17 @@ export function revokeCoverPhotoDraftPreview(d: CoverPhotoDraft) {
 }
 
 /** Upload any pending drafts in order; revokes web object URLs after successful upload. */
-export async function uploadCoverPhotoDrafts(userId: string, drafts: CoverPhotoDraft[]): Promise<string[]> {
+export async function uploadCoverPhotoDrafts(
+  userId: string,
+  drafts: CoverPhotoDraft[],
+  opts?: UploadOpts
+): Promise<string[]> {
   const out: string[] = [];
   for (const d of drafts) {
     if (d.kind === 'remote') {
       out.push(d.url);
     } else {
-      const url = await uploadPendingAvatarFile(userId, d.pending);
+      const url = await uploadPendingAvatarFile(userId, d.pending, opts);
       if (d.pending.kind === 'web') {
         URL.revokeObjectURL(d.pending.objectUrl);
       }
@@ -488,24 +540,17 @@ export function coverPhotoDraftDisplayUri(d: CoverPhotoDraft): string {
   return d.kind === 'remote' ? d.url : d.previewUri;
 }
 
-export async function uploadWebImageFile(userId: string, file: File): Promise<string> {
+export async function uploadWebImageFile(userId: string, file: File, opts?: UploadOpts): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload photos.');
   const ready = await convertWebImageFile(file, 'original');
   const contentType = ready.type?.startsWith('image/') ? ready.type : 'image/jpeg';
-  const presign = await StorageService.presignUpload({
+  return presignAndPut({
     userId,
     contentType,
     filename: ready.name,
-  });
-  const put = await fetch(presign.uploadUrl, {
-    method: 'PUT',
     body: ready,
-    headers: { 'Content-Type': contentType },
+    groupId: opts?.groupId,
   });
-  if (!put.ok) {
-    throw new Error(`Upload failed (${put.status}). Check S3 CORS and credentials.`);
-  }
-  return presign.publicUrl;
 }
 
 export { isCancelled };

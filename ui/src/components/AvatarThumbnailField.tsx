@@ -28,6 +28,7 @@ type Props = {
   /** When true, file picks stay local until parent uploads on Save / Create. */
   deferFileUpload?: boolean;
   pendingAvatarFileRef?: MutableRefObject<PendingAvatarFile | null>;
+  groupId?: string;
 };
 
 function isHttpUrl(s: string): boolean {
@@ -40,6 +41,7 @@ export function AvatarThumbnailField({
   onThumbnailChange,
   deferFileUpload = false,
   pendingAvatarFileRef,
+  groupId,
 }: Props) {
   const [pickBusy, setPickBusy] = useState(false);
   const fileInputRef = useRef<{ click: () => void } | null>(null);
@@ -81,7 +83,7 @@ export function AvatarThumbnailField({
     }
     setPickBusy(true);
     try {
-      const url = await uploadWebImageFile(userId, file);
+      const url = await uploadWebImageFile(userId, file, { groupId });
       const prev = thumbnail?.trim();
       onThumbnailChange(url);
       if (prev && prev !== url && isHttpUrl(prev)) {
@@ -105,7 +107,7 @@ export function AvatarThumbnailField({
         onThumbnailChange(asset.uri);
         return;
       }
-      const url = await uploadPickedImageAsset(userId, asset);
+      const url = await uploadPickedImageAsset(userId, asset, { groupId });
       const prev = thumbnail?.trim();
       onThumbnailChange(url);
       if (prev && prev !== url && isHttpUrl(prev)) {

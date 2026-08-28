@@ -494,19 +494,23 @@ export function PostsListScreen() {
     if (!currentUserId || isUploadingAttachment) return;
     try {
       setIsUploadingAttachment(true);
-      const publicUrls = await pickAndUploadCoverPhoto(currentUserId);
+      const publicUrls = await pickAndUploadCoverPhoto(currentUserId, {
+        groupId: selectedGroupForPost || undefined,
+      });
       if (!publicUrls?.length) return;
       for (const publicUrl of publicUrls) addComposerPhoto(publicUrl, target);
     } finally {
       setIsUploadingAttachment(false);
     }
-  }, [addComposerPhoto, currentUserId, isUploadingAttachment]);
+  }, [addComposerPhoto, currentUserId, isUploadingAttachment, selectedGroupForPost]);
 
   const takePhotoAndAddComposerPhoto = useCallback(async (target: 'new' | 'edit' = 'new') => {
     if (!currentUserId || isUploadingAttachment) return;
     try {
       setIsUploadingAttachment(true);
-      const publicUrl = await takeAndUploadCoverPhoto(currentUserId);
+      const publicUrl = await takeAndUploadCoverPhoto(currentUserId, {
+        groupId: selectedGroupForPost || undefined,
+      });
       if (!publicUrl) return;
       addComposerPhoto(publicUrl, target);
     } catch (e) {
@@ -514,13 +518,15 @@ export function PostsListScreen() {
     } finally {
       setIsUploadingAttachment(false);
     }
-  }, [addComposerPhoto, currentUserId, isUploadingAttachment]);
+  }, [addComposerPhoto, currentUserId, isUploadingAttachment, selectedGroupForPost]);
 
   const attachFileToComposer = useCallback(async (target: 'new' | 'edit' = 'new') => {
     if (!currentUserId || isUploadingAttachment) return;
     try {
       setIsUploadingAttachment(true);
-      const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+      const uploaded = await pickAndUploadFileFromDevice(currentUserId, {
+        groupId: selectedGroupForPost || undefined,
+      });
       if (!uploaded?.publicUrl) return;
       const fileEntry = {
         name: uploaded.fileName || 'Attachment',
@@ -534,7 +540,7 @@ export function PostsListScreen() {
     } finally {
       setIsUploadingAttachment(false);
     }
-  }, [currentUserId, isUploadingAttachment]);
+  }, [currentUserId, isUploadingAttachment, selectedGroupForPost]);
 
   const canPost = (newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0) && selectedGroupForPost;
 
@@ -1520,7 +1526,9 @@ export function PostsListScreen() {
                           if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
                           try {
                             setUploadingCommentPhotoPostId(post.id);
-                            const urls = await pickAndUploadCoverPhoto(currentUserId);
+                            const urls = await pickAndUploadCoverPhoto(currentUserId, {
+                              groupId: post.groupId,
+                            });
                             if (urls?.length) {
                               setDraftCommentPhotoUrlsByPost((prev) => ({
                                 ...prev,
@@ -1535,7 +1543,9 @@ export function PostsListScreen() {
                           if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
                           try {
                             setUploadingCommentPhotoPostId(post.id);
-                            const url = await takeAndUploadCoverPhoto(currentUserId);
+                            const url = await takeAndUploadCoverPhoto(currentUserId, {
+                              groupId: post.groupId,
+                            });
                             if (url) {
                               setDraftCommentPhotoUrlsByPost((prev) => ({
                                 ...prev,
@@ -1561,7 +1571,9 @@ export function PostsListScreen() {
                           if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
                           try {
                             setUploadingCommentPhotoPostId(post.id);
-                            const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+                            const uploaded = await pickAndUploadFileFromDevice(currentUserId, {
+                              groupId: post.groupId,
+                            });
                             if (!uploaded?.publicUrl) return;
                             setDraftCommentFilesByPost((prev) => ({
                               ...prev,

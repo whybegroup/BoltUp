@@ -519,9 +519,11 @@ export default function CreateEventScreen() {
       let coverPhotos: string[] = [];
       if (form.coverPhotoDrafts.length > 0) {
         try {
-          coverPhotos = await uploadCoverPhotoDrafts(currentUserId, form.coverPhotoDrafts);
-        } catch {
-          Alert.alert('Error', 'Failed to upload photos. Try again.');
+          coverPhotos = await uploadCoverPhotoDrafts(currentUserId, form.coverPhotoDrafts, {
+            groupId: form.groupId,
+          });
+        } catch (e) {
+          Alert.alert('Error', e instanceof Error ? e.message : 'Failed to upload photos. Try again.');
           return;
         }
       }

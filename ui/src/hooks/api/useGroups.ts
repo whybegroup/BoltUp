@@ -163,6 +163,27 @@ export function useUpdateGroup(id: string, userId: string) {
   });
 }
 
+export function useGroupStorageRequests(groupId: string, userId: string) {
+  return useQuery({
+    queryKey: queryKeys.groups.storageRequests(groupId),
+    queryFn: () => GroupsService.getStorageRequests(groupId, userId),
+    enabled: !!groupId && !!userId,
+    retry: retryUnlessNotFound,
+  });
+}
+
+export function useCreateGroupStorageRequest(groupId: string, userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { requestedBytes: number; note?: string }) =>
+      GroupsService.createStorageRequest(groupId, userId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.storageRequests(groupId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, userId) });
+    },
+  });
+}
+
 export function useDeleteGroup(userId: string) {
   const queryClient = useQueryClient();
 

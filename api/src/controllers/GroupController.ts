@@ -28,6 +28,8 @@ import {
   GroupPostReactionInput,
   NotifPrefs,
   NotifPrefsPartial,
+  GroupStorageRequest,
+  GroupStorageRequestInput,
 } from '../models';
 import { GroupService } from '../services/GroupService';
 import { httpError } from '../utils/httpError';
@@ -244,6 +246,40 @@ export class GroupController extends Controller {
       }
       throw e;
     }
+  }
+
+  /**
+   * List storage increase requests for a group. Requires an active member.
+   */
+  @Get('{id}/storage-requests')
+  public async getStorageRequests(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<GroupStorageRequest[]> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.listStorageRequests(id, userId);
+  }
+
+  /**
+   * Request a higher S3 storage cap for this group. Requires an active member.
+   * A developer grants the increase from the server (`npm run storage:grant`).
+   */
+  @Post('{id}/storage-requests')
+  @SuccessResponse('201', 'Created')
+  public async createStorageRequest(
+    @Path() id: string,
+    @Query() userId: string,
+    @Body() body: GroupStorageRequestInput
+  ): Promise<GroupStorageRequest> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    this.setStatus(201);
+    return this.groupService.createStorageRequest(id, userId, body);
   }
 
   /**

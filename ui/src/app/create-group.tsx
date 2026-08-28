@@ -157,7 +157,7 @@ export default function CreateGroupScreen() {
     if (!user?.uid || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const urls = await pickAndUploadCoverPhoto(user.uid);
+      const urls = await pickAndUploadCoverPhoto(user.uid, { groupId });
       if (urls?.length) setDraftCoverPhotos((prev) => [...prev, ...urls]);
     } finally {
       setCoverPhotoBusy(false);
@@ -168,7 +168,7 @@ export default function CreateGroupScreen() {
     if (!user?.uid || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const url = await takeAndUploadCoverPhoto(user.uid);
+      const url = await takeAndUploadCoverPhoto(user.uid, { groupId });
       if (url) setDraftCoverPhotos((prev) => [...prev, url]);
     } finally {
       setCoverPhotoBusy(false);
@@ -223,7 +223,7 @@ export default function CreateGroupScreen() {
       let thumbnail = draftThumbnail;
       if (pendingAvatarFileRef.current) {
         const p = pendingAvatarFileRef.current;
-        thumbnail = await uploadPendingAvatarFile(user.uid, p);
+        thumbnail = await uploadPendingAvatarFile(user.uid, p, { groupId });
         if (p.kind === 'web') URL.revokeObjectURL(p.objectUrl);
         pendingAvatarFileRef.current = null;
         setDraftThumbnail(thumbnail);
@@ -493,6 +493,7 @@ export default function CreateGroupScreen() {
         userId={user?.uid ?? ''}
         deferFileUpload
         pendingAvatarFileRef={pendingAvatarFileRef}
+        groupId={groupId}
         onSave={async () => {
           // Changes already applied to draft state via onSeedChange/onThumbnailChange
         }}

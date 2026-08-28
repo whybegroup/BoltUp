@@ -646,7 +646,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       if (!currentUserId || isUploadingAttachment) return;
       try {
         setIsUploadingAttachment(true);
-        const publicUrls = await pickAndUploadCoverPhoto(currentUserId);
+        const publicUrls = await pickAndUploadCoverPhoto(currentUserId, { groupId });
         if (!publicUrls?.length) return;
         for (const publicUrl of publicUrls) addComposerPhotoFor(channel, publicUrl);
       } finally {
@@ -661,7 +661,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       if (!currentUserId || isUploadingAttachment) return;
       try {
         setIsUploadingAttachment(true);
-        const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+        const uploaded = await pickAndUploadFileFromDevice(currentUserId, { groupId });
         if (!uploaded?.publicUrl) return;
         const fileEntry: ForumPostFileAttachment = {
           name: uploaded.fileName || 'Attachment',
@@ -689,7 +689,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       if (!currentUserId || isUploadingAttachment) return;
       try {
         setIsUploadingAttachment(true);
-        const publicUrl = await takeAndUploadCoverPhoto(currentUserId);
+        const publicUrl = await takeAndUploadCoverPhoto(currentUserId, { groupId });
         if (!publicUrl) return;
         addComposerPhotoFor(channel, publicUrl);
       } catch (e) {
@@ -1299,10 +1299,10 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       if (!hasContent) return;
       try {
         setUploadingCommentPhotoPostId(postId);
-        const photoUrls = await uploadCoverPhotoDrafts(currentUserId, photoDrafts);
+        const photoUrls = await uploadCoverPhotoDrafts(currentUserId, photoDrafts, { groupId });
         let merged = mergeCommentBodyForApi(raw, photoUrls);
         for (const f of pendingFiles) {
-          const publicUrl = await uploadPickedFileAsset(currentUserId, f.asset);
+          const publicUrl = await uploadPickedFileAsset(currentUserId, f.asset, { groupId });
           merged = appendMarkdownLink(merged, f.name, uploadUrlToDownloadUrl(publicUrl));
         }
         const body = merged.trim();
