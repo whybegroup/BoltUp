@@ -1,5 +1,5 @@
 import { Linking, Platform, Share } from 'react-native';
-import { File, Paths } from 'expo-file-system';
+import { File as ExpoFile, Paths } from 'expo-file-system';
 import { ensureCachedImageFileUri, peekCachedImageFileUri } from './imageDiskCache';
 import { isDirectRenderableImageUrl, resolveImageViewUrls } from './resolveImageViewUrls';
 
@@ -67,6 +67,77 @@ async function downloadOnWeb(uri: string): Promise<void> {
   }
 }
 
+async function shareOnWeb(uri: string): Promise<void> {
+  const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+  const name = fileNameFromUrl(uri);
+  if (nav && typeof nav.share === 'function') {
+    try {
+      const res = await fetch(uri);
+      if (res.ok) {
+        const blob = await res.blob();
+        const WebFile = (globalThis as unknown as { File?: typeof globalThis.File }).File;
+        if (WebFile) {
+          const file = new WebFile([blob], name, { type: blob.type || 'image/jpeg' });
+          const payload = { files: [file], title: 'Photo' };
+          if (typeof nav.canShare !== 'function' || nav.canShare(payload)) {
+            await nav.share(payload);
+            return;
+          }
+        }
+      }
+      await nav.share({ title: 'Photo', url: uri });
+      return;
+    } catch (e: unknown) {
+      if (e && typeof e === 'object' && 'name' in e && (e as { name?: string }).name === 'AbortError') {
+        return;
+      }
+    }
+  }
+  await Share.share({ message: uri, url: uri, title: 'Photo' });
+}
+
+/**
+ * Present the OS share sheet for an image (file on native, Web Share API on web).
+ */
+export async function shareImage(
+  storedUrl: string,
+  urlMap?: Map<string, string> | Record<string, string>
+): Promise<void> {
+  const uri = await resolveDownloadUri(storedUrl, urlMap);
+  if (!uri) throw new Error('No image to share');
+
+  if (Platform.OS === 'web') {
+    await shareOnWeb(uri);
+    return;
+  }
+
+  let localUri = uri;
+  if (!/^file:\/\//i.test(uri)) {
+    const name = fileNameFromUrl(uri);
+    const destination = new ExpoFile(Paths.cache, name);
+    const file = await ExpoFile.downloadFileAsync(uri, destination, { idempotent: true });
+    localUri = file.uri;
+  }
+
+  try {
+    if (Platform.OS === 'ios') {
+      await Share.share({ url: localUri });
+    } else {
+      await Share.share({
+        message: localUri,
+        title: 'Share photo',
+        url: localUri,
+      });
+    }
+  } catch (e: unknown) {
+    if (e && typeof e === 'object' && 'message' in e) {
+      const msg = String((e as { message?: string }).message ?? '');
+      if (/cancel|dismiss/i.test(msg)) return;
+    }
+    throw e instanceof Error ? e : new Error('Could not share image');
+  }
+}
+
 /**
  * Download (web) or save/share (native).
  * Uses React Native `Share` so no ExpoSharing native module is required.
@@ -86,8 +157,8 @@ export async function downloadOrShareImage(
   let localUri = uri;
   if (!/^file:\/\//i.test(uri)) {
     const name = fileNameFromUrl(uri);
-    const destination = new File(Paths.cache, name);
-    const file = await File.downloadFileAsync(uri, destination, { idempotent: true });
+    const destination = new ExpoFile(Paths.cache, name);
+    const file = await ExpoFile.downloadFileAsync(uri, destination, { idempotent: true });
     localUri = file.uri;
   }
 

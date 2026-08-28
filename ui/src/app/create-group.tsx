@@ -157,8 +157,8 @@ export default function CreateGroupScreen() {
     if (!user?.uid || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const url = await pickAndUploadCoverPhoto(user.uid);
-      if (url) setDraftCoverPhotos((prev) => [...prev, url]);
+      const urls = await pickAndUploadCoverPhoto(user.uid);
+      if (urls?.length) setDraftCoverPhotos((prev) => [...prev, ...urls]);
     } finally {
       setCoverPhotoBusy(false);
     }

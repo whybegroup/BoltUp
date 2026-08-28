@@ -41,11 +41,13 @@ import { ResolvableImage } from '../components/ResolvableImage';
 import { AddImageButton } from '../components/AddImageButton';
 import {
   pickDeferredCoverPhotoNative,
-  pickImageFromCamera,
+  pickDeferredCoverPhotoFromCamera,
   createWebDeferredCoverPhoto,
+  prepareWebImageFiles,
   uploadCoverPhotoDrafts,
   revokeCoverPhotoDraftPreview,
   coverPhotoDraftDisplayUri,
+  isCancelled,
   type CoverPhotoDraft,
 } from '../services/pickAndUploadImage';
 import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
@@ -327,6 +329,29 @@ export default function CreatePollScreen() {
     setCoverPhotoBusy(true);
     try {
       const picked = await pickDeferredCoverPhotoNative();
+      if (picked?.length) {
+        setForm((p) => ({
+          ...p,
+          coverPhotoDrafts: [
+            ...p.coverPhotoDrafts,
+            ...picked.map((item) => ({
+              kind: 'pending' as const,
+              previewUri: item.previewUri,
+              pending: item.pending,
+            })),
+          ],
+        }));
+      }
+    } finally {
+      setCoverPhotoBusy(false);
+    }
+  };
+
+  const addCoverPhotoFromCamera = async () => {
+    if (!currentUserId || coverPhotoBusy || Platform.OS === 'web') return;
+    setCoverPhotoBusy(true);
+    try {
+      const picked = await pickDeferredCoverPhotoFromCamera();
       if (picked) {
         setForm((p) => ({
           ...p,
@@ -341,44 +366,33 @@ export default function CreatePollScreen() {
     }
   };
 
-  const addCoverPhotoFromCamera = async () => {
-    if (!currentUserId || coverPhotoBusy || Platform.OS === 'web') return;
-    setCoverPhotoBusy(true);
-    try {
-      const asset = await pickImageFromCamera();
-      setForm((p) => ({
-        ...p,
-        coverPhotoDrafts: [
-          ...p.coverPhotoDrafts,
-          { kind: 'pending', previewUri: asset.uri, pending: { kind: 'native', asset } },
-        ],
-      }));
-    } catch {
-      // Camera picker handles permission/cancel messaging upstream.
-    } finally {
-      setCoverPhotoBusy(false);
-    }
-  };
-
   const addCoverPhotoFromLink = async (url: string) => {
     const clean = url.trim();
     if (!clean) return;
     setForm((p) => ({ ...p, coverPhotoDrafts: [...p.coverPhotoDrafts, { kind: 'remote', url: clean }] }));
   };
 
-  const onCoverPhotoWebFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const onCoverPhotoWebFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = '';
-    if (!file || !currentUserId) return;
-    if (!file.type.startsWith('image/')) {
-      Alert.alert('Upload', 'Please choose an image file.');
-      return;
+    if (!files.length || !currentUserId) return;
+    try {
+      const prepared = await prepareWebImageFiles(files);
+      setForm((p) => ({
+        ...p,
+        coverPhotoDrafts: [
+          ...p.coverPhotoDrafts,
+          ...prepared.map((file) => {
+            const { previewUri, pending } = createWebDeferredCoverPhoto(file);
+            return { kind: 'pending' as const, previewUri, pending };
+          }),
+        ],
+      }));
+    } catch (err) {
+      if (!isCancelled(err)) {
+        Alert.alert('Upload', err instanceof Error ? err.message : 'Could not add photos');
+      }
     }
-    const { previewUri, pending } = createWebDeferredCoverPhoto(file);
-    setForm((p) => ({
-      ...p,
-      coverPhotoDrafts: [...p.coverPhotoDrafts, { kind: 'pending', previewUri, pending }],
-    }));
   };
 
   const removeCoverPhotoAt = (index: number) => {
@@ -907,8 +921,9 @@ export default function CreatePollScreen() {
                 }}
                 type="file"
                 accept="image/*"
+                multiple
                 style={{ display: 'none' }}
-                onChange={onCoverPhotoWebFileChange}
+                onChange={(e) => void onCoverPhotoWebFileChange(e)}
               />
             )}
             <Text style={formSectionTitleStyle}>

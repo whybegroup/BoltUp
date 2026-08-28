@@ -628,10 +628,12 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     }
   };
 
-  const addCoverPhoto = async (url: string) => {
+  const addCoverPhoto = async (url: string | string[]) => {
     if (!currentUserId || !canEditPhotos) return;
+    const urls = Array.isArray(url) ? url : [url];
+    if (!urls.length) return;
     const prev = localCoverPhotos;
-    const next = [...prev, url];
+    const next = [...prev, ...urls];
     setLocalCoverPhotos(next);
     try {
       await updateGroup.mutateAsync({
@@ -649,8 +651,8 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const url = await pickAndUploadCoverPhoto(currentUserId);
-      if (url) await addCoverPhoto(url);
+      const urls = await pickAndUploadCoverPhoto(currentUserId);
+      if (urls?.length) await addCoverPhoto(urls);
     } finally {
       setCoverPhotoBusy(false);
     }

@@ -15,15 +15,19 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { usePathname, type Href } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { GroupsService, type GroupPost } from '@moijia/client';
-import { useAppRouter as useRouter } from '../hooks/useAppRouter';
+import { GroupsService, type GroupPost, type GroupPostComment } from '@moijia/client';
 import { shareFromModal, sharePost } from '../utils/shareContent';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { queryKeys } from '../config/queryClient';
-import { COMMENT_THREAD_OPTIONS_MENU_WIDTH } from './ThreadedCommentsSection';
+import { COMMENT_THREAD_OPTIONS_MENU_WIDTH, ThreadedCommentsSection, type ThreadComment } from './ThreadedCommentsSection';
+import { COMMENT_REACTION_EMOJIS } from '../constants/commentReactionEmojis';
+import { DEFAULT_COMMENT_QUICK_REACTIONS_LIST } from '../utils/commentQuickReactionsPrefs';
+import { useCommentQuickReactions } from '../hooks/useCommentQuickReactions';
+import { computeMentionUserIdsForPost, type MentionMemberRow } from '../utils/mentionUtils';
+import { EmojiBar } from './EmojiBar';
+import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import {
   getGroupColor,
   getDefaultGroupThemeFromName,
@@ -152,11 +156,47 @@ function mergeComposerBodyForApi(
   return `${t}\n\n${marker}\n${attachmentLines.join('\n')}`;
 }
 
+function forumId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function mapGroupCommentsToThread(comments: GroupPostComment[]): ThreadComment[] {
+  return comments.map((c) => ({
+    id: c.id,
+    userId: c.userId,
+    body: c.body,
+    parentCommentId: c.parentCommentId ?? null,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    reactions: c.reactions,
+  }));
+}
+
+function mergeCommentBodyForApi(text: string, photoUrls: string[]): string {
+  const t = text.trim();
+  const photoLines = photoUrls.map((u) => `![](${u})`);
+  if (!t && photoLines.length === 0) return '';
+  if (!t) return photoLines.join('\n');
+  if (photoLines.length === 0) return t;
+  return `${t}\n\n${photoLines.join('\n')}`;
+}
+
+function appendMarkdownLink(text: string, fileName: string, url: string): string {
+  const safeName = (fileName || 'Attachment').replace(/\]/g, '');
+  const suffix = `[${safeName}](${url})`;
+  const base = text.trimEnd();
+  return base ? `${base}\n\n${suffix}` : suffix;
+}
+
 export function PostsListScreen() {
-  const router = useRouter();
-  const pathname = usePathname();
   const { userId: currentUserId } = useCurrentUserContext();
   const scrollRef = useRef<ScrollView | null>(null);
+  const scrollViewportYRef = useRef(0);
+  const scrollOffsetYRef = useRef(0);
+  const postTopByIdRef = useRef<Record<string, number>>({});
+  const pendingScrollToCommentsPostIdRef = useRef<string | null>(null);
+  const commentsBlockRefs = useRef<Record<string, View | null>>({});
+  const reactionButtonRefs = useRef<Record<string, View | null>>({});
 
   const { data: allGroups = [], refetch: refetchGroups } = useGroups(currentUserId ?? '');
   const { refetch: refetchNotifications } = useNotifications(currentUserId || '');
@@ -205,6 +245,41 @@ export function PostsListScreen() {
   } | null>(null);
   const postMenuButtonRefs = useRef<Record<string, View | null>>({});
   const queryClient = useQueryClient();
+  const [expandedCommentsByPost, setExpandedCommentsByPost] = useState<Record<string, boolean>>({});
+  const [draftComments, setDraftComments] = useState<Record<string, string>>({});
+  const [draftCommentPhotoUrlsByPost, setDraftCommentPhotoUrlsByPost] = useState<Record<string, string[]>>({});
+  const [draftCommentFilesByPost, setDraftCommentFilesByPost] = useState<
+    Record<string, Array<{ id: string; name: string; url: string }>>
+  >({});
+  const [uploadingCommentPhotoPostId, setUploadingCommentPhotoPostId] = useState<string | null>(null);
+  const [replyTargetByPost, setReplyTargetByPost] = useState<Record<string, string | null>>({});
+  const [commentEdit, setCommentEdit] = useState<{ postId: string; commentId: string } | null>(null);
+  const [commentEditText, setCommentEditText] = useState('');
+  const [commentEditParentId, setCommentEditParentId] = useState<string | null>(null);
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [reactionBusy, setReactionBusy] = useState(false);
+  const [reactionQuickPickerTarget, setReactionQuickPickerTarget] = useState<{
+    kind: 'post' | 'comment';
+    id: string;
+    groupId: string;
+  } | null>(null);
+  const [reactionQuickPickerAnchor, setReactionQuickPickerAnchor] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [reactionPickerTarget, setReactionPickerTarget] = useState<{
+    kind: 'post' | 'comment';
+    id: string;
+    groupId: string;
+  } | null>(null);
+  const [reactionDetailModal, setReactionDetailModal] = useState<{
+    emoji: string;
+    userIds: string[];
+  } | null>(null);
+  const { data: commentQuickReactions = [...DEFAULT_COMMENT_QUICK_REACTIONS_LIST] } =
+    useCommentQuickReactions(currentUserId);
 
   const groupIds = useMemo(() => groups.map((g) => g.id), [groups]);
   const groupPostsQueries = useGroupPostsForGroups(groupIds, currentUserId ?? '');
@@ -400,10 +475,6 @@ export function PostsListScreen() {
     []
   );
 
-  const openGroupPost = useCallback((groupId: string, postId: string) => {
-    router.push(`/(tabs)/groups/${groupId}/forum?postId=${encodeURIComponent(postId)}` as Href);
-  }, [router]);
-
   const hasFilters = !!(selectedGroupIds.length);
   const postsLoading = groupPostsQueries.some(q => q.isLoading);
   
@@ -423,9 +494,9 @@ export function PostsListScreen() {
     if (!currentUserId || isUploadingAttachment) return;
     try {
       setIsUploadingAttachment(true);
-      const publicUrl = await pickAndUploadCoverPhoto(currentUserId);
-      if (!publicUrl) return;
-      addComposerPhoto(publicUrl, target);
+      const publicUrls = await pickAndUploadCoverPhoto(currentUserId);
+      if (!publicUrls?.length) return;
+      for (const publicUrl of publicUrls) addComposerPhoto(publicUrl, target);
     } finally {
       setIsUploadingAttachment(false);
     }
@@ -519,6 +590,211 @@ export function PostsListScreen() {
     if (!currentUserId) return;
     queryClient.invalidateQueries({ queryKey: queryKeys.groups.posts(groupId, currentUserId) });
   }, [currentUserId, queryClient]);
+
+  const mentionMembersForGroup = useCallback(
+    (groupId: string) => {
+      const group = groups.find((g) => g.id === groupId);
+      const ids = group?.memberIds ?? [];
+      return ids.map((uid) => {
+        const u = usersById.get(uid);
+        return {
+          id: uid,
+          displayName: u?.displayName || u?.name || 'Member',
+          name: u?.name || '',
+        };
+      });
+    },
+    [groups, usersById],
+  );
+
+  const mentionRowsForGroup = useCallback(
+    (groupId: string): MentionMemberRow[] =>
+      mentionMembersForGroup(groupId).map((m) => ({
+        userId: m.id,
+        displayName: m.displayName,
+        name: m.name,
+      })),
+    [mentionMembersForGroup],
+  );
+
+  const applyReaction = useCallback(
+    async (target: { kind: 'post' | 'comment'; id: string; groupId: string }, emoji: string) => {
+      if (!currentUserId || reactionBusy) return;
+      try {
+        setReactionBusy(true);
+        if (target.kind === 'post') {
+          await GroupsService.toggleGroupPostReaction(target.id, { userId: currentUserId, emoji });
+        } else {
+          await GroupsService.toggleGroupPostCommentReaction(target.id, { userId: currentUserId, emoji });
+        }
+        invalidatePostsForGroup(target.groupId);
+      } catch (e) {
+        Alert.alert('Reaction', e instanceof Error ? e.message : 'Could not update reaction');
+      } finally {
+        setReactionBusy(false);
+      }
+    },
+    [currentUserId, invalidatePostsForGroup, reactionBusy],
+  );
+
+  const applyReactionAndDismiss = useCallback(
+    (emoji: string) => {
+      const target = reactionQuickPickerTarget ?? reactionPickerTarget;
+      if (!target) return;
+      void applyReaction(target, emoji);
+      setReactionQuickPickerTarget(null);
+      setReactionQuickPickerAnchor(null);
+      setReactionPickerTarget(null);
+    },
+    [applyReaction, reactionPickerTarget, reactionQuickPickerTarget],
+  );
+
+  const openReactionQuickPicker = useCallback(
+    (target: { kind: 'post' | 'comment'; id: string; groupId: string }) => {
+      const key = `${target.kind}:${target.id}`;
+      const node = reactionButtonRefs.current[key] as
+        | (View & { measureInWindow: (cb: (x: number, y: number, w: number, h: number) => void) => void })
+        | null;
+      if (!node?.measureInWindow) {
+        setReactionQuickPickerAnchor(null);
+        setReactionQuickPickerTarget(target);
+        return;
+      }
+      node.measureInWindow((x, y, width, height) => {
+        setReactionQuickPickerAnchor({ x, y, width, height });
+        setReactionQuickPickerTarget(target);
+      });
+    },
+    [],
+  );
+
+  const quickPickerStyle = useMemo(() => {
+    const screenWidth = Dimensions.get('window').width;
+    const cardWidth = 316;
+    const cardHeight = 62;
+    const margin = 10;
+    if (!reactionQuickPickerAnchor) return { top: 120, left: (screenWidth - cardWidth) / 2 };
+    const centeredLeft = reactionQuickPickerAnchor.x + reactionQuickPickerAnchor.width / 2 - cardWidth / 2;
+    const left = Math.max(margin, Math.min(screenWidth - cardWidth - margin, centeredLeft));
+    const top = Math.max(12, reactionQuickPickerAnchor.y - cardHeight - 8);
+    return { top, left };
+  }, [reactionQuickPickerAnchor]);
+
+  const addComment = useCallback(
+    async (postId: string, groupId: string) => {
+      if (!currentUserId || uploadingCommentPhotoPostId === postId) return;
+      const raw = draftComments[postId] ?? '';
+      const photoUrls = draftCommentPhotoUrlsByPost[postId] ?? [];
+      const pendingFiles = draftCommentFilesByPost[postId] ?? [];
+      const hasContent = raw.trim().length > 0 || photoUrls.length > 0 || pendingFiles.length > 0;
+      if (!hasContent) return;
+      try {
+        setUploadingCommentPhotoPostId(postId);
+        let merged = mergeCommentBodyForApi(raw, photoUrls);
+        for (const f of pendingFiles) {
+          merged = appendMarkdownLink(merged, f.name, f.url);
+        }
+        const body = merged.trim();
+        if (!body) return;
+        const mids = computeMentionUserIdsForPost(raw, mentionRowsForGroup(groupId), currentUserId);
+        await GroupsService.createGroupPostComment(postId, {
+          id: forumId('comment'),
+          userId: currentUserId,
+          body,
+          parentCommentId: replyTargetByPost[postId] ?? undefined,
+          ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
+        });
+        setDraftComments((prev) => ({ ...prev, [postId]: '' }));
+        setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [postId]: [] }));
+        setDraftCommentFilesByPost((prev) => ({ ...prev, [postId]: [] }));
+        setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+        invalidatePostsForGroup(groupId);
+      } catch (e) {
+        Alert.alert('Comment', e instanceof Error ? e.message : 'Failed to post comment');
+      } finally {
+        setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
+      }
+    },
+    [
+      currentUserId,
+      draftCommentFilesByPost,
+      draftCommentPhotoUrlsByPost,
+      draftComments,
+      invalidatePostsForGroup,
+      mentionRowsForGroup,
+      replyTargetByPost,
+      uploadingCommentPhotoPostId,
+    ],
+  );
+
+  const beginEditComment = useCallback((postId: string, c: GroupPostComment) => {
+    setCommentEdit({ postId, commentId: c.id });
+    setCommentEditText(c.body);
+    setCommentEditParentId(c.parentCommentId ?? null);
+    setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+  }, []);
+
+  const cancelEditComment = useCallback(() => {
+    setCommentEdit(null);
+    setCommentEditText('');
+    setCommentEditParentId(null);
+  }, []);
+
+  const saveEditedComment = useCallback(
+    async (groupId: string) => {
+      if (!currentUserId || !commentEdit) return;
+      const body = commentEditText.trim();
+      if (!body) {
+        Alert.alert('Error', 'Comment cannot be empty');
+        return;
+      }
+      try {
+        setCommentSaving(true);
+        const mids = computeMentionUserIdsForPost(commentEditText, mentionRowsForGroup(groupId), currentUserId);
+        await GroupsService.updateGroupPostComment(commentEdit.commentId, {
+          userId: currentUserId,
+          body,
+          parentCommentId: commentEditParentId,
+          ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
+        });
+        cancelEditComment();
+        invalidatePostsForGroup(groupId);
+      } catch {
+        Alert.alert('Error', 'Failed to update comment');
+      } finally {
+        setCommentSaving(false);
+      }
+    },
+    [
+      cancelEditComment,
+      commentEdit,
+      commentEditParentId,
+      commentEditText,
+      currentUserId,
+      invalidatePostsForGroup,
+      mentionRowsForGroup,
+    ],
+  );
+
+  const confirmDeleteComment = useCallback(
+    (postId: string, commentId: string, groupId: string) => {
+      const run = () => {
+        if (!currentUserId) return;
+        if (replyTargetByPost[postId] === commentId) {
+          setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+        }
+        if (commentEdit?.commentId === commentId) cancelEditComment();
+        void GroupsService.deleteGroupPostComment(commentId, currentUserId)
+          .then(() => invalidatePostsForGroup(groupId))
+          .catch(() => Alert.alert('Error', 'Failed to delete comment'));
+      };
+      Alert.alert('Delete comment?', 'Delete this comment?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: run },
+      ]);
+    },
+    [cancelEditComment, commentEdit, currentUserId, invalidatePostsForGroup, replyTargetByPost],
+  );
 
   const canManagePost = useCallback((post: { userId: string }) => {
     return !!currentUserId && post.userId === currentUserId;
@@ -688,10 +964,21 @@ export function PostsListScreen() {
         <KeyboardSafeScrollView
           ref={(node) => {
             scrollRef.current = node;
+            if (!node) return;
+            const measurable = node as ScrollView & {
+              measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void;
+            };
+            measurable.measureInWindow?.((_x, y) => {
+              scrollViewportYRef.current = y;
+            });
           }}
           contentContainerStyle={styles.scrollContent}
           refreshControl={refreshControl}
           showsVerticalScrollIndicator={false}
+          onScroll={(e) => {
+            scrollOffsetYRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
         >
           {/* New post composer */}
           <View style={styles.card}>
@@ -892,7 +1179,13 @@ export function PostsListScreen() {
               const isEditing = editingPostId === post.id;
               
               return (
-                <View key={post.id} style={[styles.card, { marginBottom: 14 }]}>
+                <View
+                  key={post.id}
+                  style={[styles.card, { marginBottom: 14 }]}
+                  onLayout={(e) => {
+                    postTopByIdRef.current[post.id] = e.nativeEvent.layout.y;
+                  }}
+                >
                   <View style={styles.cardPad}>
                     <View style={styles.postMetaHeaderRow}>
                       <View style={styles.postMetaTitleColumn}>
@@ -1135,18 +1428,37 @@ export function PostsListScreen() {
                     {post.reactions?.length > 0 ? (
                       <View style={styles.reactionRow}>
                         {post.reactions.map((entry) => (
-                          <View key={`${post.id}-existing-${entry.emoji}`} style={styles.reactionBtn}>
+                          <TouchableOpacity
+                            key={`${post.id}-existing-${entry.emoji}`}
+                            style={styles.reactionBtn}
+                            onPress={() => void applyReaction({ kind: 'post', id: post.id, groupId: post.groupId }, entry.emoji)}
+                            onLongPress={() => setReactionDetailModal({ emoji: entry.emoji, userIds: entry.userIds })}
+                          >
                             <Text style={styles.reactionLabel}>
                               {entry.emoji} {entry.count}
                             </Text>
-                          </View>
+                          </TouchableOpacity>
                         ))}
                       </View>
                     ) : null}
+                    <View
+                      collapsable={false}
+                      ref={(node) => {
+                        commentsBlockRefs.current[post.id] = node;
+                      }}
+                      onLayout={() => {
+                        if (pendingScrollToCommentsPostIdRef.current !== post.id) return;
+                        pendingScrollToCommentsPostIdRef.current = null;
+                      }}
+                    >
                     <View style={styles.reactionRow}>
                       <TouchableOpacity
+                        ref={(node) => {
+                          reactionButtonRefs.current[`post:${post.id}`] = node;
+                        }}
                         style={styles.iconActionBtn}
-                        onPress={() => openGroupPost(post.groupId, post.id)}
+                        onPress={() => openReactionQuickPicker({ kind: 'post', id: post.id, groupId: post.groupId })}
+                        onLongPress={() => openReactionQuickPicker({ kind: 'post', id: post.id, groupId: post.groupId })}
                         accessibilityLabel="Add reaction"
                         activeOpacity={0.75}
                       >
@@ -1154,7 +1466,13 @@ export function PostsListScreen() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={styles.iconActionBtn}
-                        onPress={() => openGroupPost(post.groupId, post.id)}
+                        onPress={() => {
+                          setExpandedCommentsByPost((prev) => {
+                            const opening = !prev[post.id];
+                            if (opening) pendingScrollToCommentsPostIdRef.current = post.id;
+                            return { ...prev, [post.id]: opening };
+                          });
+                        }}
                         activeOpacity={0.75}
                       >
                         <Ionicons name="chatbubble-outline" size={15} color={Colors.textSub} />
@@ -1162,6 +1480,172 @@ export function PostsListScreen() {
                           Comments ({post.comments?.length || 0})
                         </Text>
                       </TouchableOpacity>
+                    </View>
+                    {expandedCommentsByPost[post.id] ? (
+                      <ThreadedCommentsSection
+                        comments={mapGroupCommentsToThread(post.comments ?? [])}
+                        mentionMembers={mentionMembersForGroup(post.groupId)}
+                        ancestorTopPx={postTopByIdRef.current[post.id] ?? 0}
+                        scrollRef={scrollRef}
+                        scrollViewportYRef={scrollViewportYRef}
+                        scrollOffsetYRef={scrollOffsetYRef}
+                        currentUserId={currentUserId}
+                        getUserDisplayName={getUserDisplayName}
+                        formatCommentTime={formatCreatedAtLabel}
+                        draftText={draftComments[post.id] ?? ''}
+                        onDraftTextChange={(v) =>
+                          setDraftComments((prev) => ({ ...prev, [post.id]: v }))
+                        }
+                        draftPhotoUrls={draftCommentPhotoUrlsByPost[post.id] ?? []}
+                        onDraftPhotoUrlsChange={(urls) =>
+                          setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [post.id]: urls }))
+                        }
+                        onRemoveDraftPhotoAtIndex={(index) =>
+                          setDraftCommentPhotoUrlsByPost((prev) => ({
+                            ...prev,
+                            [post.id]: (prev[post.id] ?? []).filter((_, i) => i !== index),
+                          }))
+                        }
+                        draftPendingFiles={(draftCommentFilesByPost[post.id] ?? []).map((f) => ({
+                          id: f.id,
+                          name: f.name,
+                        }))}
+                        onRemoveDraftPendingFile={(fileId) =>
+                          setDraftCommentFilesByPost((prev) => ({
+                            ...prev,
+                            [post.id]: (prev[post.id] ?? []).filter((f) => f.id !== fileId),
+                          }))
+                        }
+                        onUploadDraftPhoto={async () => {
+                          if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
+                          try {
+                            setUploadingCommentPhotoPostId(post.id);
+                            const urls = await pickAndUploadCoverPhoto(currentUserId);
+                            if (urls?.length) {
+                              setDraftCommentPhotoUrlsByPost((prev) => ({
+                                ...prev,
+                                [post.id]: [...(prev[post.id] ?? []), ...urls],
+                              }));
+                            }
+                          } finally {
+                            setUploadingCommentPhotoPostId((cur) => (cur === post.id ? null : cur));
+                          }
+                        }}
+                        onTakeDraftPhoto={async () => {
+                          if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
+                          try {
+                            setUploadingCommentPhotoPostId(post.id);
+                            const url = await takeAndUploadCoverPhoto(currentUserId);
+                            if (url) {
+                              setDraftCommentPhotoUrlsByPost((prev) => ({
+                                ...prev,
+                                [post.id]: [...(prev[post.id] ?? []), url],
+                              }));
+                            }
+                          } catch (e) {
+                            Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
+                          } finally {
+                            setUploadingCommentPhotoPostId((cur) => (cur === post.id ? null : cur));
+                          }
+                        }}
+                        onAddDraftPhotoByUrl={(url) => {
+                          const clean = url.trim();
+                          if (!clean) return;
+                          setDraftCommentPhotoUrlsByPost((prev) => ({
+                            ...prev,
+                            [post.id]: [...(prev[post.id] ?? []), clean],
+                          }));
+                        }}
+                        draftPhotoBusy={uploadingCommentPhotoPostId === post.id}
+                        onAttachDraftFile={async () => {
+                          if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
+                          try {
+                            setUploadingCommentPhotoPostId(post.id);
+                            const uploaded = await pickAndUploadFileFromDevice(currentUserId);
+                            if (!uploaded?.publicUrl) return;
+                            setDraftCommentFilesByPost((prev) => ({
+                              ...prev,
+                              [post.id]: [
+                                ...(prev[post.id] ?? []),
+                                {
+                                  id: forumId('comment-file'),
+                                  name: uploaded.fileName || 'Attachment',
+                                  url: uploadUrlToDownloadUrl(uploaded.publicUrl),
+                                },
+                              ],
+                            }));
+                          } catch (e) {
+                            if (e instanceof Error && e.message === 'cancelled') return;
+                            Alert.alert('Upload', e instanceof Error ? e.message : 'Could not attach file');
+                          } finally {
+                            setUploadingCommentPhotoPostId((cur) => (cur === post.id ? null : cur));
+                          }
+                        }}
+                        onOpenDraftPhoto={({ urls, index }) =>
+                          setImageLightbox({
+                            urls,
+                            index,
+                            alts: urls.map(() => ''),
+                            ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                          })
+                        }
+                        replyTargetId={replyTargetByPost[post.id] ?? null}
+                        onReplyTargetChange={(id) =>
+                          setReplyTargetByPost((prev) => ({ ...prev, [post.id]: id }))
+                        }
+                        onSubmitDraft={() => void addComment(post.id, post.groupId)}
+                        commentEdit={
+                          commentEdit?.postId === post.id ? { commentId: commentEdit.commentId } : null
+                        }
+                        commentEditText={commentEditText}
+                        onCommentEditTextChange={setCommentEditText}
+                        commentEditParentId={commentEditParentId}
+                        onCommentEditParentIdChange={setCommentEditParentId}
+                        onCancelEdit={cancelEditComment}
+                        onSaveEdit={() => void saveEditedComment(post.groupId)}
+                        saveEditBusy={commentSaving}
+                        onToggleReaction={(commentId, emoji) =>
+                          void applyReaction({ kind: 'comment', id: commentId, groupId: post.groupId }, emoji)
+                        }
+                        onReactionChipLongPress={(payload) => setReactionDetailModal(payload)}
+                        onOpenReactionQuickPicker={(commentId) =>
+                          openReactionQuickPicker({ kind: 'comment', id: commentId, groupId: post.groupId })
+                        }
+                        onBeginEdit={(commentId) => {
+                          const c = (post.comments ?? []).find((x) => x.id === commentId);
+                          if (c) beginEditComment(post.id, c);
+                        }}
+                        confirmDeleteComment={(commentId) =>
+                          confirmDeleteComment(post.id, commentId, post.groupId)
+                        }
+                        containerStyle={styles.postCommentsSection}
+                        reactionButtonRefs={reactionButtonRefs}
+                        renderAvatar={(userId, displayName) => {
+                          const u = usersById.get(userId);
+                          return (
+                            <UserAvatar
+                              seed={displayName}
+                              backgroundColor={[u?.avatarSeed ?? '']}
+                              thumbnail={u?.thumbnail}
+                              size={18}
+                            />
+                          );
+                        }}
+                        renderCommentBody={(comment) => {
+                          const owner = usersById.get(comment.userId);
+                          return (
+                            <ForumPostMarkdownBody
+                              markdownBody={comment.body || ''}
+                              markdownStyles={markdownStyles}
+                              posterDisplayName={getUserDisplayName(comment.userId)}
+                              ownerAvatarSeed={owner?.avatarSeed ?? null}
+                              ownerThumbnail={owner?.thumbnail ?? null}
+                              setImageLightbox={setImageLightbox}
+                            />
+                          );
+                        }}
+                      />
+                    ) : null}
                     </View>
                   </View>
                 </View>
@@ -1316,6 +1800,142 @@ export function PostsListScreen() {
                     <Text style={[styles.postOptionsLabel, styles.postOptionsLabelDanger]}>Delete</Text>
                   </TouchableOpacity>
                 ) : null}
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {reactionQuickPickerTarget && currentUserId ? (
+        <Modal
+          {...edgeToEdgeModalProps}
+          visible
+          transparent
+          animationType="fade"
+          presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
+          onRequestClose={() => setReactionQuickPickerTarget(null)}
+          statusBarTranslucent
+        >
+          <View style={styles.commentReactionPickerRoot}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => {
+                setReactionQuickPickerTarget(null);
+                setReactionQuickPickerAnchor(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Close quick reactions"
+            />
+            <View style={styles.commentReactionQuickPickerRoot} pointerEvents="box-none">
+              <View style={[styles.commentReactionQuickPickerCard, quickPickerStyle]} pointerEvents="auto">
+                <EmojiBar
+                  quickReactions={commentQuickReactions}
+                  onPressReaction={applyReactionAndDismiss}
+                  onPressViewAll={() => {
+                    setReactionPickerTarget(reactionQuickPickerTarget);
+                    setReactionQuickPickerTarget(null);
+                    setReactionQuickPickerAnchor(null);
+                  }}
+                  disabled={reactionBusy}
+                  viewAllAccessibilityLabel="View all emojis"
+                />
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {reactionPickerTarget && currentUserId ? (
+        <Modal
+          {...edgeToEdgeModalProps}
+          visible
+          transparent
+          animationType="fade"
+          presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
+          onRequestClose={() => setReactionPickerTarget(null)}
+          statusBarTranslucent
+        >
+          <View style={styles.commentReactionPickerRoot}>
+            <Pressable
+              style={[StyleSheet.absoluteFill, { backgroundColor: Colors.overlay }]}
+              onPress={() => setReactionPickerTarget(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Close emoji picker"
+            />
+            <View style={styles.commentReactionPickerCenter} pointerEvents="box-none">
+              <View style={styles.commentReactionPickerCard} pointerEvents="auto">
+                <Text style={styles.commentReactionPickerTitle}>Choose a reaction</Text>
+                <ScrollView
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.commentReactionPickerScroll}
+                  contentContainerStyle={styles.commentReactionPickerGrid}
+                >
+                  {COMMENT_REACTION_EMOJIS.map((emoji, emojiIdx) => (
+                    <TouchableOpacity
+                      key={`${emoji}-${emojiIdx}`}
+                      onPress={() => applyReactionAndDismiss(emoji)}
+                      disabled={reactionBusy}
+                      style={styles.commentActionEmojiHit}
+                      accessibilityLabel={`React with ${emoji}`}
+                    >
+                      <ReactionEmojiGlyph emoji={emoji} size={22} />
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+
+      {reactionDetailModal ? (
+        <Modal
+          {...edgeToEdgeModalProps}
+          visible
+          transparent
+          animationType="fade"
+          presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
+          onRequestClose={() => setReactionDetailModal(null)}
+          statusBarTranslucent
+        >
+          <View style={styles.commentReactionPickerRoot}>
+            <Pressable
+              style={[StyleSheet.absoluteFill, { backgroundColor: Colors.overlay }]}
+              onPress={() => setReactionDetailModal(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Close reaction details"
+            />
+            <View style={styles.commentReactionPickerCenter} pointerEvents="box-none">
+              <View style={styles.reactionDetailCard} pointerEvents="auto">
+                <Text style={styles.reactionDetailTitle}>
+                  {reactionDetailModal.emoji} Reactions ({reactionDetailModal.userIds.length})
+                </Text>
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.reactionDetailScroll}
+                >
+                  {reactionDetailModal.userIds.map((uid) => {
+                    const user = usersById.get(uid);
+                    return (
+                      <View key={`${reactionDetailModal.emoji}-${uid}`} style={styles.reactionDetailRow}>
+                        <UserAvatar
+                          seed={getUserDisplayName(uid)}
+                          backgroundColor={[user?.avatarSeed ?? '']}
+                          thumbnail={user?.thumbnail}
+                          size={28}
+                        />
+                        <Text style={styles.reactionDetailName}>
+                          {uid === currentUserId
+                            ? `${getUserDisplayName(uid)} (you)`
+                            : getUserDisplayName(uid)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
               </View>
             </View>
           </View>
@@ -1819,5 +2439,109 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: Fonts.regular,
     color: Colors.textMuted,
+  },
+  postCommentsSection: {
+    marginTop: 8,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderStrong,
+    overflow: 'hidden',
+  },
+  commentActionEmojiHit: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentReactionPickerRoot: {
+    flex: 1,
+  },
+  commentReactionPickerCenter: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  commentReactionQuickPickerRoot: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  commentReactionQuickPickerCard: {
+    position: 'absolute',
+    width: 316,
+    borderRadius: Radius['2xl'],
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    ...Shadows.md,
+  },
+  commentReactionPickerCard: {
+    width: '100%',
+    maxWidth: 340,
+    maxHeight: Dimensions.get('window').height * 0.62,
+    borderRadius: Radius.xl,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingTop: 14,
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    ...Shadows.md,
+  },
+  commentReactionPickerTitle: {
+    fontSize: 15,
+    fontFamily: Fonts.semiBold,
+    color: Colors.text,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  commentReactionPickerScroll: {
+    maxHeight: Dimensions.get('window').height * 0.48,
+  },
+  commentReactionPickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    gap: 4,
+    paddingBottom: 8,
+  },
+  reactionDetailCard: {
+    width: '100%',
+    maxWidth: 340,
+    maxHeight: Dimensions.get('window').height * 0.62,
+    borderRadius: Radius.xl,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingTop: 14,
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    ...Shadows.md,
+  },
+  reactionDetailTitle: {
+    fontSize: 15,
+    fontFamily: Fonts.semiBold,
+    color: Colors.text,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  reactionDetailScroll: {
+    maxHeight: Dimensions.get('window').height * 0.46,
+  },
+  reactionDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  reactionDetailName: {
+    fontSize: 14,
+    fontFamily: Fonts.medium,
+    color: Colors.text,
   },
 });

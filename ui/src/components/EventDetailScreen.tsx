@@ -1135,9 +1135,9 @@ export function EventDetailScreen({
     if (!currentUserId || commentDraftPhotoBusy) return;
     try {
       setCommentDraftPhotoBusy(true);
-      const url = await pickAndUploadCoverPhoto(currentUserId);
-      if (!url) return;
-      setCommentDraftPhotos((prev) => [...prev, url]);
+      const urls = await pickAndUploadCoverPhoto(currentUserId);
+      if (!urls?.length) return;
+      setCommentDraftPhotos((prev) => [...prev, ...urls]);
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Failed to add photo');
     } finally {
@@ -1898,10 +1898,12 @@ export function EventDetailScreen({
     });
   };
 
-  const addCoverPhoto = async (url: string) => {
+  const addCoverPhoto = async (url: string | string[]) => {
     if (!currentUserId || !canEditPhotos) return;
+    const urls = Array.isArray(url) ? url : [url];
+    if (!urls.length) return;
     const prev = localCoverPhotos;
-    const next = [...prev, url];
+    const next = [...prev, ...urls];
     setLocalCoverPhotos(next);
     try {
       await persistCoverPhotos(next);
@@ -1928,8 +1930,8 @@ export function EventDetailScreen({
     if (!currentUserId || !canEditPhotos || coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const url = await pickAndUploadCoverPhoto(currentUserId);
-      if (url) await addCoverPhoto(url);
+      const urls = await pickAndUploadCoverPhoto(currentUserId);
+      if (urls?.length) await addCoverPhoto(urls);
     } finally {
       setCoverPhotoBusy(false);
     }

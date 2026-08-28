@@ -13,9 +13,10 @@ import {
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import {
-  pickImageFromLibrary,
+  pickImagesFromLibrary,
   uploadPickedImageAsset,
   uploadWebImageFile,
+  prepareWebImageFiles,
   isCancelled,
 } from '../services/pickAndUploadImage';
 import { uid } from '../utils/api-helpers';
@@ -76,21 +77,26 @@ export function PhotoUrlOrUploadModal({
 
   const handleNativeUpload = async () => {
     setBusy(true);
-    let uploadId: string | undefined;
+    const previewIds: string[] = [];
     try {
-      const asset = await pickImageFromLibrary();
+      const assets = await pickImagesFromLibrary({ multiple: true, useQualityPreference: true });
       if (onPickPreview) {
-        uploadId = uid();
-        onPickPreview(asset.uri, uploadId);
         onClose();
         setBusy(false);
-        const url = await uploadPickedImageAsset(userId, asset);
-        onAdd(url, uploadId);
+        for (const asset of assets) {
+          const uploadId = uid();
+          previewIds.push(uploadId);
+          onPickPreview(asset.uri, uploadId);
+          const url = await uploadPickedImageAsset(userId, asset);
+          onAdd(url, uploadId);
+        }
         return;
       }
-      setInlinePreviewUri(asset.uri);
-      const url = await uploadPickedImageAsset(userId, asset);
-      onAdd(url);
+      setInlinePreviewUri(assets[0]?.uri ?? null);
+      for (const asset of assets) {
+        const url = await uploadPickedImageAsset(userId, asset);
+        onAdd(url);
+      }
       resetAndClose();
     } catch (e) {
       if (isCancelled(e)) {
@@ -98,7 +104,7 @@ export function PhotoUrlOrUploadModal({
         clearInlinePreview();
         return;
       }
-      if (uploadId) onUploadFailed?.(uploadId);
+      for (const id of previewIds) onUploadFailed?.(id);
       const msg = e instanceof Error ? e.message : 'Upload failed';
       Alert.alert('Upload', msg);
       clearInlinePreview();
@@ -112,28 +118,38 @@ export function PhotoUrlOrUploadModal({
   };
 
   const onWebFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const selected = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      Alert.alert('Upload', 'Please choose an image file.');
+    if (!selected.length) return;
+    let files: File[];
+    try {
+      files = await prepareWebImageFiles(selected);
+    } catch (err) {
+      if (!isCancelled(err)) {
+        Alert.alert('Upload', err instanceof Error ? err.message : 'Upload failed');
+      }
       return;
     }
-    let previewUri: string | undefined;
-    let uploadId: string | undefined;
+
+    const previewIds: string[] = [];
+    const previewUris: string[] = [];
     if (onPickPreview) {
-      uploadId = uid();
-      previewUri = URL.createObjectURL(file);
-      onPickPreview(previewUri, uploadId);
       onClose();
       setBusy(true);
       try {
-        const url = await uploadWebImageFile(userId, file);
-        onAdd(url, uploadId);
-        if (previewUri) URL.revokeObjectURL(previewUri);
+        for (const file of files) {
+          const uploadId = uid();
+          const previewUri = URL.createObjectURL(file);
+          previewIds.push(uploadId);
+          previewUris.push(previewUri);
+          onPickPreview(previewUri, uploadId);
+          const url = await uploadWebImageFile(userId, file);
+          onAdd(url, uploadId);
+          URL.revokeObjectURL(previewUri);
+        }
       } catch (err) {
-        if (uploadId) onUploadFailed?.(uploadId);
-        if (previewUri) URL.revokeObjectURL(previewUri);
+        for (const id of previewIds) onUploadFailed?.(id);
+        for (const uri of previewUris) URL.revokeObjectURL(uri);
         const msg = err instanceof Error ? err.message : 'Upload failed';
         Alert.alert('Upload', msg);
       } finally {
@@ -142,13 +158,15 @@ export function PhotoUrlOrUploadModal({
       return;
     }
 
-    const objectUrl = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(files[0]);
     inlinePreviewBlobRef.current = objectUrl;
     setInlinePreviewUri(objectUrl);
     setBusy(true);
     try {
-      const url = await uploadWebImageFile(userId, file);
-      onAdd(url);
+      for (const file of files) {
+        const url = await uploadWebImageFile(userId, file);
+        onAdd(url);
+      }
       clearInlinePreview();
       resetAndClose();
     } catch (err) {
@@ -179,6 +197,7 @@ export function PhotoUrlOrUploadModal({
           }}
           type="file"
           accept="image/*"
+          multiple
           style={{ display: 'none' }}
           onChange={onWebFileChange}
         />
@@ -219,7 +238,7 @@ export function PhotoUrlOrUploadModal({
               {busy ? (
                 <ActivityIndicator color={Colors.accentFg} />
               ) : (
-                <Text style={styles.uploadBtnText}>Choose image…</Text>
+                <Text style={styles.uploadBtnText}>Choose images…</Text>
               )}
             </TouchableOpacity>
           ) : null}

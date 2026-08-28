@@ -646,9 +646,9 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       if (!currentUserId || isUploadingAttachment) return;
       try {
         setIsUploadingAttachment(true);
-        const publicUrl = await pickAndUploadCoverPhoto(currentUserId);
-        if (!publicUrl) return;
-        addComposerPhotoFor(channel, publicUrl);
+        const publicUrls = await pickAndUploadCoverPhoto(currentUserId);
+        if (!publicUrls?.length) return;
+        for (const publicUrl of publicUrls) addComposerPhotoFor(channel, publicUrl);
       } finally {
         setIsUploadingAttachment(false);
       }
@@ -1360,12 +1360,14 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     async (postId: string) => {
       if (uploadingCommentPhotoPostId === postId) return;
       const picked = await pickDeferredCoverPhotoNative();
-      if (!picked) return;
-      addCommentPhotoDraftForPost(postId, {
-        kind: 'pending',
-        previewUri: picked.previewUri,
-        pending: picked.pending,
-      });
+      if (!picked?.length) return;
+      for (const item of picked) {
+        addCommentPhotoDraftForPost(postId, {
+          kind: 'pending',
+          previewUri: item.previewUri,
+          pending: item.pending,
+        });
+      }
     },
     [addCommentPhotoDraftForPost, uploadingCommentPhotoPostId]
   );
