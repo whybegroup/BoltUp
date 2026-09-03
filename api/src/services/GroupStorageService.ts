@@ -443,6 +443,46 @@ export class GroupStorageService {
     return { maxStorageBytes: cap };
   }
 
+  public async cancelStorageSubscription(input: {
+    groupId: string;
+    userId: string;
+  }): Promise<{ maxStorageBytes: number }> {
+    const group = await prisma.group.findUnique({
+      where: { id: input.groupId },
+      select: { id: true, name: true, deletedAt: true, maxStorageBytes: true },
+    });
+    if (!group || group.deletedAt) {
+      throw httpError(404, 'Group not found');
+    }
+    const member = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId: input.groupId, userId: input.userId } },
+      select: { status: true, role: true },
+    });
+    if (!member || member.status !== 'active' || member.role !== 'owner') {
+      throw httpError(403, 'Must be the group owner to cancel the storage subscription');
+    }
+
+    const cap = DEFAULT_GROUP_MAX_STORAGE_BYTES;
+    const current = groupMaxStorageBytes(group.maxStorageBytes);
+    if (current <= cap) {
+      return { maxStorageBytes: current };
+    }
+    const used = await this.getUsedStorageBytes(input.groupId);
+    if (used > cap) {
+      throw httpError(
+        400,
+        `This group is using ${formatStorageBytes(used)}, which is more than 2 GB. Delete files before canceling the subscription.`
+      );
+    }
+
+    await prisma.group.update({
+      where: { id: input.groupId },
+      data: { maxStorageBytes: storageBytesToDb(cap) },
+    });
+    await this.notifyStorageLimit(input.groupId, group.name, cap);
+    return { maxStorageBytes: cap };
+  }
+
   public async grantStorage(groupId: string, maxStorageBytes: number): Promise<void> {
     const cap = Math.floor(maxStorageBytes);
     if (!Number.isFinite(cap) || cap < 1) {
@@ -478,7 +518,7 @@ export class GroupStorageService {
       ids,
       'Storage limit updated',
       `${groupName} can now store up to ${formatStorageBytes(cap)}.`,
-      { type: 'group_storage', icon: 'cloud-outline', groupId, dest: 'group' }
+      { type: 'group_storage', icon: 'cloud-circle-outline', groupId, dest: 'group' }
     );
   }
 }

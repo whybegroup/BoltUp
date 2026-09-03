@@ -49,7 +49,7 @@ function RootLayoutNav() {
         router.replace(returnPath ? withReturnTo('/login', returnPath) : '/login');
       } else if (user && inAuthGroup) {
         const returnTo = parseReturnToParam(firstSearchParam(searchParams.returnTo));
-        router.replace((returnTo ?? '/(tabs)/events') as Href);
+        router.replace((returnTo ?? '/(tabs)/groups') as Href);
       }
     }, 100);
 

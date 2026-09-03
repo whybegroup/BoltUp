@@ -8,7 +8,7 @@ import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { PushTokenInput, UsersService } from '@moijia/client';
 import { navigateFromNotificationPayload } from '../utils/notificationNavigation';
 import { refreshAppOnResume } from '../utils/refreshAppOnResume';
-import { useNotifications } from './api';
+import { useNotifications, useUpdateNotification } from './api';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -74,6 +74,7 @@ export function usePushNotifications(userId: string | null) {
   const pathname = usePathname();
   const registeredTokenRef = useRef<string | null>(null);
   const { data: notifs = [] } = useNotifications(userId ?? undefined);
+  const updateNotification = useUpdateNotification();
   const unreadCount = notifs.filter((n) => !n.read).length;
 
   useEffect(() => {
@@ -132,6 +133,9 @@ export function usePushNotifications(userId: string | null) {
 
     refreshAppOnResume();
     const data = pushPayloadFromResponse(lastResponse);
+    if (data.notificationId) {
+      updateNotification.mutate({ id: data.notificationId, read: true });
+    }
     requestAnimationFrame(() => {
       navigateFromNotificationPayload(router, pathname, {
         dest: data.dest,
@@ -143,5 +147,5 @@ export function usePushNotifications(userId: string | null) {
         navigable: !!(data.groupId || data.eventId || data.pollId || data.postId),
       });
     });
-  }, [lastResponse, router, pathname, userId]);
+  }, [lastResponse, router, pathname, userId, updateNotification]);
 }

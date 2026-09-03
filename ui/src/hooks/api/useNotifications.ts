@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { NotificationsService, type NotificationInput } from '@moijia/client';
+import { NotificationsService, type Notification, type NotificationInput } from '@moijia/client';
 import { queryKeys } from '../../config/queryClient';
 
 export function useNotifications(userId?: string) {
@@ -30,13 +30,24 @@ export function useCreateNotification() {
   });
 }
 
+function patchNotificationRead(list: Notification[] | undefined, id: string, read: boolean) {
+  return list?.map((n) => (n.id === id ? { ...n, read } : n));
+}
+
 export function useUpdateNotification() {
   const queryClient = useQueryClient();
   
   return useMutation({
     mutationFn: ({ id, read }: { id: string; read: boolean }) => 
       NotificationsService.updateNotification(id, { read }),
-    onSuccess: () => {
+    onMutate: async ({ id, read }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.notifications.all });
+      queryClient.setQueriesData<Notification[]>(
+        { queryKey: queryKeys.notifications.all },
+        (old) => patchNotificationRead(old, id, read)
+      );
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.notifications.all });
     },
   });

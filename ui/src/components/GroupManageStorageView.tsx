@@ -5,25 +5,28 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Platform,
+  Alert,
 } from 'react-native';
 import { usePathname, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { KeyboardSafeScrollView } from './KeyboardSafeScrollView';
-import { useGroup, useGroupStorageBreakdown } from '../hooks/api';
+import { useGroup, useGroupStorageBreakdown, useCancelGroupStorageSubscription } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 import { GroupStorageUsageBar } from './GroupStorageUsageBar';
 import { GroupStorageRequestForm } from './GroupStorageRequestForm';
-import { formatStorageBytes } from '../utils/groupStorage';
+import { DEFAULT_GROUP_MAX_STORAGE_BYTES, formatStorageBytes } from '../utils/groupStorage';
 import { parseFromEventId, buildGroupStorageCategoryUrl } from '../utils/breadcrumbUrl';
 import {
   GROUP_STORAGE_CATEGORY_COLORS,
   GROUP_STORAGE_CATEGORY_LABELS,
   groupStorageCategoryUsages,
 } from '../utils/groupStorageCategories';
+import { apiErrorMessage } from '../utils/apiErrors';
 
 export function GroupManageStorageView({ groupId }: { groupId: string }) {
   const router = useRouter();
@@ -49,6 +52,7 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
     currentUserId ?? '',
     canManage
   );
+  const cancelSub = useCancelGroupStorageSubscription(groupId, currentUserId ?? '');
   const { refreshControl } = usePullToRefresh([refetchGroup, refetchBreakdown]);
 
   useMissingGroupRedirect(isError, groupError, group?.membershipStatus, fallbackHref);
@@ -70,6 +74,16 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
   const usedBytes = breakdown?.usedBytes ?? group.usedStorageBytes ?? 0;
   const maxBytes = breakdown?.maxBytes ?? group.maxStorageBytes;
   const categories = groupStorageCategoryUsages(breakdown?.categories);
+
+  const cancelSubscription = async () => {
+    try {
+      await cancelSub.mutateAsync();
+    } catch (e) {
+      const msg = apiErrorMessage(e, 'Could not cancel subscription');
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Error', msg);
+    }
+  };
 
   return (
     <View style={styles.page}>
@@ -117,6 +131,21 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
                   usedBytes={usedBytes}
                 />
               </View>
+              {(maxBytes ?? 0) > DEFAULT_GROUP_MAX_STORAGE_BYTES ? (
+                <TouchableOpacity
+                  onPress={() => void cancelSubscription()}
+                  disabled={cancelSub.isPending}
+                  style={styles.cancelBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel subscription"
+                >
+                  {cancelSub.isPending ? (
+                    <ActivityIndicator color={Colors.notGoing} />
+                  ) : (
+                    <Text style={styles.cancelBtnText}>Cancel subscription</Text>
+                  )}
+                </TouchableOpacity>
+              ) : null}
             </>
           ) : null}
         </View>
@@ -159,4 +188,15 @@ const styles = StyleSheet.create({
   rowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border },
   rowDot: { width: 10, height: 10, borderRadius: 5 },
   rowLabel: { flex: 1, fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text },
+  cancelBtn: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.notGoing,
+    backgroundColor: Colors.notGoingBg,
+  },
+  cancelBtnText: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.notGoing },
 });

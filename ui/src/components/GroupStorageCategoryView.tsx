@@ -33,6 +33,10 @@ const COLS = 3;
 const GAP = 4;
 const PAD = 20;
 
+function photoNoun(n: number) {
+  return n === 1 ? 'photo' : 'photos';
+}
+
 export function GroupStorageCategoryView({
   groupId,
   category,
@@ -74,6 +78,8 @@ export function GroupStorageCategoryView({
   const tile = Math.max(72, Math.floor((winW - PAD * 2 - GAP * (COLS - 1)) / COLS));
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   useMissingGroupRedirect(isError, groupError, group?.membershipStatus, fallbackHref);
 
@@ -83,29 +89,84 @@ export function GroupStorageCategoryView({
 
   const files = list?.files ?? [];
   const urls = useMemo(() => files.map((f) => f.url), [files]);
+  const selectedCount = selected.size;
+  const allSelected = files.length > 0 && selectedCount === files.length;
+
+  useEffect(() => {
+    const live = new Set(urls);
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((u) => live.has(u)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [urls]);
+
+  useEffect(() => {
+    if (files.length === 0 && selecting) {
+      setSelecting(false);
+      setSelected(new Set());
+    }
+  }, [files.length, selecting]);
+
+  const exitSelect = useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+  }, []);
+
+  const enterSelect = useCallback((initial?: string) => {
+    setLightboxIndex(null);
+    setSelecting(true);
+    setSelected(initial ? new Set([initial]) : new Set());
+  }, []);
+
+  const toggleSelected = useCallback((url: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelected((prev) => {
+      if (files.length > 0 && prev.size === files.length) return new Set();
+      return new Set(files.map((f) => f.url));
+    });
+  }, [files]);
 
   const confirmDelete = useCallback(
-    (url: string) => {
+    (toDelete: string | string[]) => {
+      const listToDelete = Array.isArray(toDelete) ? toDelete : [toDelete];
+      if (listToDelete.length === 0) return;
+      const many = listToDelete.length > 1;
       const run = async () => {
         try {
-          await deleteFile.mutateAsync(url);
+          await deleteFile.mutateAsync(listToDelete);
+          setSelected(new Set());
+          setSelecting(false);
           setLightboxIndex((idx) => {
             if (idx == null) return null;
-            const remaining = urls.filter((u) => u !== url);
+            const remaining = urls.filter((u) => !listToDelete.includes(u));
             if (remaining.length === 0) return null;
             return Math.min(idx, remaining.length - 1);
           });
         } catch (e) {
-          const msg = apiErrorMessage(e, 'Could not delete photo');
+          const msg = apiErrorMessage(e, many ? 'Could not delete photos' : 'Could not delete photo');
           if (Platform.OS === 'web') window.alert(msg);
           else Alert.alert('Error', msg);
         }
       };
+      const title = many ? `Delete ${listToDelete.length} photos` : 'Delete photo';
+      const message = many
+        ? 'These photos will be removed from the group and deleted from storage.'
+        : 'This photo will be removed from the group and deleted from storage.';
       if (Platform.OS === 'web') {
-        if (window.confirm('Delete this photo from the group?')) void run();
+        if (window.confirm(many ? `Delete ${listToDelete.length} photos from the group?` : 'Delete this photo from the group?')) {
+          void run();
+        }
         return;
       }
-      Alert.alert('Delete photo', 'This photo will be removed from the group and deleted from storage.', [
+      Alert.alert(title, message, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => void run() },
       ]);
@@ -125,48 +186,129 @@ export function GroupStorageCategoryView({
 
   return (
     <View style={styles.page}>
-      <ScrollView style={styles.scroll} refreshControl={refreshControl} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.scroll}
+        refreshControl={refreshControl}
+        contentContainerStyle={[styles.content, selecting && selectedCount > 0 && styles.contentWithBar]}
+      >
         {files.length === 0 ? (
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No photos in {label.toLowerCase()}</Text>
           </View>
         ) : (
-          <View style={styles.grid}>
-            {files.map((file, i) => (
-              <View key={`${file.url}-${i}`} style={[styles.tileWrap, { width: tile, height: tile }]}>
+          <>
+            <View style={styles.toolbar}>
+              {selecting ? (
+                <>
+                  <TouchableOpacity
+                    onPress={exitSelect}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel selection"
+                  >
+                    <Text style={styles.toolbarAction}>Cancel</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.toolbarCount}>
+                    {selectedCount} selected
+                  </Text>
+                  <TouchableOpacity
+                    onPress={toggleSelectAll}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={allSelected ? 'Deselect all' : 'Select all'}
+                  >
+                    <Text style={styles.toolbarAction}>{allSelected ? 'Deselect all' : 'Select all'}</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
                 <TouchableOpacity
-                  onPress={() => setLightboxIndex(i)}
-                  activeOpacity={0.9}
+                  onPress={() => enterSelect()}
+                  hitSlop={8}
+                  style={styles.toolbarSelect}
                   accessibilityRole="button"
-                  accessibilityLabel={file.sourceLabel ? `${file.sourceLabel} photo` : 'Photo'}
+                  accessibilityLabel="Select photos"
                 >
-                  <ResolvableImage
-                    storedUrl={file.url}
-                    style={{ width: tile, height: tile, backgroundColor: Colors.bg }}
-                    resizeMode="cover"
-                  />
+                  <Text style={styles.toolbarAction}>Select</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => confirmDelete(file.url)}
-                  style={styles.removeBtn}
-                  accessibilityRole="button"
-                  accessibilityLabel="Delete photo"
-                  disabled={deleteFile.isPending}
-                >
-                  <Ionicons name="close" size={11} color="#fff" />
-                </TouchableOpacity>
-                {file.byteSize > 0 ? (
-                  <View style={styles.sizeBadge} pointerEvents="none">
-                    <Text style={styles.sizeText}>{formatStorageBytes(file.byteSize)}</Text>
+              )}
+            </View>
+            <View style={styles.grid}>
+              {files.map((file, i) => {
+                const isSelected = selected.has(file.url);
+                return (
+                  <View key={`${file.url}-${i}`} style={[styles.tileWrap, { width: tile, height: tile }]}>
+                    <TouchableOpacity
+                      onPress={() => (selecting ? toggleSelected(file.url) : setLightboxIndex(i))}
+                      onLongPress={() => {
+                        if (selecting) toggleSelected(file.url);
+                        else enterSelect(file.url);
+                      }}
+                      delayLongPress={280}
+                      activeOpacity={0.9}
+                      accessibilityRole="button"
+                      accessibilityLabel={file.sourceLabel ? `${file.sourceLabel} photo` : 'Photo'}
+                      accessibilityState={selecting ? { selected: isSelected } : undefined}
+                      accessibilityHint={selecting ? undefined : 'Long press to select'}
+                    >
+                      <ResolvableImage
+                        storedUrl={file.url}
+                        style={{ width: tile, height: tile, backgroundColor: Colors.bg }}
+                        resizeMode="cover"
+                      />
+                      {selecting && isSelected ? <View style={styles.selectedDim} /> : null}
+                    </TouchableOpacity>
+                    {selecting ? (
+                      <View style={styles.checkBtn} pointerEvents="none">
+                        <View style={[styles.check, isSelected && styles.checkOn]}>
+                          {isSelected ? <Ionicons name="checkmark" size={12} color="#fff" /> : null}
+                        </View>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => confirmDelete(file.url)}
+                        style={styles.removeBtn}
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete photo"
+                        disabled={deleteFile.isPending}
+                      >
+                        <Ionicons name="close" size={11} color="#fff" />
+                      </TouchableOpacity>
+                    )}
+                    {file.byteSize > 0 ? (
+                      <View style={styles.sizeBadge} pointerEvents="none">
+                        <Text style={styles.sizeText}>{formatStorageBytes(file.byteSize)}</Text>
+                      </View>
+                    ) : null}
                   </View>
-                ) : null}
-              </View>
-            ))}
-          </View>
+                );
+              })}
+            </View>
+          </>
         )}
       </ScrollView>
+      {selecting ? (
+        <View style={styles.bottomBar}>
+          <TouchableOpacity
+            onPress={() => confirmDelete([...selected])}
+            disabled={selectedCount === 0 || deleteFile.isPending}
+            style={[styles.deleteBtn, selectedCount === 0 && styles.deleteBtnDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${selectedCount} ${photoNoun(selectedCount)}`}
+          >
+            {deleteFile.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.deleteBtnText}>
+                {selectedCount === 0
+                  ? 'Delete'
+                  : `Delete ${selectedCount} ${photoNoun(selectedCount)}`}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <ImageLightboxModal
-        visible={lightboxIndex != null && urls.length > 0}
+        visible={!selecting && lightboxIndex != null && urls.length > 0}
         urls={urls}
         index={lightboxIndex ?? 0}
         onChangeIndex={(i) => setLightboxIndex(i)}
@@ -184,9 +326,24 @@ const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: Colors.bg },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scroll: { flex: 1 },
-  content: { paddingHorizontal: PAD, paddingTop: 16, paddingBottom: 40 },
+  content: { paddingHorizontal: PAD, paddingTop: 12, paddingBottom: 40 },
+  contentWithBar: { paddingBottom: 24 },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 28,
+    marginBottom: 12,
+  },
+  toolbarSelect: { marginLeft: 'auto' },
+  toolbarAction: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text },
+  toolbarCount: { fontSize: 13, fontFamily: Fonts.medium, color: Colors.textSub },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
   tileWrap: { position: 'relative', borderRadius: Radius.lg, overflow: 'hidden' },
+  selectedDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.28)',
+  },
   removeBtn: {
     position: 'absolute',
     top: 6,
@@ -197,6 +354,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  checkBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+  },
+  check: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkOn: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.accent,
   },
   sizeBadge: {
     position: 'absolute',
@@ -215,4 +391,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyText: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.textSub },
+  bottomBar: {
+    paddingHorizontal: PAD,
+    paddingTop: 10,
+    paddingBottom: 16,
+    backgroundColor: Colors.bg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  deleteBtn: {
+    backgroundColor: Colors.notGoing,
+    borderRadius: Radius.lg,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  deleteBtnDisabled: { opacity: 0.4 },
+  deleteBtnText: { fontSize: 15, fontFamily: Fonts.semiBold, color: '#fff' },
 });

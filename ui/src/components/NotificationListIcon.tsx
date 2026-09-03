@@ -27,6 +27,7 @@ const TYPE_TO_ICON: Record<string, IonName> = {
   poll_response: 'checkbox-outline',
   poll_option_decision: 'checkmark-circle-outline',
   group_announcement: 'megaphone-outline',
+  group_storage: 'cloud-circle-outline',
   post_comment: 'chatbubble-ellipses-outline',
   post_reaction: 'happy-outline',
   general: 'notifications-outline',

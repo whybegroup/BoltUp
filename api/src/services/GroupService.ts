@@ -609,6 +609,13 @@ export class GroupService {
     return groupStorage.setMaxStorage({ groupId, userId, maxStorageBytes });
   }
 
+  public async cancelStorageSubscription(
+    groupId: string,
+    userId: string
+  ): Promise<{ maxStorageBytes: number }> {
+    return groupStorage.cancelStorageSubscription({ groupId, userId });
+  }
+
   public async getStorageBreakdown(groupId: string, userId: string): Promise<GroupStorageBreakdown> {
     await groupStorage.requireOwnerOrAdmin(groupId, userId);
     return groupStorage.getBreakdown(groupId);

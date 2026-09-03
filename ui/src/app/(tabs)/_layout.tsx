@@ -167,6 +167,7 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      initialRouteName="groups"
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: true,

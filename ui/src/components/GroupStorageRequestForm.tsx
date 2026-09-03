@@ -38,9 +38,12 @@ export function GroupStorageRequestForm({
 
   const [selectedGb, setSelectedGb] = useState(() => bytesToStorageRequestGb(currentMaxBytes));
 
+  useEffect(() => {
+    setSelectedGb(bytesToStorageRequestGb(currentMaxBytes));
+  }, [currentMaxBytes]);
+
   const requestedBytes = useMemo(() => gbToBytes(selectedGb), [selectedGb]);
   const used = Math.max(0, usedBytes);
-  const isDecrease = requestedBytes < currentMaxBytes;
   const unchanged = requestedBytes === currentMaxBytes;
   const belowUsage = requestedBytes <= used;
   const saving = setLimit.isPending;
@@ -85,7 +88,7 @@ export function GroupStorageRequestForm({
           <ActivityIndicator color={Colors.accentFg} />
         ) : (
           <Text style={styles.submitText}>
-            {isDecrease ? 'Reduce storage limit' : 'Expand storage limit'}
+            Update Subscription
           </Text>
         )}
       </TouchableOpacity>

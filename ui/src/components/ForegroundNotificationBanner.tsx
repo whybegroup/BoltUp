@@ -1,26 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import * as Notifications from 'expo-notifications';
 import * as Haptics from 'expo-haptics';
 import { usePathname } from 'expo-router';
 import type { Notification as ApiNotification } from '@moijia/client';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
-import { useNotifications } from '../hooks/api';
+import { useNotifications, useUpdateNotification } from '../hooks/api';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { navigateFromNotificationPayload } from '../utils/notificationNavigation';
 import { NotificationListIcon } from './NotificationListIcon';
 
 const SHOW_MS = 5000;
 const SLIDE = 14;
+const DISMISS_Y = -36;
+const DISMISS_VY = -650;
 
 type Banner = {
   id: string;
@@ -76,42 +79,122 @@ export function ForegroundNotificationBanner() {
   const pathname = usePathname();
   const { userId } = useCurrentUserContext();
   const { data: notifs = [], isFetched } = useNotifications(userId ?? undefined);
+  const updateNotification = useUpdateNotification();
   const [banner, setBanner] = useState<Banner | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-SLIDE)).current;
+  const dragY = useRef(new Animated.Value(0)).current;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showRef = useRef<(next: Banner) => void>(() => undefined);
+  const hideRef = useRef<() => void>(() => undefined);
+  const openRef = useRef<() => void>(() => undefined);
+  const bannerRef = useRef<Banner | null>(null);
   const seenIdsRef = useRef<Set<string> | null>(null);
   const shownIdsRef = useRef(new Set<string>());
+  bannerRef.current = banner;
 
-  const hide = () => {
+  const clearHideTimer = () => {
     if (hideTimer.current) {
       clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
+  };
+
+  const hide = () => {
+    clearHideTimer();
     Animated.parallel([
       Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: -SLIDE, duration: 180, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: -80, duration: 180, useNativeDriver: true }),
     ]).start(({ finished }) => {
-      if (finished) setBanner(null);
+      if (finished) {
+        dragY.setValue(0);
+        setBanner(null);
+      }
     });
   };
+  hideRef.current = hide;
 
   const show = (next: Banner) => {
     if (shownIdsRef.current.has(next.id)) return;
     shownIdsRef.current.add(next.id);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
+    clearHideTimer();
     opacity.setValue(0);
     translateY.setValue(-SLIDE);
+    dragY.setValue(0);
     setBanner(next);
     Animated.parallel([
       Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }),
       Animated.timing(translateY, { toValue: 0, duration: 220, useNativeDriver: true }),
     ]).start();
-    hideTimer.current = setTimeout(hide, SHOW_MS);
+    hideTimer.current = setTimeout(() => hideRef.current(), SHOW_MS);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
   };
   showRef.current = show;
+
+  const open = () => {
+    const payload = bannerRef.current;
+    if (!payload) return;
+    if (payload.id) {
+      updateNotification.mutate({ id: payload.id, read: true });
+    }
+    hide();
+    requestAnimationFrame(() => {
+      navigateFromNotificationPayload(router, pathname, {
+        dest: payload.dest,
+        eventId: payload.eventId,
+        groupId: payload.groupId,
+        pollId: payload.pollId,
+        postId: payload.postId,
+        commentId: payload.commentId,
+        navigable: !!(payload.groupId || payload.eventId || payload.pollId || payload.postId),
+      });
+    });
+  };
+  openRef.current = open;
+
+  const pauseTimer = () => {
+    clearHideTimer();
+  };
+
+  const setDragY = (y: number) => {
+    dragY.setValue(Math.min(0, y));
+  };
+
+  const settleDrag = (translationY: number, velocityY: number) => {
+    if (translationY <= DISMISS_Y || velocityY <= DISMISS_VY) {
+      hideRef.current();
+      return;
+    }
+    Animated.spring(dragY, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 20 }).start();
+    clearHideTimer();
+    hideTimer.current = setTimeout(() => hideRef.current(), SHOW_MS);
+  };
+
+  const fireOpen = () => {
+    openRef.current();
+  };
+
+  const gesture = useMemo(
+    () =>
+      Gesture.Exclusive(
+        Gesture.Pan()
+          .activeOffsetY([-8, 1000])
+          .failOffsetX([-24, 24])
+          .onBegin(() => {
+            runOnJS(pauseTimer)();
+          })
+          .onUpdate((e) => {
+            runOnJS(setDragY)(e.translationY);
+          })
+          .onEnd((e) => {
+            runOnJS(settleDrag)(e.translationY, e.velocityY);
+          }),
+        Gesture.Tap().onEnd(() => {
+          runOnJS(fireOpen)();
+        })
+      ),
+    [dragY]
+  );
 
   useEffect(() => {
     if (!userId) {
@@ -147,50 +230,40 @@ export function ForegroundNotificationBanner() {
 
   if (!banner) return null;
 
-  const open = () => {
-    const payload = banner;
-    hide();
-    requestAnimationFrame(() => {
-      navigateFromNotificationPayload(router, pathname, {
-        dest: payload.dest,
-        eventId: payload.eventId,
-        groupId: payload.groupId,
-        pollId: payload.pollId,
-        postId: payload.postId,
-        commentId: payload.commentId,
-        navigable: !!(payload.groupId || payload.eventId || payload.pollId || payload.postId),
-      });
-    });
-  };
-
   return (
     <View
       pointerEvents="box-none"
       collapsable={false}
       style={[styles.layer, { paddingTop: Math.max(insets.top, 8) + 8 }]}
     >
-      <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-        <Pressable
-          onPress={open}
-          style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-          accessibilityRole="alert"
-          accessibilityLabel={`${banner.title}. ${banner.body}`}
+      <GestureDetector gesture={gesture}>
+        <Animated.View
+          style={{
+            opacity,
+            transform: [{ translateY: Animated.add(translateY, dragY) }],
+          }}
         >
-          <View style={styles.iconWrap}>
-            <NotificationListIcon type={banner.type} icon="" color={Colors.text} />
-          </View>
-          <View style={styles.copy}>
-            <Text style={styles.title} numberOfLines={1}>
-              {banner.title}
-            </Text>
-            {banner.body ? (
-              <Text style={styles.body} numberOfLines={2}>
-                {banner.body}
+          <View
+            style={styles.card}
+            accessibilityRole="alert"
+            accessibilityLabel={`${banner.title}. ${banner.body}. Swipe up to dismiss.`}
+          >
+            <View style={styles.iconWrap}>
+              <NotificationListIcon type={banner.type} icon="" color={Colors.text} />
+            </View>
+            <View style={styles.copy}>
+              <Text style={styles.title} numberOfLines={1}>
+                {banner.title}
               </Text>
-            ) : null}
+              {banner.body ? (
+                <Text style={styles.body} numberOfLines={2}>
+                  {banner.body}
+                </Text>
+              ) : null}
+            </View>
           </View>
-        </Pressable>
-      </Animated.View>
+        </Animated.View>
+      </GestureDetector>
     </View>
   );
 }
@@ -217,9 +290,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     ...Shadows.lg,
     ...(Platform.OS === 'android' ? { elevation: 24 } : null),
-  },
-  cardPressed: {
-    opacity: 0.92,
   },
   iconWrap: {
     width: 36,

@@ -268,6 +268,22 @@ export class GroupController extends Controller {
   }
 
   /**
+   * Revert this group's storage cap to the 2 GB default. Owner only.
+   * Fails if current usage is above 2 GB.
+   */
+  @Post('{id}/cancel-storage-subscription')
+  public async cancelStorageSubscription(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<{ maxStorageBytes: number }> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.cancelStorageSubscription(id, userId);
+  }
+
+  /**
    * Storage usage broken down by events, polls, and posts. Requires owner or admin.
    */
   @Get('{id}/storage-breakdown')

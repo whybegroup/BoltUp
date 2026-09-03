@@ -176,6 +176,18 @@ export function useSetGroupStorageLimit(groupId: string, userId: string) {
   });
 }
 
+export function useCancelGroupStorageSubscription(groupId: string, userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => GroupsService.cancelStorageSubscription(groupId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.storageBreakdown(groupId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, userId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
+    },
+  });
+}
+
 export function useGroupStorageBreakdown(groupId: string, userId: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.groups.storageBreakdown(groupId),
@@ -197,7 +209,12 @@ export function useGroupStorageFiles(groupId: string, category: string, userId: 
 export function useDeleteGroupStorageFile(groupId: string, userId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (url: string) => GroupsService.deleteStorageFile(groupId, userId, { url }),
+    mutationFn: async (urls: string | string[]) => {
+      const list = Array.isArray(urls) ? urls : [urls];
+      for (const url of list) {
+        await GroupsService.deleteStorageFile(groupId, userId, { url });
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.storageBreakdown(groupId) });
       queryClient.invalidateQueries({ queryKey: ['groups', groupId, 'storage-files'] });
