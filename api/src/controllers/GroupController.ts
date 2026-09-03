@@ -28,8 +28,6 @@ import {
   GroupPostReactionInput,
   NotifPrefs,
   NotifPrefsPartial,
-  GroupStorageRequest,
-  GroupStorageRequestInput,
   GroupStorageLimitInput,
   GroupStorageBreakdown,
   GroupStorageFileList,
@@ -253,42 +251,8 @@ export class GroupController extends Controller {
   }
 
   /**
-   * List storage increase requests for a group. Requires an active member.
-   */
-  @Get('{id}/storage-requests')
-  public async getStorageRequests(
-    @Path() id: string,
-    @Query() userId: string
-  ): Promise<GroupStorageRequest[]> {
-    if (!userId) {
-      this.setStatus(400);
-      throw new Error('userId is required');
-    }
-    return this.groupService.listStorageRequests(id, userId);
-  }
-
-  /**
-   * Request a higher S3 storage cap for this group. Requires an active member.
-   * A developer grants the increase from the server (`npm run storage:grant`).
-   */
-  @Post('{id}/storage-requests')
-  @SuccessResponse('201', 'Created')
-  public async createStorageRequest(
-    @Path() id: string,
-    @Query() userId: string,
-    @Body() body: GroupStorageRequestInput
-  ): Promise<GroupStorageRequest> {
-    if (!userId) {
-      this.setStatus(400);
-      throw new Error('userId is required');
-    }
-    this.setStatus(201);
-    return this.groupService.createStorageRequest(id, userId, body);
-  }
-
-  /**
-   * Lower this group's storage cap. Owner only. Must stay above current usage.
-   * Increases still go through storage-requests.
+   * Set this group's storage cap. Owner only. Takes effect immediately.
+   * Must stay above current usage and within 10–100 GB.
    */
   @Put('{id}/max-storage')
   public async setGroupStorageLimit(
@@ -300,7 +264,7 @@ export class GroupController extends Controller {
       this.setStatus(400);
       throw new Error('userId is required');
     }
-    return this.groupService.reduceStorageLimit(id, userId, body.maxStorageBytes);
+    return this.groupService.setStorageLimit(id, userId, body.maxStorageBytes);
   }
 
   /**

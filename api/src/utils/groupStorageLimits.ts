@@ -1,5 +1,6 @@
-export const DEFAULT_GROUP_MAX_STORAGE_BYTES = 1024 * 1024 * 1024;
-export const MIN_STORAGE_REQUEST_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_GROUP_MAX_STORAGE_BYTES = 2 * 1024 * 1024 * 1024;
+export const MIN_GROUP_STORAGE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024;
+export const MAX_OWNER_STORAGE_LIMIT_BYTES = 100 * 1024 * 1024 * 1024;
 
 export function storageBytesFromDb(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) return Math.floor(raw);

@@ -17,8 +17,6 @@ import {
   User,
   NotifPrefs,
   NotifPrefsPartial,
-  GroupStorageRequest,
-  GroupStorageRequestInput,
   GroupStorageBreakdown,
   GroupStorageFileList,
 } from '../models';
@@ -603,30 +601,12 @@ export class GroupService {
     });
   }
 
-  public async listStorageRequests(groupId: string, userId: string): Promise<GroupStorageRequest[]> {
-    await this.requireActiveMember(groupId, userId);
-    return groupStorage.listRequests(groupId);
-  }
-
-  public async createStorageRequest(
-    groupId: string,
-    userId: string,
-    input: GroupStorageRequestInput
-  ): Promise<GroupStorageRequest> {
-    return groupStorage.createRequest({
-      groupId,
-      userId,
-      requestedBytes: input.requestedBytes,
-      note: input.note,
-    });
-  }
-
-  public async reduceStorageLimit(
+  public async setStorageLimit(
     groupId: string,
     userId: string,
     maxStorageBytes: number
   ): Promise<{ maxStorageBytes: number }> {
-    return groupStorage.reduceMaxStorage({ groupId, userId, maxStorageBytes });
+    return groupStorage.setMaxStorage({ groupId, userId, maxStorageBytes });
   }
 
   public async getStorageBreakdown(groupId: string, userId: string): Promise<GroupStorageBreakdown> {

@@ -6,11 +6,11 @@ import {
 } from '../utils/groupPostBodyUploads';
 import {
   DEFAULT_GROUP_MAX_STORAGE_BYTES,
-  MIN_STORAGE_REQUEST_BYTES,
+  MAX_OWNER_STORAGE_LIMIT_BYTES,
+  MIN_GROUP_STORAGE_LIMIT_BYTES,
   formatStorageBytes,
   groupMaxStorageBytes,
   groupStorageExceededMessage,
-  storageBytesFromDb,
   storageBytesToDb,
 } from '../utils/groupStorageLimits';
 import { httpError } from '../utils/httpError';
@@ -28,17 +28,6 @@ import type {
 
 const prisma = new PrismaClient();
 const notificationService = new NotificationService();
-
-export type GroupStorageRequestRow = {
-  id: string;
-  groupId: string;
-  userId: string;
-  requestedBytes: number;
-  note?: string | null;
-  status: 'pending' | 'approved' | 'denied';
-  createdAt: Date;
-  decidedAt?: Date | null;
-};
 
 export class GroupStorageService {
   public async getMaxStorageBytes(groupId: string): Promise<number> {
@@ -405,99 +394,9 @@ export class GroupStorageService {
 
   public async deleteTrackingForGroup(groupId: string): Promise<void> {
     await prisma.groupStorageFile.deleteMany({ where: { groupId } });
-    await prisma.groupStorageRequest.deleteMany({ where: { groupId } });
   }
 
-  public mapRequest(row: {
-    id: string;
-    groupId: string;
-    userId: string;
-    requestedBytes: string | number;
-    note: string | null;
-    status: string;
-    createdAt: Date;
-    decidedAt: Date | null;
-  }): GroupStorageRequestRow {
-    const status =
-      row.status === 'approved' || row.status === 'denied' ? row.status : 'pending';
-    return {
-      id: row.id,
-      groupId: row.groupId,
-      userId: row.userId,
-      requestedBytes: storageBytesFromDb(row.requestedBytes),
-      note: row.note,
-      status,
-      createdAt: row.createdAt,
-      decidedAt: row.decidedAt,
-    };
-  }
-
-  public async getPendingRequest(groupId: string): Promise<GroupStorageRequestRow | null> {
-    const row = await prisma.groupStorageRequest.findFirst({
-      where: { groupId, status: 'pending' },
-      orderBy: { createdAt: 'desc' },
-    });
-    return row ? this.mapRequest(row) : null;
-  }
-
-  public async listRequests(groupId: string): Promise<GroupStorageRequestRow[]> {
-    const rows = await prisma.groupStorageRequest.findMany({
-      where: { groupId },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
-    return rows.map((r) => this.mapRequest(r));
-  }
-
-  public async createRequest(input: {
-    groupId: string;
-    userId: string;
-    requestedBytes: number;
-    note?: string;
-  }): Promise<GroupStorageRequestRow> {
-    const group = await prisma.group.findUnique({
-      where: { id: input.groupId },
-      select: { id: true, deletedAt: true, maxStorageBytes: true },
-    });
-    if (!group || group.deletedAt) {
-      throw httpError(404, 'Group not found');
-    }
-    const member = await prisma.groupMember.findUnique({
-      where: { groupId_userId: { groupId: input.groupId, userId: input.userId } },
-      select: { status: true, role: true },
-    });
-    if (!member || member.status !== 'active' || member.role !== 'owner') {
-      throw httpError(403, 'Must be the group owner to request more storage');
-    }
-
-    const requestedBytes = Math.floor(input.requestedBytes);
-    if (!Number.isFinite(requestedBytes) || requestedBytes < MIN_STORAGE_REQUEST_BYTES) {
-      throw httpError(400, 'Requested storage must be at least 10 MB');
-    }
-    if (requestedBytes <= groupMaxStorageBytes(group.maxStorageBytes)) {
-      throw httpError(400, 'Requested storage must be greater than the current group limit');
-    }
-
-    const existing = await prisma.groupStorageRequest.findFirst({
-      where: { groupId: input.groupId, status: 'pending' },
-    });
-    if (existing) {
-      throw httpError(409, 'This group already has a pending storage request');
-    }
-
-    const note = input.note?.trim() || null;
-    const row = await prisma.groupStorageRequest.create({
-      data: {
-        groupId: input.groupId,
-        userId: input.userId,
-        requestedBytes: storageBytesToDb(requestedBytes),
-        note,
-      },
-    });
-    return this.mapRequest(row);
-  }
-
-  public async reduceMaxStorage(input: {
+  public async setMaxStorage(input: {
     groupId: string;
     userId: string;
     maxStorageBytes: number;
@@ -518,11 +417,15 @@ export class GroupStorageService {
     }
 
     const cap = Math.floor(input.maxStorageBytes);
-    if (!Number.isFinite(cap) || cap < MIN_STORAGE_REQUEST_BYTES) {
-      throw httpError(400, 'Storage limit must be at least 10 MB');
+    if (!Number.isFinite(cap) || cap < MIN_GROUP_STORAGE_LIMIT_BYTES) {
+      throw httpError(400, 'Storage limit must be at least 10 GB');
     }
-    if (cap >= groupMaxStorageBytes(group.maxStorageBytes)) {
-      throw httpError(400, 'Use a storage request to raise the limit');
+    if (cap > MAX_OWNER_STORAGE_LIMIT_BYTES) {
+      throw httpError(400, 'Storage limit cannot exceed 100 GB');
+    }
+    const current = groupMaxStorageBytes(group.maxStorageBytes);
+    if (cap === current) {
+      return { maxStorageBytes: cap };
     }
     const used = await this.getUsedStorageBytes(input.groupId);
     if (cap <= used) {
@@ -536,25 +439,7 @@ export class GroupStorageService {
       where: { id: input.groupId },
       data: { maxStorageBytes: storageBytesToDb(cap) },
     });
-
-    const admins = await prisma.groupMember.findMany({
-      where: {
-        groupId: input.groupId,
-        status: 'active',
-        role: { in: ['owner', 'admin'] },
-      },
-      select: { userId: true },
-    });
-    const ids = [...new Set(admins.map((m) => m.userId))];
-    if (ids.length > 0) {
-      await notificationService.createForUsers(
-        ids,
-        'Storage limit lowered',
-        `${group.name} can now store up to ${formatStorageBytes(cap)}.`,
-        { type: 'group_storage', icon: 'cloud-outline', groupId: input.groupId, dest: 'group' }
-      );
-    }
-
+    await this.notifyStorageLimit(input.groupId, group.name, cap);
     return { maxStorageBytes: cap };
   }
 
@@ -575,21 +460,10 @@ export class GroupStorageService {
       where: { id: groupId },
       data: { maxStorageBytes: storageBytesToDb(cap) },
     });
+    await this.notifyStorageLimit(groupId, group.name, cap);
+  }
 
-    const pending = await prisma.groupStorageRequest.findMany({
-      where: { groupId, status: 'pending' },
-      select: { id: true, requestedBytes: true },
-    });
-    const approvedIds = pending
-      .filter((row) => storageBytesFromDb(row.requestedBytes) <= cap)
-      .map((row) => row.id);
-    if (approvedIds.length > 0) {
-      await prisma.groupStorageRequest.updateMany({
-        where: { id: { in: approvedIds } },
-        data: { status: 'approved', decidedAt: new Date() },
-      });
-    }
-
+  private async notifyStorageLimit(groupId: string, groupName: string, cap: number): Promise<void> {
     const admins = await prisma.groupMember.findMany({
       where: {
         groupId,
@@ -599,39 +473,13 @@ export class GroupStorageService {
       select: { userId: true },
     });
     const ids = [...new Set(admins.map((m) => m.userId))];
-    if (ids.length > 0) {
-      await notificationService.createForUsers(
-        ids,
-        'Storage increased',
-        `${group.name} can now store up to ${formatStorageBytes(cap)}.`,
-        { type: 'group_storage', icon: 'cloud-outline', groupId, dest: 'group' }
-      );
-    }
-  }
-
-  public async listPendingRequestsForOperator(): Promise<
-    Array<GroupStorageRequestRow & { groupName: string; currentMaxBytes: number; usedBytes: number }>
-  > {
-    const rows = await prisma.groupStorageRequest.findMany({
-      where: { status: 'pending' },
-      orderBy: { createdAt: 'asc' },
-    });
-    const out = [];
-    for (const row of rows) {
-      const group = await prisma.group.findUnique({
-        where: { id: row.groupId },
-        select: { name: true, maxStorageBytes: true, deletedAt: true },
-      });
-      if (!group || group.deletedAt) continue;
-      const usedBytes = await this.getUsedStorageBytes(row.groupId);
-      out.push({
-        ...this.mapRequest(row),
-        groupName: group.name,
-        currentMaxBytes: groupMaxStorageBytes(group.maxStorageBytes),
-        usedBytes,
-      });
-    }
-    return out;
+    if (ids.length === 0) return;
+    await notificationService.createForUsers(
+      ids,
+      'Storage limit updated',
+      `${groupName} can now store up to ${formatStorageBytes(cap)}.`,
+      { type: 'group_storage', icon: 'cloud-outline', groupId, dest: 'group' }
+    );
   }
 }
 

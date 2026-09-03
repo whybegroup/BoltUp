@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   Platform,
@@ -14,18 +13,14 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS, useSharedValue } from 'react-native-reanimated';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import {
-  STORAGE_REQUEST_MAX_MB,
-  STORAGE_REQUEST_MIN_MB,
-  bytesToStorageRequestMb,
+  STORAGE_REQUEST_MAX_GB,
+  STORAGE_REQUEST_MIN_GB,
+  bytesToStorageRequestGb,
   formatStorageBytes,
-  mbToBytes,
-  snapStorageRequestMb,
+  gbToBytes,
+  snapStorageRequestGb,
 } from '../utils/groupStorage';
-import {
-  useCreateGroupStorageRequest,
-  useGroupStorageRequests,
-  useSetGroupStorageLimit,
-} from '../hooks/api/useGroups';
+import { useSetGroupStorageLimit } from '../hooks/api/useGroups';
 import { apiErrorMessage } from '../utils/apiErrors';
 
 export function GroupStorageRequestForm({
@@ -39,34 +34,22 @@ export function GroupStorageRequestForm({
   currentMaxBytes: number;
   usedBytes: number;
 }) {
-  const { data: requests } = useGroupStorageRequests(groupId, userId);
-  const createRequest = useCreateGroupStorageRequest(groupId, userId);
   const setLimit = useSetGroupStorageLimit(groupId, userId);
-  const pending = requests?.find((r) => r.status === 'pending') ?? null;
 
-  const [selectedMb, setSelectedMb] = useState(() => bytesToStorageRequestMb(currentMaxBytes));
-  const [note, setNote] = useState('');
+  const [selectedGb, setSelectedGb] = useState(() => bytesToStorageRequestGb(currentMaxBytes));
 
-  const requestedBytes = useMemo(() => mbToBytes(selectedMb), [selectedMb]);
+  const requestedBytes = useMemo(() => gbToBytes(selectedGb), [selectedGb]);
   const used = Math.max(0, usedBytes);
   const isDecrease = requestedBytes < currentMaxBytes;
-  const isIncrease = requestedBytes > currentMaxBytes;
+  const unchanged = requestedBytes === currentMaxBytes;
   const belowUsage = requestedBytes <= used;
-  const saving = createRequest.isPending || setLimit.isPending;
-  const canSubmit = (isDecrease || isIncrease) && !belowUsage && !saving && !pending;
+  const saving = setLimit.isPending;
+  const canSubmit = !unchanged && !belowUsage && !saving;
 
   const submit = async () => {
     if (!canSubmit) return;
     try {
-      if (isDecrease) {
-        await setLimit.mutateAsync(requestedBytes);
-      } else {
-        await createRequest.mutateAsync({
-          requestedBytes,
-          note: note.trim() || undefined,
-        });
-        setNote('');
-      }
+      await setLimit.mutateAsync(requestedBytes);
     } catch (e) {
       const msg = apiErrorMessage(e, 'Could not update storage limit');
       if (Platform.OS === 'web') window.alert(msg);
@@ -74,42 +57,23 @@ export function GroupStorageRequestForm({
     }
   };
 
-  if (pending) {
-    return (
-      <Text style={styles.pending}>
-        A request for {formatStorageBytes(pending.requestedBytes)} is waiting for approval.
-      </Text>
-    );
-  }
-
   return (
     <View style={styles.requestBlock}>
       <Text style={styles.requestTitle}>Storage limit</Text>
       <Text style={styles.hint}>
-        You can lower the limit as long as it stays above current usage. Asking for more requires
-        review.
+        Changes take effect immediately. The limit must stay above current usage.
       </Text>
-      <Text style={styles.value}>{selectedMb} MB</Text>
-      <StorageMbSlider valueMb={selectedMb} onChange={setSelectedMb} />
+      <Text style={styles.value}>{selectedGb} GB</Text>
+      <StorageGbSlider valueGb={selectedGb} onChange={setSelectedGb} />
       <View style={styles.rangeRow}>
-        <Text style={styles.rangeLabel}>{STORAGE_REQUEST_MIN_MB} MB</Text>
-        <Text style={styles.rangeLabel}>{STORAGE_REQUEST_MAX_MB} MB</Text>
+        <Text style={styles.rangeLabel}>{STORAGE_REQUEST_MIN_GB} GB</Text>
+        <Text style={styles.rangeLabel}>{STORAGE_REQUEST_MAX_GB} GB</Text>
       </View>
       {belowUsage ? (
         <Text style={styles.error}>
           This group is already using {formatStorageBytes(used)}. Choose a limit higher than current
           usage.
         </Text>
-      ) : null}
-      {isIncrease ? (
-        <TextInput
-          value={note}
-          onChangeText={setNote}
-          placeholder="Optional note"
-          placeholderTextColor={Colors.textMuted}
-          style={styles.note}
-          maxLength={280}
-        />
       ) : null}
       <TouchableOpacity
         onPress={() => void submit()}
@@ -129,19 +93,19 @@ export function GroupStorageRequestForm({
   );
 }
 
-function StorageMbSlider({
-  valueMb,
+function StorageGbSlider({
+  valueGb,
   onChange,
 }: {
-  valueMb: number;
-  onChange: (mb: number) => void;
+  valueGb: number;
+  onChange: (gb: number) => void;
 }) {
   const navigation = useNavigation();
   const trackRef = useRef<View>(null);
   const originX = useSharedValue(0);
   const trackW = useSharedValue(0);
   const pct =
-    (valueMb - STORAGE_REQUEST_MIN_MB) / (STORAGE_REQUEST_MAX_MB - STORAGE_REQUEST_MIN_MB);
+    (valueGb - STORAGE_REQUEST_MIN_GB) / (STORAGE_REQUEST_MAX_GB - STORAGE_REQUEST_MIN_GB);
 
   const setStackSwipe = (enabled: boolean) => {
     navigation.setOptions({ gestureEnabled: enabled });
@@ -162,8 +126,8 @@ function StorageMbSlider({
     const w = trackW.value;
     if (w <= 0) return;
     const t = Math.min(1, Math.max(0, (absoluteX - originX.value) / w));
-    const raw = STORAGE_REQUEST_MIN_MB + t * (STORAGE_REQUEST_MAX_MB - STORAGE_REQUEST_MIN_MB);
-    onChange(snapStorageRequestMb(raw));
+    const raw = STORAGE_REQUEST_MIN_GB + t * (STORAGE_REQUEST_MAX_GB - STORAGE_REQUEST_MIN_GB);
+    onChange(snapStorageRequestGb(raw));
   };
 
   const pan = useMemo(
@@ -198,10 +162,10 @@ function StorageMbSlider({
           accessibilityRole="adjustable"
           accessibilityLabel="Requested storage"
           accessibilityValue={{
-            min: STORAGE_REQUEST_MIN_MB,
-            max: STORAGE_REQUEST_MAX_MB,
-            now: valueMb,
-            text: `${valueMb} megabytes`,
+            min: STORAGE_REQUEST_MIN_GB,
+            max: STORAGE_REQUEST_MAX_GB,
+            now: valueGb,
+            text: `${valueGb} gigabytes`,
           }}
         >
           <View style={styles.sliderTrack}>
@@ -217,12 +181,6 @@ function StorageMbSlider({
 const THUMB = 22;
 
 const styles = StyleSheet.create({
-  pending: {
-    marginTop: 12,
-    fontSize: 13,
-    fontFamily: Fonts.medium,
-    color: Colors.textSub,
-  },
   requestBlock: { marginTop: 4 },
   requestTitle: { fontSize: 14, fontFamily: Fonts.semiBold, color: Colors.text },
   hint: { fontSize: 13, fontFamily: Fonts.regular, color: Colors.textMuted, marginTop: 4, marginBottom: 10 },
@@ -272,19 +230,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.medium,
     color: Colors.notGoing,
     marginBottom: 10,
-  },
-  note: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: Radius.lg,
-    borderWidth: 1.5,
-    borderColor: Colors.border,
-    backgroundColor: Colors.bg,
-    fontSize: 14,
-    color: Colors.text,
-    fontFamily: Fonts.regular,
-    marginBottom: 10,
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none', outlineWidth: 0 } as object) : null),
   },
   submit: {
     backgroundColor: Colors.accent,
