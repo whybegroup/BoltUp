@@ -10,7 +10,6 @@ import {
   Modal,
   Pressable,
   Alert,
-  Linking,
   Platform,
   Dimensions,
 } from 'react-native';
@@ -1099,14 +1098,27 @@ export function PostsListScreen() {
                 <View style={styles.composerFileChipsList}>
                   {newPostFileAttachments.map((file, i) => (
                     <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
-                      <FileExtensionIcon
-                        url={file.url}
-                        fileName={file.name}
-                        size={14}
-                      />
-                      <Text style={styles.composerFileChipText} numberOfLines={1}>
-                        {file.name || 'Attachment'}
-                      </Text>
+                      <TouchableOpacity
+                        style={styles.composerFileChipOpen}
+                        onPress={() =>
+                          setImageLightbox({
+                            urls: newPostFileAttachments.map((f) => f.url),
+                            index: i,
+                            alts: newPostFileAttachments.map((f) => f.name || ''),
+                          })
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel={`View attached file ${file.name || 'Attachment'}`}
+                      >
+                        <FileExtensionIcon
+                          url={file.url}
+                          fileName={file.name}
+                          size={14}
+                        />
+                        <Text style={styles.composerFileChipText} numberOfLines={1}>
+                          {file.name || 'Attachment'}
+                        </Text>
+                      </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => setNewPostFileAttachments((prev) => prev.filter((_, idx) => idx !== i))}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -1295,14 +1307,30 @@ export function PostsListScreen() {
                           <View style={styles.composerFileChipsList}>
                             {editPostFileAttachments.map((file, i) => (
                               <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
-                                <FileExtensionIcon
-                                  url={file.url}
-                                  fileName={file.name}
-                                  size={14}
-                                />
-                                <Text style={styles.composerFileChipText} numberOfLines={1}>
-                                  {file.name || 'Attachment'}
-                                </Text>
+                                <TouchableOpacity
+                                  style={styles.composerFileChipOpen}
+                                  onPress={() =>
+                                    setImageLightbox({
+                                      urls: editPostFileAttachments.map((f) => f.url),
+                                      index: i,
+                                      alts: editPostFileAttachments.map((f) => f.name || ''),
+                                      ownerName: getUserDisplayName(post.userId),
+                                      ownerAvatarSeed: postOwner?.avatarSeed ?? null,
+                                      ownerThumbnail: postOwner?.thumbnail ?? null,
+                                    })
+                                  }
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`View attached file ${file.name || 'Attachment'}`}
+                                >
+                                  <FileExtensionIcon
+                                    url={file.url}
+                                    fileName={file.name}
+                                    size={14}
+                                  />
+                                  <Text style={styles.composerFileChipText} numberOfLines={1}>
+                                    {file.name || 'Attachment'}
+                                  </Text>
+                                </TouchableOpacity>
                                 <TouchableOpacity
                                   onPress={() => setEditPostFileAttachments((prev) => prev.filter((_, idx) => idx !== i))}
                                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -1409,9 +1437,18 @@ export function PostsListScreen() {
                             key={`${post.id}-file-${idx}`}
                             style={styles.postAttachmentFileLink}
                             activeOpacity={0.7}
-                            onPress={() => Linking.openURL(uploadUrlToDownloadUrl(file.url))}
-                            accessibilityRole="link"
-                            accessibilityLabel={`Open attached file ${file.name || 'Attachment'}`}
+                            onPress={() =>
+                              setImageLightbox({
+                                urls: attachmentFiles.map((f) => f.url),
+                                index: idx,
+                                alts: attachmentFiles.map((f) => f.name || ''),
+                                ownerName: getUserDisplayName(post.userId),
+                                ownerAvatarSeed: postOwner?.avatarSeed ?? null,
+                                ownerThumbnail: postOwner?.thumbnail ?? null,
+                              })
+                            }
+                            accessibilityRole="button"
+                            accessibilityLabel={`View attached file ${file.name || 'Attachment'}`}
                           >
                             <FileExtensionIcon
                               url={file.url}
@@ -2168,6 +2205,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: Fonts.medium,
     color: Colors.text,
+    flexShrink: 1,
+  },
+  composerFileChipOpen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     flexShrink: 1,
   },
   composerFileChipRemove: {

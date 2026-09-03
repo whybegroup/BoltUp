@@ -8,8 +8,8 @@ import {
   Alert,
   Platform,
   useWindowDimensions,
-  ScrollView,
 } from 'react-native';
+import { ScrollView } from 'react-native-gesture-handler';
 import { usePathname, useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { Ionicons } from '@expo/vector-icons';
@@ -207,6 +207,8 @@ export function GroupStorageCategoryView({
         style={styles.scroll}
         refreshControl={refreshControl}
         contentContainerStyle={[styles.content, selecting && selectedCount > 0 && styles.contentWithBar]}
+        alwaysBounceVertical
+        showsVerticalScrollIndicator={false}
       >
         {files.length === 0 ? (
           <View style={styles.empty}>
@@ -369,7 +371,7 @@ const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: Colors.bg },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scroll: { flex: 1 },
-  content: { paddingHorizontal: PAD, paddingTop: 12, paddingBottom: 40 },
+  content: { flexGrow: 1, paddingHorizontal: PAD, paddingTop: 12, paddingBottom: 40 },
   contentWithBar: { paddingBottom: 24 },
   toolbar: {
     flexDirection: 'row',

@@ -25,9 +25,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Fonts, Radius } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { ResolvableImage } from './ResolvableImage';
-import { FileExtensionPreview } from './FileExtensionPreview';
 import { shareImage } from '../services/downloadImage';
-import { isImageFileUrl } from '../utils/fileKind';
+import { displayFileName, isImageFileUrl } from '../utils/fileKind';
+import { FileViewerBody } from './FileViewerBody';
 
 type ImageLightboxModalProps = {
   visible: boolean;
@@ -80,13 +80,18 @@ export function ImageLightboxModal({
 }: ImageLightboxModalProps) {
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
-  const imageHeight = Math.max(240, winH * 0.72);
+  const headerReserve = Math.max(insets.top, 12) + 58;
+  const footerReserve = Math.max(insets.bottom, 12) + 40;
+  const imageHeight = Math.max(280, winH - headerReserve - footerReserve);
   const [sharing, setSharing] = useState(false);
 
   const hasMany = urls.length > 1;
   const hasHeader = !!title || !!subtitle || !!headerAvatar;
   const safeIndex = Math.max(0, Math.min(index, Math.max(urls.length - 1, 0)));
   const currentUrl = urls[safeIndex] ?? '';
+  const currentName = names?.[safeIndex];
+  const currentIsImage = isImageFileUrl(currentUrl, currentName);
+  const fallbackTitle = currentIsImage ? 'Photo' : displayFileName(currentUrl, currentName);
   const normalizedUrlMap = useMemo(
     () => (urlMap instanceof Map ? urlMap : urlMap ? new Map(Object.entries(urlMap)) : undefined),
     [urlMap]
@@ -118,6 +123,34 @@ export function ImageLightboxModal({
   const closeViewer = useCallback(() => {
     onClose();
   }, [onClose]);
+
+  const jumpToIndex = useCallback(
+    (nextIndex: number) => {
+      const target = Math.max(0, Math.min(urls.length - 1, nextIndex));
+      pageIndexSv.value = target;
+      pageOffset.value = withTiming(-target * winW, SLIDE);
+      scale.value = 1;
+      savedScale.value = 1;
+      translateX.value = 0;
+      translateY.value = 0;
+      savedTranslateX.value = 0;
+      savedTranslateY.value = 0;
+      onChangeIndex(target);
+    },
+    [
+      urls.length,
+      winW,
+      onChangeIndex,
+      pageIndexSv,
+      pageOffset,
+      scale,
+      savedScale,
+      translateX,
+      translateY,
+      savedTranslateX,
+      savedTranslateY,
+    ]
+  );
 
   const resetZoom = useCallback(() => {
     'worklet';
@@ -354,8 +387,8 @@ export function ImageLightboxModal({
   );
 
   const composed = useMemo(
-    () => Gesture.Simultaneous(pinch, pan, doubleTap),
-    [pinch, pan, doubleTap]
+    () => (currentIsImage ? Gesture.Simultaneous(pinch, pan, doubleTap) : pan),
+    [currentIsImage, pinch, pan, doubleTap]
   );
 
   const slideStyle = useAnimatedStyle(() => {
@@ -394,7 +427,7 @@ export function ImageLightboxModal({
     try {
       await shareImage(currentUrl, normalizedUrlMap);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Could not share image';
+      const msg = e instanceof Error ? e.message : 'Could not share file';
       Toast.show({ type: 'error', text1: msg });
     } finally {
       setSharing(false);
@@ -415,7 +448,7 @@ export function ImageLightboxModal({
                   {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
                 </View>
               ) : (
-                <Text style={styles.headerTitle}>Photo</Text>
+                <Text style={styles.headerTitle}>{fallbackTitle}</Text>
               )}
             </View>
             <View style={styles.headerActions}>
@@ -423,7 +456,7 @@ export function ImageLightboxModal({
                 <TouchableOpacity
                   onPress={() => onDelete(currentUrl)}
                   style={styles.iconBtn}
-                  accessibilityLabel="Delete image"
+                  accessibilityLabel="Delete"
                   disabled={deleting || !currentUrl.trim()}
                 >
                   {deleting ? (
@@ -436,7 +469,7 @@ export function ImageLightboxModal({
               <TouchableOpacity
                 onPress={() => void onShare()}
                 style={styles.iconBtn}
-                accessibilityLabel="Share image"
+                accessibilityLabel="Share"
                 disabled={sharing || !currentUrl.trim()}
               >
                 {sharing ? (
@@ -479,18 +512,46 @@ export function ImageLightboxModal({
                         style={styles.image}
                         resizeMode="contain"
                       />
-                    ) : (
-                      <FileExtensionPreview
-                        url={url}
+                    ) : Math.abs(i - safeIndex) <= 1 ? (
+                      <FileViewerBody
+                        storedUrl={url}
                         fileName={names?.[i]}
-                        variant="viewer"
+                        urlMap={normalizedUrlMap}
+                        active={visible && i === safeIndex}
                       />
+                    ) : (
+                      <View style={styles.image} />
                     )}
                   </Animated.View>
                 ))}
               </Animated.View>
             </GestureDetector>
           </View>
+
+          {hasMany ? (
+            <>
+              <Animated.View style={[styles.navWrap, styles.navPrev, { top: winH / 2 - 20 }, chromeStyle]}>
+                <TouchableOpacity
+                  onPress={() => jumpToIndex(safeIndex - 1)}
+                  disabled={safeIndex <= 0}
+                  style={[styles.iconBtn, safeIndex <= 0 && styles.navDisabled]}
+                  accessibilityLabel="Previous file"
+                >
+                  <Ionicons name="chevron-back" size={22} color="#fff" />
+                </TouchableOpacity>
+              </Animated.View>
+              <Animated.View style={[styles.navWrap, styles.navNext, { top: winH / 2 - 20 }, chromeStyle]}>
+                <TouchableOpacity
+                  onPress={() => jumpToIndex(safeIndex + 1)}
+                  disabled={safeIndex >= urls.length - 1}
+                  style={[styles.iconBtn, safeIndex >= urls.length - 1 && styles.navDisabled]}
+                  accessibilityLabel="Next file"
+                >
+                  <Ionicons name="chevron-forward" size={22} color="#fff" />
+                </TouchableOpacity>
+              </Animated.View>
+            </>
+          ) : null}
 
           {showCounter && hasMany ? (
             <Animated.View style={[styles.counterWrap, { bottom: Math.max(insets.bottom, 16) + 24 }, chromeStyle]}>
@@ -561,6 +622,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
+  navWrap: {
+    position: 'absolute',
+    zIndex: 8,
+  },
+  navPrev: { left: 10 },
+  navNext: { right: 10 },
+  navDisabled: { opacity: 0.28 },
   clip: {
     overflow: 'hidden',
   },

@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   Modal,
-  Linking,
   ActivityIndicator,
   Pressable,
   Platform,
@@ -1637,14 +1636,28 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
           <View style={styles.composerFileChipsList}>
             {fileAttachments.map((file, i) => (
               <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
-                <FileExtensionIcon
-                  url={file.url}
-                  fileName={file.name}
-                  size={14}
-                />
-                <Text style={styles.composerFileChipText} numberOfLines={1}>
-                  {file.name || 'Attachment'}
-                </Text>
+                <TouchableOpacity
+                  style={styles.composerFileChipOpen}
+                  onPress={() =>
+                    setImageLightbox({
+                      urls: fileAttachments.map((f) => f.url),
+                      index: i,
+                      alts: fileAttachments.map((f) => f.name || ''),
+                      ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                    })
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={`View attached file ${file.name || 'Attachment'}`}
+                >
+                  <FileExtensionIcon
+                    url={file.url}
+                    fileName={file.name}
+                    size={14}
+                  />
+                  <Text style={styles.composerFileChipText} numberOfLines={1}>
+                    {file.name || 'Attachment'}
+                  </Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => removeComposerFileAtFor(channel, i)}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -1921,9 +1934,18 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                                 key={`${post.id}-file-${idx}`}
                                 style={styles.postAttachmentFileLink}
                                 activeOpacity={0.7}
-                                onPress={() => Linking.openURL(uploadUrlToDownloadUrl(file.url))}
-                                accessibilityRole="link"
-                                accessibilityLabel={`Open attached file ${file.name || 'Attachment'}`}
+                                onPress={() =>
+                                  setImageLightbox({
+                                    urls: attachmentFiles.map((f) => f.url),
+                                    index: idx,
+                                    alts: attachmentFiles.map((f) => f.name || ''),
+                                    ownerName: getUserDisplayName(post.userId),
+                                    ownerAvatarSeed: postOwner?.avatarSeed ?? null,
+                                    ownerThumbnail: postOwner?.thumbnail ?? null,
+                                  })
+                                }
+                                accessibilityRole="button"
+                                accessibilityLabel={`View attached file ${file.name || 'Attachment'}`}
                               >
                                 <FileExtensionIcon
                                   url={file.url}
@@ -2571,6 +2593,12 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontFamily: Fonts.regular,
     fontSize: 13,
+  },
+  composerFileChipOpen: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
   },
   composerFileChipRemove: {
     width: 18,

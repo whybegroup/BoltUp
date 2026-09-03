@@ -12,6 +12,8 @@ const plugins = [
   'expo-router',
   'expo-font',
   'expo-web-browser',
+  ['expo-audio', { microphonePermission: false, recordAudioAndroid: false }],
+  'expo-video',
   [
     'expo-build-properties',
     {

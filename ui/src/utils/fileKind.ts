@@ -4,7 +4,14 @@ import { Ionicons } from '@expo/vector-icons';
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
 const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|heic|heif|svg|avif)$/i;
-const NON_IMAGE_EXT = /^(pdf|docx?|xlsx?|csv|pptx?|zip|json|txt|rtf|mp3|wav|m4a|mp4|mov|webm)$/i;
+const AUDIO_EXT = /^(mp3|wav|m4a|aac|ogg|flac|opus|wma)$/i;
+const VIDEO_EXT = /^(mp4|mov|webm|m4v|avi|mkv)$/i;
+const TEXT_EXT = /^(txt|json|csv|md|xml|log|html|css|js|ts)$/i;
+const NON_IMAGE_EXT =
+  /^(pdf|docx?|xlsx?|csv|pptx?|zip|json|txt|rtf|mp3|wav|m4a|aac|ogg|flac|opus|wma|mp4|mov|webm|m4v|avi|mkv)$/i;
+
+export type FileViewerKind = 'image' | 'audio' | 'video' | 'pdf' | 'text' | 'other';
+
 const UUID_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
 export type FileKindStyle = {
@@ -27,6 +34,16 @@ export function extensionFromFileNameOrUrl(input: string): string {
   const dot = base.lastIndexOf('.');
   if (dot <= 0 || dot === base.length - 1) return '';
   return base.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
+}
+
+export function fileViewerKind(url: string, fileName?: string): FileViewerKind {
+  if (isImageFileUrl(url, fileName)) return 'image';
+  const ext = extensionFromFileNameOrUrl(fileName?.trim() || url);
+  if (ext === 'pdf') return 'pdf';
+  if (AUDIO_EXT.test(ext)) return 'audio';
+  if (VIDEO_EXT.test(ext)) return 'video';
+  if (TEXT_EXT.test(ext)) return 'text';
+  return 'other';
 }
 
 export function isImageFileUrl(url: string, fileName?: string): boolean {
@@ -86,10 +103,18 @@ export function fileKindStyle(url: string, fileName?: string): FileKindStyle {
     case 'mp3':
     case 'wav':
     case 'm4a':
+    case 'aac':
+    case 'ogg':
+    case 'flac':
+    case 'opus':
+    case 'wma':
       return { icon: 'musical-notes-outline', color: '#DB2777', label };
     case 'mp4':
     case 'mov':
     case 'webm':
+    case 'm4v':
+    case 'avi':
+    case 'mkv':
       return { icon: 'videocam-outline', color: '#7C3AED', label };
     default:
       return { icon: 'document-outline', color: '#71717A', label };

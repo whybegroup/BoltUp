@@ -88,7 +88,13 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
 
   return (
     <View style={styles.page}>
-      <KeyboardSafeScrollView style={styles.scroll} refreshControl={refreshControl}>
+      <KeyboardSafeScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={refreshControl}
+        alwaysBounceVertical
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.content}>
           <GroupStorageUsageBar
             usedBytes={usedBytes}
@@ -159,6 +165,7 @@ const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: Colors.bg },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scroll: { flex: 1 },
+  scrollContent: { flexGrow: 1 },
   content: { paddingTop: 16, paddingBottom: 40 },
   sectionLabel: {
     fontSize: 11,
