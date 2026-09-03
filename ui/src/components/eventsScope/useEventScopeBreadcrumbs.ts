@@ -15,7 +15,9 @@ import {
   buildGroupForumUrl,
   buildGroupMembersUrl,
   buildGroupSettingsUrl,
+  buildGroupStorageUrl,
 } from '../../utils/breadcrumbUrl';
+import { GROUP_STORAGE_CATEGORY_LABELS } from '../../utils/groupStorageCategories';
 
 type UseEventScopeBreadcrumbsOptions = {
   enabled?: boolean;
@@ -43,6 +45,8 @@ export function useEventScopeBreadcrumbs(
     : subpage.kind === 'group-forum' ? subpage.groupId
     : subpage.kind === 'group-members' ? subpage.groupId
     : subpage.kind === 'group-settings' ? subpage.groupId
+    : subpage.kind === 'group-storage' ? subpage.groupId
+    : subpage.kind === 'group-storage-category' ? subpage.groupId
     : undefined;
   const pollId = subpage.kind === 'group-poll-detail' ? subpage.pollId : undefined;
   
@@ -245,6 +249,45 @@ export function useEventScopeBreadcrumbs(
             onPress: () => navigateTo(groupHref),
           });
           segs.push({ label: 'Settings' });
+        }
+        return segs;
+
+      case 'group-storage':
+        if (fromEventId && fromEvent) {
+          segs.push({
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
+            onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
+          });
+        }
+        if (group) {
+          const groupHref = buildGroupDetailUrl(subpage.groupId, { isInEventsTab: true, fromEventId });
+          segs.push({
+            label: breadcrumbTruncate(group.name || 'Group'),
+            onPress: () => navigateTo(groupHref),
+          });
+          segs.push({ label: 'Manage Storage' });
+        }
+        return segs;
+
+      case 'group-storage-category':
+        if (fromEventId && fromEvent) {
+          segs.push({
+            label: breadcrumbTruncate(fromEvent.name || 'Event'),
+            onPress: () => navigateTo(`/(tabs)/events/${fromEventId}` as Href),
+          });
+        }
+        if (group) {
+          const groupHref = buildGroupDetailUrl(subpage.groupId, { isInEventsTab: true, fromEventId });
+          const storageHref = buildGroupStorageUrl(subpage.groupId, { isInEventsTab: true, fromEventId });
+          segs.push({
+            label: breadcrumbTruncate(group.name || 'Group'),
+            onPress: () => navigateTo(groupHref),
+          });
+          segs.push({
+            label: 'Manage Storage',
+            onPress: () => navigateTo(storageHref),
+          });
+          segs.push({ label: GROUP_STORAGE_CATEGORY_LABELS[subpage.category] });
         }
         return segs;
 

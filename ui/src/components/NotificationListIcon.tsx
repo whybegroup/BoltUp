@@ -16,6 +16,7 @@ const TYPE_TO_ICON: Record<string, IonName> = {
   comment_added: 'chatbubble-outline',
   mention: 'at-outline',
   group_approval: 'person-add-outline',
+  group_join_request: 'person-add-outline',
   time_suggestion: 'time-outline',
   event_time_changed: 'time-outline',
   location_changed: 'location-outline',

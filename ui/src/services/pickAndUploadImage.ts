@@ -5,18 +5,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { StorageService } from '@moijia/client';
 import { apiErrorMessage } from '../utils/apiErrors';
-import {
-  loadImageUploadQuality,
-  type ImageUploadQuality,
-} from '../utils/imageUploadQualityPrefs';
 
 export type UploadOpts = { groupId?: string };
 
 function isCancelled(e: unknown): boolean {
   return e instanceof Error && e.message === 'cancelled';
 }
-
-export type { ImageUploadQuality };
 
 export type PickedImageAsset = {
   uri: string;
@@ -32,8 +26,6 @@ export type PickedFileAsset = {
   fileName: string;
 };
 
-const COMPATIBLE_IMAGE_TYPES = /^(image\/jpeg|image\/jpg|image\/png|image\/gif)$/i;
-const PNG_TYPE = /^image\/png$/i;
 const GIF_TYPE = /^image\/gif$/i;
 const COMPRESSED_MAX_EDGE = 1920;
 const COMPRESSED_JPEG_QUALITY = 0.72;
@@ -60,10 +52,8 @@ function replaceExt(fileName: string | undefined, ext: string): string {
   return `${base}.${ext}`;
 }
 
-function needsReencode(contentType: string, quality: ImageUploadQuality): boolean {
-  if (GIF_TYPE.test(contentType)) return false;
-  if (quality === 'compressed') return true;
-  return !COMPATIBLE_IMAGE_TYPES.test(contentType);
+function needsReencode(contentType: string): boolean {
+  return !GIF_TYPE.test(contentType);
 }
 
 async function getImageSize(
@@ -82,10 +72,9 @@ async function getImageSize(
 }
 
 function resizeActions(
-  size: { width: number; height: number } | null,
-  quality: ImageUploadQuality
+  size: { width: number; height: number } | null
 ): Array<{ resize: { width: number } | { height: number } }> {
-  if (quality !== 'compressed' || !size) return [];
+  if (!size) return [];
   const edge = Math.max(size.width, size.height);
   if (edge <= COMPRESSED_MAX_EDGE) return [];
   return size.width >= size.height
@@ -93,63 +82,41 @@ function resizeActions(
     : [{ resize: { height: COMPRESSED_MAX_EDGE } }];
 }
 
-function saveOptionsFor(
-  contentType: string,
-  quality: ImageUploadQuality
-): { format: SaveFormat; compress: number; contentType: string; ext: string } {
-  if (quality === 'original' && PNG_TYPE.test(contentType)) {
-    return { format: SaveFormat.PNG, compress: 1, contentType: 'image/png', ext: 'png' };
-  }
-  return {
-    format: SaveFormat.JPEG,
-    compress: quality === 'compressed' ? COMPRESSED_JPEG_QUALITY : 1,
-    contentType: 'image/jpeg',
-    ext: 'jpg',
-  };
-}
-
-export async function convertPickedImage(
-  asset: PickedImageAsset,
-  quality: ImageUploadQuality
-): Promise<PickedImageAsset> {
+export async function convertPickedImage(asset: PickedImageAsset): Promise<PickedImageAsset> {
   const contentType = inferContentType(asset.contentType, asset.fileName, asset.uri);
-  if (!needsReencode(contentType, quality)) {
+  if (!needsReencode(contentType)) {
     return { ...asset, contentType };
   }
   const size = await getImageSize(asset.uri, asset.width, asset.height);
-  const save = saveOptionsFor(contentType, quality);
   try {
-    const result = await manipulateAsync(asset.uri, resizeActions(size, quality), {
-      compress: save.compress,
-      format: save.format,
+    const result = await manipulateAsync(asset.uri, resizeActions(size), {
+      compress: COMPRESSED_JPEG_QUALITY,
+      format: SaveFormat.JPEG,
     });
     return {
       uri: result.uri,
-      contentType: save.contentType,
-      fileName: replaceExt(asset.fileName, save.ext),
+      contentType: 'image/jpeg',
+      fileName: replaceExt(asset.fileName, 'jpg'),
       width: result.width,
       height: result.height,
     };
   } catch {
-    if (COMPATIBLE_IMAGE_TYPES.test(contentType) && quality === 'original') {
-      return { ...asset, contentType };
-    }
     throw new Error('Could not convert this image. Try a JPEG or PNG.');
   }
 }
 
-export async function convertWebImageFile(file: File, quality: ImageUploadQuality): Promise<File> {
+export async function convertWebImageFile(file: File): Promise<File> {
   const contentType = inferContentType(file.type, file.name);
-  if (!needsReencode(contentType, quality)) return file;
+  if (!needsReencode(contentType)) return file;
   const objectUrl = URL.createObjectURL(file);
   try {
-    const converted = await convertPickedImage(
-      { uri: objectUrl, contentType, fileName: file.name },
-      quality
-    );
+    const converted = await convertPickedImage({
+      uri: objectUrl,
+      contentType,
+      fileName: file.name,
+    });
     const blob = await (await fetch(converted.uri)).blob();
-    const ext = converted.contentType === 'image/png' ? 'png' : 'jpg';
-    return new File([blob], converted.fileName || replaceExt(file.name, ext), {
+    return new File([blob], converted.fileName || replaceExt(file.name, 'jpg'), {
       type: converted.contentType,
     });
   } finally {
@@ -157,7 +124,7 @@ export async function convertWebImageFile(file: File, quality: ImageUploadQualit
   }
 }
 
-/** Converts each image to JPEG/PNG at the user's saved quality. Throws `cancelled` if none are images. */
+/** Converts each image to a compressed JPEG. Throws `cancelled` if none are images. */
 export async function prepareWebImageFiles(files: Iterable<File>): Promise<File[]> {
   const images = [...files].filter(
     (f) => f.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif|avif)$/i.test(f.name)
@@ -166,10 +133,9 @@ export async function prepareWebImageFiles(files: Iterable<File>): Promise<File[
     Alert.alert('Upload', 'Please choose an image file.');
     throw new Error('cancelled');
   }
-  const quality = await loadImageUploadQuality();
   const out: File[] = [];
   for (const file of images) {
-    out.push(await convertWebImageFile(file, quality));
+    out.push(await convertWebImageFile(file));
   }
   return out;
 }
@@ -184,30 +150,25 @@ function pickerAssetToPicked(asset: ImagePicker.ImagePickerAsset): PickedImageAs
   };
 }
 
-async function convertPickedImages(
-  assets: PickedImageAsset[],
-  quality: ImageUploadQuality
-): Promise<PickedImageAsset[]> {
+async function convertPickedImages(assets: PickedImageAsset[]): Promise<PickedImageAsset[]> {
   const out: PickedImageAsset[] = [];
   for (const asset of assets) {
-    out.push(await convertPickedImage(asset, quality));
+    out.push(await convertPickedImage(asset));
   }
   return out;
 }
 
-/** Opens the image library; throws `cancelled` if the user backs out. Single image, always original (avatars). */
+/** Opens the image library; throws `cancelled` if the user backs out. */
 export async function pickImageFromLibrary(): Promise<PickedImageAsset> {
-  const assets = await pickImagesFromLibrary({ multiple: false, useQualityPreference: false });
+  const assets = await pickImagesFromLibrary({ multiple: false });
   return assets[0];
 }
 
-/** Opens the image library. Multiple selection and the saved quality preference by default. */
+/** Opens the image library. Multiple selection by default. Photos are compressed. */
 export async function pickImagesFromLibrary(opts?: {
   multiple?: boolean;
-  useQualityPreference?: boolean;
 }): Promise<PickedImageAsset[]> {
   const multiple = opts?.multiple ?? true;
-  const usePreference = opts?.useQualityPreference ?? true;
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (perm.status !== 'granted') {
     throw new Error('Photo library access is required to upload images.');
@@ -226,8 +187,7 @@ export async function pickImagesFromLibrary(opts?: {
   }
 
   const picked = result.assets.map(pickerAssetToPicked);
-  const quality = usePreference ? await loadImageUploadQuality() : 'original';
-  return convertPickedImages(picked, quality);
+  return convertPickedImages(picked);
 }
 
 /** Opens the camera; throws `cancelled` if the user backs out. */
@@ -249,8 +209,7 @@ export async function pickImageFromCamera(): Promise<PickedImageAsset> {
 
 async function pickCameraImageForUpload(): Promise<PickedImageAsset> {
   const asset = await pickImageFromCamera();
-  const quality = await loadImageUploadQuality();
-  return convertPickedImage(asset, quality);
+  return convertPickedImage(asset);
 }
 
 /** Opens the document picker; throws `cancelled` if the user backs out. */
@@ -354,12 +313,11 @@ export async function uploadPickedImageAsset(
   opts?: UploadOpts
 ): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload photos.');
-  const ready = await convertPickedImage(asset, 'original');
-  const body = await readUploadBody(ready.uri);
+  const body = await readUploadBody(asset.uri);
   return presignAndPut({
     userId,
-    contentType: ready.contentType,
-    filename: ready.fileName,
+    contentType: asset.contentType,
+    filename: asset.fileName,
     body,
     groupId: opts?.groupId,
   });
@@ -398,12 +356,12 @@ export function uploadUrlToDownloadUrl(sourceUrl: string): string {
 
 /** Picks from library then presigns + PUT. Throws `cancelled` if the user backs out of the picker. */
 export async function pickAndUploadImageFromLibrary(userId: string, opts?: UploadOpts): Promise<string> {
-  const assets = await pickImagesFromLibrary({ multiple: false, useQualityPreference: true });
+  const assets = await pickImagesFromLibrary({ multiple: false });
   return uploadPickedImageAsset(userId, assets[0], opts);
 }
 
 export async function pickAndUploadImagesFromLibrary(userId: string, opts?: UploadOpts): Promise<string[]> {
-  const assets = await pickImagesFromLibrary({ multiple: true, useQualityPreference: true });
+  const assets = await pickImagesFromLibrary({ multiple: true });
   const urls: string[] = [];
   for (const asset of assets) {
     urls.push(await uploadPickedImageAsset(userId, asset, opts));
@@ -508,7 +466,7 @@ export async function pickDeferredCoverPhotoNative(): Promise<Array<{
   pending: PendingAvatarFile;
 }> | null> {
   try {
-    const assets = await pickImagesFromLibrary({ multiple: true, useQualityPreference: true });
+    const assets = await pickImagesFromLibrary({ multiple: true });
     return assets.map(pendingFromPicked);
   } catch (e) {
     if (isCancelled(e)) return null;
@@ -542,7 +500,7 @@ export function coverPhotoDraftDisplayUri(d: CoverPhotoDraft): string {
 
 export async function uploadWebImageFile(userId: string, file: File, opts?: UploadOpts): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload photos.');
-  const ready = await convertWebImageFile(file, 'original');
+  const ready = await convertWebImageFile(file);
   const contentType = ready.type?.startsWith('image/') ? ready.type : 'image/jpeg';
   return presignAndPut({
     userId,

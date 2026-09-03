@@ -1,10 +1,30 @@
 import { StorageService } from '@moijia/client';
 import { warmImageDiskCache } from './imageDiskCache';
 
+/**
+ * Bucket names with dots cannot use virtual-hosted HTTPS
+ * (`bucket.name.s3.region.amazonaws.com` fails TLS). Rewrite to path-style.
+ */
+export function toRenderableImageUrl(url: string): string {
+  const trimmed = url?.trim();
+  if (!trimmed) return url;
+  try {
+    const u = new URL(trimmed);
+    const m = u.hostname.match(/^(.+)\.s3\.([a-z0-9-]+)\.amazonaws\.com$/i);
+    if (m?.[1]?.includes('.')) {
+      const key = u.pathname.replace(/^\//, '');
+      return `https://s3.${m[2]}.amazonaws.com/${m[1]}/${key}${u.search}`;
+    }
+  } catch {
+    /* keep original */
+  }
+  return trimmed;
+}
+
 export function isDirectRenderableImageUrl(url: string): boolean {
   if (!url?.trim()) return false;
   return (
-    /^(blob:|file:|content:|ph:|data:)/i.test(url) ||
+    /^(blob:|file:|content:|ph:|data:|https?:)/i.test(url) ||
     url.startsWith('assets-library:')
   );
 }
@@ -52,7 +72,7 @@ export async function resolveImageViewUrls(urls: string[]): Promise<Map<string, 
   for (const u of urls) {
     if (!u) continue;
     if (isDirectRenderableImageUrl(u)) {
-      out.set(u, u);
+      out.set(u, toRenderableImageUrl(u));
       continue;
     }
     const cached = cacheGet(u);
@@ -71,18 +91,19 @@ export async function resolveImageViewUrls(urls: string[]): Promise<Map<string, 
   try {
     const res = await StorageService.presignGetBatch({ sourceUrls: needsApi });
     for (const row of res.results) {
-      const view = row.viewUrl || row.sourceUrl;
+      const view = toRenderableImageUrl(row.viewUrl || row.sourceUrl);
       cacheSet(row.sourceUrl, view, typeof row.expiresIn === 'number' ? row.expiresIn : 300);
       out.set(row.sourceUrl, view);
     }
     for (const u of needsApi) {
       if (!out.has(u)) {
-        out.set(u, u);
-        cacheSet(u, u, 0);
+        const view = toRenderableImageUrl(u);
+        out.set(u, view);
+        cacheSet(u, view, 0);
       }
     }
   } catch {
-    for (const u of needsApi) out.set(u, u);
+    for (const u of needsApi) out.set(u, toRenderableImageUrl(u));
   }
 
   warmImageDiskCache(out);

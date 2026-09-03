@@ -19,6 +19,8 @@ import {
   NotifPrefsPartial,
   GroupStorageRequest,
   GroupStorageRequestInput,
+  GroupStorageBreakdown,
+  GroupStorageFileList,
 } from '../models';
 import { mergeNotifPrefs, parseNotifPrefsJson } from '../utils/notifPrefsCore';
 import { extractUploadUrlsFromForumBody } from '../utils/groupPostBodyUploads';
@@ -27,7 +29,7 @@ import { S3UploadService } from './S3UploadService';
 import { groupStorage } from './GroupStorageService';
 import { UserService } from './UserService';
 import { sortByGroupOrder } from '../utils/groupOrder';
-import { DEFAULT_GROUP_MAX_STORAGE_BYTES } from '../utils/groupStorageLimits';
+import { DEFAULT_GROUP_MAX_STORAGE_BYTES, groupMaxStorageBytes, storageBytesToDb } from '../utils/groupStorageLimits';
 import { httpError } from '../utils/httpError';
 import {
   extractMentionTokens,
@@ -283,7 +285,7 @@ export class GroupService {
       coverPhotos: this.mapGroupCoverUrls(group),
       avatarSeed: group.avatarSeed,
       requireApprovalToJoin: group.requireApprovalToJoin ?? true,
-      maxStorageBytes: group.maxStorageBytes ?? DEFAULT_GROUP_MAX_STORAGE_BYTES,
+      maxStorageBytes: groupMaxStorageBytes(group.maxStorageBytes),
       memberCount,
       membershipStatus,
       deletedAt: group.deletedAt ?? undefined,
@@ -379,7 +381,7 @@ export class GroupService {
     const group = await prisma.group.create({
       data: {
         ...groupData,
-        maxStorageBytes,
+        maxStorageBytes: storageBytesToDb(maxStorageBytes),
         inviteCode: finalInviteCode,
         createdBy,
         updatedBy: createdBy,
@@ -619,6 +621,34 @@ export class GroupService {
     });
   }
 
+  public async reduceStorageLimit(
+    groupId: string,
+    userId: string,
+    maxStorageBytes: number
+  ): Promise<{ maxStorageBytes: number }> {
+    return groupStorage.reduceMaxStorage({ groupId, userId, maxStorageBytes });
+  }
+
+  public async getStorageBreakdown(groupId: string, userId: string): Promise<GroupStorageBreakdown> {
+    await groupStorage.requireOwnerOrAdmin(groupId, userId);
+    return groupStorage.getBreakdown(groupId);
+  }
+
+  public async listStorageFiles(
+    groupId: string,
+    userId: string,
+    category: string
+  ): Promise<GroupStorageFileList> {
+    await groupStorage.requireOwnerOrAdmin(groupId, userId);
+    return groupStorage.listFiles(groupId, groupStorage.parseStorageCategory(category));
+  }
+
+  public async deleteStorageFile(groupId: string, userId: string, url: string): Promise<void> {
+    await groupStorage.requireOwnerOrAdmin(groupId, userId);
+    await groupStorage.unlinkFileFromGroup(groupId, url);
+    await objectStore.deleteManagedUploadBestEffort(url);
+  }
+
   private async requireOwner(groupId: string, userId: string): Promise<void> {
     const member = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },
@@ -674,6 +704,44 @@ export class GroupService {
         dest: 'group',
       })
       .catch((err) => console.error('Failed to create group notifications:', err));
+  }
+
+  private async notifyGroupAdmins(
+    groupId: string,
+    excludeUserId: string | undefined,
+    title: string,
+    body: string,
+    options: { type: string; icon: string }
+  ): Promise<void> {
+    const admins = await prisma.groupMember.findMany({
+      where: {
+        groupId,
+        status: 'active',
+        role: { in: ['owner', 'admin'] },
+      },
+      select: { userId: true },
+    });
+    const ids = [...new Set(admins.map((m) => m.userId))].filter((uid) => uid !== excludeUserId);
+    if (ids.length === 0) return;
+    await notificationService
+      .createForUsers(ids, title, body, {
+        type: options.type,
+        icon: options.icon,
+        groupId,
+        dest: 'group',
+      })
+      .catch((err) => console.error('Failed to create group admin notifications:', err));
+  }
+
+  private async notifyJoinRequest(groupId: string, groupName: string, requesterId: string): Promise<void> {
+    const who = await this.actorDisplayName(requesterId);
+    await this.notifyGroupAdmins(
+      groupId,
+      requesterId,
+      'Join request',
+      `${who} requested to join ${groupName}`,
+      { type: 'group_join_request', icon: 'person-add-outline' }
+    );
   }
 
   private async notifyGroupAnnouncementChanged(params: {
@@ -1331,6 +1399,9 @@ export class GroupService {
           where: { groupId_userId: { groupId, userId } },
           data: { status },
         });
+        if (status === 'pending') {
+          await this.notifyJoinRequest(groupId, group.name, userId);
+        }
         return {
           groupId,
           groupName: group.name,
@@ -1348,6 +1419,9 @@ export class GroupService {
         status,
       },
     });
+    if (status === 'pending') {
+      await this.notifyJoinRequest(groupId, group.name, userId);
+    }
     return {
       groupId,
       groupName: group.name,
@@ -1751,7 +1825,7 @@ export class GroupService {
       avatarSeed: group.avatarSeed,
       inviteCode: group.inviteCode,
       requireApprovalToJoin: group.requireApprovalToJoin ?? true,
-      maxStorageBytes: group.maxStorageBytes ?? DEFAULT_GROUP_MAX_STORAGE_BYTES,
+      maxStorageBytes: groupMaxStorageBytes(group.maxStorageBytes),
       ownerId: owner ? owner.userId : '',
       adminIds: admins.map((m: any) => m.userId),
       memberIds: activeMembers.map((m: any) => m.userId),

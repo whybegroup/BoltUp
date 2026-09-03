@@ -65,14 +65,75 @@ export function extractUploadUrlsFromForumBody(body: string | null | undefined):
   return [...urls];
 }
 
-const IMAGE_URL_EXT = /\.(png|jpe?g|gif|webp|bmp)(\?.*)?$/i;
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripAttachmentBlockUrl(block: string, target: string): string {
+  return block
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (trimmed === target) return false;
+      if (parseImageUrlFromLine(trimmed) === target) return false;
+      if (parseFileUrlFromLine(trimmed) === target) return false;
+      return true;
+    })
+    .join('\n');
+}
+
+function stripMarkdownUrl(src: string, target: string): string {
+  const escaped = escapeRegExp(target);
+  let out = src.replace(new RegExp(`!\\[[^\\]]*\\]\\(${escaped}\\)`, 'g'), '');
+  out = out.replace(new RegExp(`(?<!!)\\[[^\\]]*\\]\\(${escaped}\\)`, 'g'), '');
+  out = out
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== target)
+    .join('\n');
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Remove one upload URL from a group post/comment body (markdown + attachment block). */
+export function removeUploadUrlFromForumBody(body: string | null | undefined, url: string): string {
+  const raw = body ?? '';
+  const target = url.trim();
+  if (!raw.trim() || !target) return raw;
+
+  const marker = GROUP_POST_ATTACHMENT_MARKER;
+  const markerSep = `\n${marker}\n`;
+
+  if (raw.startsWith(`${marker}\n`)) {
+    const remaining = stripAttachmentBlockUrl(raw.slice(marker.length + 1), target);
+    return remaining ? `${marker}\n${remaining}` : '';
+  }
+
+  const idx = raw.indexOf(markerSep);
+  if (idx !== -1) {
+    const md = stripMarkdownUrl(raw.slice(0, idx).trimEnd(), target);
+    const remaining = stripAttachmentBlockUrl(raw.slice(idx + markerSep.length), target);
+    if (!md && !remaining) return '';
+    if (!remaining) return md;
+    if (!md) return `${marker}\n${remaining}`;
+    return `${md}${markerSep}${remaining}`;
+  }
+
+  return stripMarkdownUrl(raw, target);
+}
+
+const IMAGE_URL_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif)(\?.*)?$/i;
 const NON_IMAGE_URL_EXT = /\.(pdf|docx?|xlsx?|pptx?|zip|json|txt)(\?.*)?$/i;
+
+export function isLikelyUploadedImageUrl(url: string): boolean {
+  const u = url.trim();
+  if (!u || NON_IMAGE_URL_EXT.test(u)) return false;
+  if (IMAGE_URL_EXT.test(u)) return true;
+  return /\/storage\//i.test(u);
+}
 
 export function firstImageUrlFromForumBody(body: string | null | undefined): string | null {
   for (const u of extractUploadUrlsFromForumBody(body)) {
-    const url = u.trim();
-    if (!url || NON_IMAGE_URL_EXT.test(url)) continue;
-    if (IMAGE_URL_EXT.test(url) || /\/storage\/files\//i.test(url)) return url;
+    if (isLikelyUploadedImageUrl(u)) return u.trim();
   }
   const md = (body ?? '').match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/);
   return md?.[1]?.trim() || null;

@@ -34,6 +34,7 @@ import {
   useDeleteGroup,
   useRecoverGroup,
   useEvents,
+  useGroupStorageBreakdown,
 } from '../hooks/api';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -59,10 +60,12 @@ import {
   buildGroupForumUrl,
   buildGroupMembersUrl,
   buildGroupSettingsUrl,
+  buildGroupStorageUrl,
 } from '../utils/breadcrumbUrl';
 import { withReturnTo } from '../utils/navigationReturn';
 import { groupInviteLink } from '../utils/inviteLink';
 import { shareGroupInvite } from '../utils/shareContent';
+import { groupStorageCategoryUsages } from '../utils/groupStorageCategories';
 import { ChromeHeaderTrailingRow, DetailActionIcon, RegisterChromeHeader } from './chromeHeaderSlot';
 
 const AVATAR_SIZE = 56;
@@ -222,6 +225,11 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
       enabled: group?.membershipStatus === 'admin',
     }
   );
+  const { data: storageBreakdown, refetch: refetchStorageBreakdown } = useGroupStorageBreakdown(
+    groupId,
+    currentUserId ?? '',
+    !!currentUserId && group?.membershipStatus === 'admin'
+  );
   const updateGroup = useUpdateGroup(groupId, currentUserId ?? '');
   const regenerateInviteCodeMutation = useRegenerateInviteCode(groupId, currentUserId ?? '');
   const leaveGroupMutation = useLeaveGroup();
@@ -276,6 +284,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
     refetchPendingRequests,
     refetchGroupEvents,
     refetchMemberColor,
+    refetchStorageBreakdown,
   ]);
     const groupEventsSummaryButtonLine = useMemo(() => {
     const { inProgressCount, upcomingCount } = groupEventsSummary;
@@ -940,13 +949,18 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
           </View>
         </View>
 
-        {typeof group.usedStorageBytes === 'number' ? (
+        {(isAdmin || isOwner) && typeof group.usedStorageBytes === 'number' ? (
           <GroupStorageUsageBar
             usedBytes={group.usedStorageBytes}
             maxBytes={group.maxStorageBytes}
-            groupId={groupId}
-            userId={currentUserId ?? undefined}
-            canRequest={!isPending && (group.membershipStatus === 'member' || group.membershipStatus === 'admin')}
+            categories={
+              storageBreakdown
+                ? groupStorageCategoryUsages(storageBreakdown.categories)
+                : undefined
+            }
+            onPress={() =>
+              router.push(buildGroupStorageUrl(groupId, { isInEventsTab, fromEventId }))
+            }
           />
         ) : null}
 

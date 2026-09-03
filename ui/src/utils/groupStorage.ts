@@ -1,6 +1,8 @@
 export const DEFAULT_GROUP_MAX_STORAGE_BYTES = 1024 * 1024 * 1024;
 
-export const STORAGE_REQUEST_PRESETS_GB = [1, 2, 4] as const;
+export const STORAGE_REQUEST_MIN_MB = 10;
+export const STORAGE_REQUEST_MAX_MB = 100;
+export const STORAGE_REQUEST_STEP_MB = 10;
 
 export function formatStorageBytes(bytes: number): string {
   const n = Math.max(0, Math.floor(Number.isFinite(bytes) ? bytes : 0));
@@ -24,4 +26,17 @@ export function formatStorageBytes(bytes: number): string {
 
 export function gbToBytes(gb: number): number {
   return Math.round(gb) * 1024 * 1024 * 1024;
+}
+
+export function mbToBytes(mb: number): number {
+  return Math.round(mb) * 1024 * 1024;
+}
+
+export function snapStorageRequestMb(raw: number): number {
+  const stepped = Math.round(raw / STORAGE_REQUEST_STEP_MB) * STORAGE_REQUEST_STEP_MB;
+  return Math.min(STORAGE_REQUEST_MAX_MB, Math.max(STORAGE_REQUEST_MIN_MB, stepped));
+}
+
+export function bytesToStorageRequestMb(bytes: number): number {
+  return snapStorageRequestMb(bytes / (1024 * 1024));
 }

@@ -30,6 +30,10 @@ import {
   NotifPrefsPartial,
   GroupStorageRequest,
   GroupStorageRequestInput,
+  GroupStorageLimitInput,
+  GroupStorageBreakdown,
+  GroupStorageFileList,
+  GroupStorageFileDeleteInput,
 } from '../models';
 import { GroupService } from '../services/GroupService';
 import { httpError } from '../utils/httpError';
@@ -280,6 +284,70 @@ export class GroupController extends Controller {
     }
     this.setStatus(201);
     return this.groupService.createStorageRequest(id, userId, body);
+  }
+
+  /**
+   * Lower this group's storage cap. Owner only. Must stay above current usage.
+   * Increases still go through storage-requests.
+   */
+  @Put('{id}/max-storage')
+  public async setGroupStorageLimit(
+    @Path() id: string,
+    @Query() userId: string,
+    @Body() body: GroupStorageLimitInput
+  ): Promise<{ maxStorageBytes: number }> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.reduceStorageLimit(id, userId, body.maxStorageBytes);
+  }
+
+  /**
+   * Storage usage broken down by events, polls, and posts. Requires owner or admin.
+   */
+  @Get('{id}/storage-breakdown')
+  public async getStorageBreakdown(
+    @Path() id: string,
+    @Query() userId: string
+  ): Promise<GroupStorageBreakdown> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.getStorageBreakdown(id, userId);
+  }
+
+  /**
+   * Photos billed to a storage category. Requires owner or admin.
+   */
+  @Get('{id}/storage-files/{category}')
+  public async getStorageFiles(
+    @Path() id: string,
+    @Path() category: string,
+    @Query() userId: string
+  ): Promise<GroupStorageFileList> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    return this.groupService.listStorageFiles(id, userId, category);
+  }
+
+  /**
+   * Remove a photo from this group's records and delete it from S3. Requires owner or admin.
+   */
+  @Delete('{id}/storage-files')
+  public async deleteStorageFile(
+    @Path() id: string,
+    @Query() userId: string,
+    @Body() body: GroupStorageFileDeleteInput
+  ): Promise<void> {
+    if (!userId) {
+      this.setStatus(400);
+      throw new Error('userId is required');
+    }
+    await this.groupService.deleteStorageFile(id, userId, body.url);
   }
 
   /**

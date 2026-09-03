@@ -81,7 +81,7 @@ export function PhotoUrlOrUploadModal({
     setBusy(true);
     const previewIds: string[] = [];
     try {
-      const assets = await pickImagesFromLibrary({ multiple: true, useQualityPreference: true });
+      const assets = await pickImagesFromLibrary({ multiple: true });
       if (onPickPreview) {
         onClose();
         setBusy(false);

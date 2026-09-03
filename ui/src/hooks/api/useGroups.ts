@@ -184,6 +184,53 @@ export function useCreateGroupStorageRequest(groupId: string, userId: string) {
   });
 }
 
+export function useSetGroupStorageLimit(groupId: string, userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (maxStorageBytes: number) =>
+      GroupsService.setGroupStorageLimit(groupId, userId, { maxStorageBytes }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.storageBreakdown(groupId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, userId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
+    },
+  });
+}
+
+export function useGroupStorageBreakdown(groupId: string, userId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.groups.storageBreakdown(groupId),
+    queryFn: () => GroupsService.getStorageBreakdown(groupId, userId),
+    enabled: enabled && !!groupId && !!userId,
+    retry: retryUnlessNotFound,
+  });
+}
+
+export function useGroupStorageFiles(groupId: string, category: string, userId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.groups.storageFiles(groupId, category),
+    queryFn: () => GroupsService.getStorageFiles(groupId, category, userId),
+    enabled: enabled && !!groupId && !!category && !!userId,
+    retry: retryUnlessNotFound,
+  });
+}
+
+export function useDeleteGroupStorageFile(groupId: string, userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) => GroupsService.deleteStorageFile(groupId, userId, { url }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.storageBreakdown(groupId) });
+      queryClient.invalidateQueries({ queryKey: ['groups', groupId, 'storage-files'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.detail(groupId, userId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups._base });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+      queryClient.invalidateQueries({ queryKey: ['polls'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.groups.posts(groupId, userId) });
+    },
+  });
+}
+
 export function useDeleteGroup(userId: string) {
   const queryClient = useQueryClient();
 

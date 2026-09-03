@@ -10,7 +10,7 @@ import {
   type StyleProp,
 } from 'react-native';
 import { Colors } from '../constants/theme';
-import { isDirectRenderableImageUrl, resolveImageViewUrls } from '../services/resolveImageViewUrls';
+import { isDirectRenderableImageUrl, resolveImageViewUrls, toRenderableImageUrl } from '../services/resolveImageViewUrls';
 import {
   ensureCachedImageFileUri,
   peekCachedImageFileUri,
@@ -56,7 +56,7 @@ function useDisplayUri(
 ): string | null {
   const [displayUri, setDisplayUri] = useState<string | null>(() => {
     if (!storedUrl?.trim()) return null;
-    if (isDirectRenderableImageUrl(storedUrl)) return storedUrl;
+    if (isDirectRenderableImageUrl(storedUrl)) return toRenderableImageUrl(storedUrl);
     return peekCachedImageFileUri(storedUrl);
   });
 
@@ -68,7 +68,7 @@ function useDisplayUri(
       return;
     }
     if (isDirectRenderableImageUrl(source)) {
-      setDisplayUri(source);
+      setDisplayUri(toRenderableImageUrl(source));
       return;
     }
 
@@ -84,7 +84,7 @@ function useDisplayUri(
     }
 
     // Show remote immediately, then swap to disk cache when ready.
-    setDisplayUri(remoteViewUrl);
+    setDisplayUri(toRenderableImageUrl(remoteViewUrl));
     void ensureCachedImageFileUri(source, remoteViewUrl).then((fileUri) => {
       if (!cancelled && fileUri) setDisplayUri(fileUri);
     });
@@ -99,7 +99,9 @@ function useDisplayUri(
 
 export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap, onError }: Props) {
   const [singleRemote, setSingleRemote] = useState<string | null>(() =>
-    storedUrl?.trim() && isDirectRenderableImageUrl(storedUrl) ? storedUrl : null
+    storedUrl?.trim() && isDirectRenderableImageUrl(storedUrl)
+      ? toRenderableImageUrl(storedUrl)
+      : null
   );
 
   useEffect(() => {
@@ -109,7 +111,7 @@ export function ResolvableImage({ storedUrl, style, resizeMode = 'cover', urlMap
       return;
     }
     if (isDirectRenderableImageUrl(storedUrl)) {
-      setSingleRemote(storedUrl);
+      setSingleRemote(toRenderableImageUrl(storedUrl));
       return;
     }
     let cancelled = false;

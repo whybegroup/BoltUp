@@ -221,3 +221,37 @@ export interface GroupStorageRequestInput {
   note?: string;
 }
 
+/** Owner-applied reduction of the group's storage cap. */
+export interface GroupStorageLimitInput {
+  maxStorageBytes: number;
+}
+
+export type GroupStorageCategoryId = 'group' | 'events' | 'polls' | 'posts';
+
+export interface GroupStorageCategorySummary {
+  id: GroupStorageCategoryId;
+  usedBytes: number;
+  fileCount: number;
+}
+
+export interface GroupStorageBreakdown {
+  usedBytes: number;
+  maxBytes: number;
+  categories: GroupStorageCategorySummary[];
+}
+
+export interface GroupStorageFileItem {
+  url: string;
+  byteSize: number;
+  sourceLabel?: string;
+}
+
+export interface GroupStorageFileList {
+  category: GroupStorageCategoryId;
+  files: GroupStorageFileItem[];
+}
+
+export interface GroupStorageFileDeleteInput {
+  url: string;
+}
+

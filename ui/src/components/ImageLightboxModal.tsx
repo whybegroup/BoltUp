@@ -38,6 +38,8 @@ type ImageLightboxModalProps = {
   headerAvatar?: ReactNode;
   showCounter?: boolean;
   urlMap?: Map<string, string> | Record<string, string>;
+  onDelete?: (url: string) => void;
+  deleting?: boolean;
 };
 
 const MIN_SCALE = 1;
@@ -68,6 +70,8 @@ export function ImageLightboxModal({
   headerAvatar,
   showCounter = false,
   urlMap,
+  onDelete,
+  deleting = false,
 }: ImageLightboxModalProps) {
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -410,6 +414,20 @@ export function ImageLightboxModal({
               )}
             </View>
             <View style={styles.headerActions}>
+              {onDelete ? (
+                <TouchableOpacity
+                  onPress={() => onDelete(currentUrl)}
+                  style={styles.iconBtn}
+                  accessibilityLabel="Delete image"
+                  disabled={deleting || !currentUrl.trim()}
+                >
+                  {deleting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="trash-outline" size={22} color="#fff" />
+                  )}
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity
                 onPress={() => void onShare()}
                 style={styles.iconBtn}

@@ -65,7 +65,7 @@ model Group {
   /// When true, new joins start as pending until an admin approves.
   requireApprovalToJoin Boolean @default(true)
   /// Max bytes this group may store in S3. Default 1 GiB; raised by a developer grant.
-  maxStorageBytes Int @default(1073741824)
+  maxStorageBytes String @default("1073741824")
   createdBy  String
   updatedBy  String
   createdAt  DateTime  @default(now())
@@ -101,7 +101,7 @@ model GroupStorageRequest {
   id             String    @id @default(uuid())
   groupId        String
   userId         String
-  requestedBytes Int
+  requestedBytes String
   note           String?
   status         String    @default("pending") // pending | approved | denied
   createdAt      DateTime  @default(now())

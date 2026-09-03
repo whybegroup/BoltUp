@@ -138,3 +138,36 @@ export function buildGroupSettingsUrl(
     : `/(tabs)/groups/${groupId}/settings`;
   return withFromEventId(basePath, options.fromEventId);
 }
+
+/**
+ * Build a group manage-storage URL with optional fromEventId
+ */
+export function buildGroupStorageUrl(
+  groupId: string,
+  options: {
+    isInEventsTab: boolean;
+    fromEventId?: string;
+  }
+): Href {
+  const basePath = options.isInEventsTab
+    ? `/(tabs)/events/group/${groupId}/storage`
+    : `/(tabs)/groups/${groupId}/storage`;
+  return withFromEventId(basePath, options.fromEventId);
+}
+
+/**
+ * Build a group storage category URL with optional fromEventId
+ */
+export function buildGroupStorageCategoryUrl(
+  groupId: string,
+  category: string,
+  options: {
+    isInEventsTab: boolean;
+    fromEventId?: string;
+  }
+): Href {
+  const basePath = options.isInEventsTab
+    ? `/(tabs)/events/group/${groupId}/storage/${category}`
+    : `/(tabs)/groups/${groupId}/storage/${category}`;
+  return withFromEventId(basePath, options.fromEventId);
+}

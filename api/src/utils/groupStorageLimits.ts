@@ -1,4 +1,27 @@
 export const DEFAULT_GROUP_MAX_STORAGE_BYTES = 1024 * 1024 * 1024;
+export const MIN_STORAGE_REQUEST_BYTES = 10 * 1024 * 1024;
+
+export function storageBytesFromDb(raw: unknown): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return Math.floor(raw);
+  if (typeof raw === 'bigint') {
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.floor(n) : 0;
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.floor(n) : 0;
+  }
+  return 0;
+}
+
+export function storageBytesToDb(n: number): string {
+  return String(Math.max(0, Math.floor(Number.isFinite(n) ? n : 0)));
+}
+
+export function groupMaxStorageBytes(raw: unknown): number {
+  const n = storageBytesFromDb(raw);
+  return n > 0 ? n : DEFAULT_GROUP_MAX_STORAGE_BYTES;
+}
 
 export function formatStorageBytes(bytes: number): string {
   const n = Math.max(0, Math.floor(Number.isFinite(bytes) ? bytes : 0));

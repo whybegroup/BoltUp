@@ -51,6 +51,7 @@ export function notifTypeToPrefKey(type: string | undefined): NotifPrefsKey | nu
     case 'event_time_changed':
       return 'onTime';
     case 'group_approval':
+    case 'group_join_request':
       return 'groupMembership';
     case 'location_changed':
       return 'onLocation';

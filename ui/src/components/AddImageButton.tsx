@@ -3,16 +3,6 @@ import { Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View }
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
-import {
-  IMAGE_UPLOAD_QUALITY_LABELS,
-  useImageUploadQuality,
-  type ImageUploadQuality,
-} from '../utils/imageUploadQualityPrefs';
-
-const QUALITY_OPTIONS: Array<{ value: ImageUploadQuality; hint: string }> = [
-  { value: 'compressed', hint: 'Resized and compressed for faster uploads' },
-  { value: 'original', hint: 'Keeps full resolution, larger files' },
-];
 
 type AddImageButtonProps = {
   disabled?: boolean;
@@ -45,19 +35,15 @@ export function AddImageButton({
 }: AddImageButtonProps) {
   const [showOptions, setShowOptions] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
-  const [showQuality, setShowQuality] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
-  const [quality, setQuality] = useImageUploadQuality();
   const isDisabled = disabled || busy;
 
   const closeAll = () => {
     setShowOptions(false);
     setShowLinkModal(false);
-    setShowQuality(false);
   };
 
   const openOptions = () => {
-    setShowQuality(false);
     setShowOptions(true);
   };
 
@@ -82,93 +68,37 @@ export function AddImageButton({
             <Pressable style={styles.overlayBackdrop} onPress={closeAll} />
             <View style={styles.overlayCenter} pointerEvents="box-none">
               <View style={styles.card} pointerEvents="auto">
-                <View style={styles.titleRow}>
-                  {showQuality ? (
-                    <TouchableOpacity
-                      style={styles.headerIconBtn}
-                      onPress={() => setShowQuality(false)}
-                      accessibilityLabel="Back"
-                    >
-                      <Ionicons name="chevron-back" size={18} color={Colors.textSub} />
-                    </TouchableOpacity>
-                  ) : null}
-                  <Text style={styles.title}>{showQuality ? 'Upload quality' : optionsModalTitle}</Text>
-                  {showQuality ? null : (
-                    <TouchableOpacity
-                      style={styles.headerIconBtn}
-                      onPress={() => setShowQuality(true)}
-                      accessibilityLabel="Upload options"
-                    >
-                      <Ionicons name="ellipsis-vertical" size={18} color={Colors.textSub} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {showQuality ? (
-                  <>
-                    <Text style={styles.qualityHint}>
-                      Photos are saved as JPEG or PNG so they open on any device.
-                    </Text>
-                    {QUALITY_OPTIONS.map((opt) => {
-                      const active = quality === opt.value;
-                      return (
-                        <TouchableOpacity
-                          key={opt.value}
-                          style={[styles.optionBtn, active && styles.optionBtnActive]}
-                          onPress={() => {
-                            setQuality(opt.value);
-                            setShowQuality(false);
-                          }}
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected: active }}
-                        >
-                          <Ionicons
-                            name={active ? 'radio-button-on' : 'radio-button-off'}
-                            size={16}
-                            color={active ? Colors.accent : Colors.textSub}
-                          />
-                          <View style={styles.optionTextCol}>
-                            <Text style={styles.optionText}>{IMAGE_UPLOAD_QUALITY_LABELS[opt.value]}</Text>
-                            <Text style={styles.optionSubText}>{opt.hint}</Text>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </>
-                ) : (
-                  <>
-                    <TouchableOpacity
-                      style={styles.optionBtn}
-                      onPress={async () => {
-                        closeAll();
-                        await onTakePhoto();
-                      }}
-                    >
-                      <Ionicons name="camera-outline" size={16} color={Colors.textSub} />
-                      <Text style={styles.optionText}>Take photo</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.optionBtn}
-                      onPress={async () => {
-                        closeAll();
-                        await onChooseFromLibrary();
-                      }}
-                    >
-                      <Ionicons name="folder-open-outline" size={16} color={Colors.textSub} />
-                      <Text style={styles.optionText}>Choose from library</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.optionBtn}
-                      onPress={() => {
-                        setShowOptions(false);
-                        setShowLinkModal(true);
-                      }}
-                    >
-                      <Ionicons name="link-outline" size={16} color={Colors.textSub} />
-                      <Text style={styles.optionText}>Insert link</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
+                <Text style={styles.title}>{optionsModalTitle}</Text>
+                <TouchableOpacity
+                  style={styles.optionBtn}
+                  onPress={async () => {
+                    closeAll();
+                    await onTakePhoto();
+                  }}
+                >
+                  <Ionicons name="camera-outline" size={16} color={Colors.textSub} />
+                  <Text style={styles.optionText}>Take photo</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.optionBtn}
+                  onPress={async () => {
+                    closeAll();
+                    await onChooseFromLibrary();
+                  }}
+                >
+                  <Ionicons name="folder-open-outline" size={16} color={Colors.textSub} />
+                  <Text style={styles.optionText}>Choose from library</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.optionBtn}
+                  onPress={() => {
+                    setShowOptions(false);
+                    setShowLinkModal(true);
+                  }}
+                >
+                  <Ionicons name="link-outline" size={16} color={Colors.textSub} />
+                  <Text style={styles.optionText}>Insert link</Text>
+                </TouchableOpacity>
               </View>
             </View>
           </View>
@@ -277,28 +207,7 @@ const styles = StyleSheet.create({
     padding: 14,
     ...Shadows.md,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 10,
-  },
-  title: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text, flex: 1 },
-  headerIconBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: Radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qualityHint: {
-    fontSize: 12,
-    fontFamily: Fonts.regular,
-    color: Colors.textMuted,
-    lineHeight: 17,
-    marginBottom: 10,
-  },
+  title: { fontSize: 15, fontFamily: Fonts.semiBold, color: Colors.text, marginBottom: 10 },
   optionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -311,10 +220,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bg,
     marginBottom: 8,
   },
-  optionBtnActive: { borderColor: Colors.accent },
-  optionTextCol: { flex: 1, gap: 2 },
   optionText: { fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
-  optionSubText: { fontSize: 11, fontFamily: Fonts.regular, color: Colors.textMuted },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,

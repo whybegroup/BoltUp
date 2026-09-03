@@ -25,7 +25,10 @@ export function groupsTabParentHref(groupId: string, subpage: GroupSubpage): Hre
     case 'polls':
     case 'members':
     case 'settings':
+    case 'storage':
       return `/(tabs)/groups/${groupId}` as Href;
+    case 'storage-category':
+      return `/(tabs)/groups/${groupId}/storage` as Href;
   }
 }
 

@@ -1,5 +1,9 @@
 import { useMemo } from 'react';
 import { usePathname } from 'expo-router';
+import {
+  isGroupStorageCategory,
+  type GroupStorageCategory,
+} from '../../utils/groupStorageCategories';
 
 export type EventSubpage =
   | { kind: 'all-events' }
@@ -11,7 +15,9 @@ export type EventSubpage =
   | { kind: 'group-poll-detail'; groupId: string; pollId: string }
   | { kind: 'group-forum'; groupId: string }
   | { kind: 'group-members'; groupId: string }
-  | { kind: 'group-settings'; groupId: string };
+  | { kind: 'group-settings'; groupId: string }
+  | { kind: 'group-storage'; groupId: string }
+  | { kind: 'group-storage-category'; groupId: string; category: GroupStorageCategory };
 
 export function eventSubpageFromPathname(pathname: string): EventSubpage {
   // Group event detail: /events/group/:groupId/events/:eventId
@@ -48,6 +54,26 @@ export function eventSubpageFromPathname(pathname: string): EventSubpage {
   const groupMembersMatch = pathname.match(/\/events\/group\/([^/]+)\/members/);
   if (groupMembersMatch) {
     return { kind: 'group-members', groupId: groupMembersMatch[1] };
+  }
+
+  // Group storage category: /events/group/:groupId/storage/:category
+  const groupStorageCatMatch = pathname.match(/\/events\/group\/([^/]+)\/storage\/([^/]+)/);
+  if (groupStorageCatMatch) {
+    const category = groupStorageCatMatch[2];
+    if (isGroupStorageCategory(category)) {
+      return {
+        kind: 'group-storage-category',
+        groupId: groupStorageCatMatch[1],
+        category,
+      };
+    }
+    return { kind: 'group-storage', groupId: groupStorageCatMatch[1] };
+  }
+
+  // Group storage: /events/group/:groupId/storage
+  const groupStorageMatch = pathname.match(/\/events\/group\/([^/]+)\/storage/);
+  if (groupStorageMatch) {
+    return { kind: 'group-storage', groupId: groupStorageMatch[1] };
   }
 
   // Group settings: /events/group/:groupId/settings

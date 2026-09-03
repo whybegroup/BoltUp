@@ -1,7 +1,7 @@
 import { Linking, Platform, Share } from 'react-native';
 import { File as ExpoFile, Paths } from 'expo-file-system';
 import { ensureCachedImageFileUri, peekCachedImageFileUri } from './imageDiskCache';
-import { isDirectRenderableImageUrl, resolveImageViewUrls } from './resolveImageViewUrls';
+import { isDirectRenderableImageUrl, resolveImageViewUrls, toRenderableImageUrl } from './resolveImageViewUrls';
 
 function extensionFromUrl(url: string): string {
   try {
@@ -25,7 +25,7 @@ async function resolveDownloadUri(
 ): Promise<string> {
   const trimmed = storedUrl.trim();
   if (!trimmed) throw new Error('No image to download');
-  if (isDirectRenderableImageUrl(trimmed)) return trimmed;
+  if (isDirectRenderableImageUrl(trimmed)) return toRenderableImageUrl(trimmed);
 
   const diskHit = peekCachedImageFileUri(trimmed);
   if (diskHit) return diskHit;

@@ -3,7 +3,7 @@ import { Image, View, StyleProp, ViewStyle } from 'react-native';
 import { IconsAvatar } from './Avatar';
 import { groupAvatarBorderRadius } from '../utils/helpers';
 import { ResolvableImage } from './ResolvableImage';
-import { isDirectRenderableImageUrl } from '../services/resolveImageViewUrls';
+import { isDirectRenderableImageUrl, toRenderableImageUrl } from '../services/resolveImageViewUrls';
 
 const DEFAULT_AVATAR_SEED = 'auto';
 
@@ -44,7 +44,7 @@ export function GroupAvatar({ seed, thumbnail, size = 36, borderRadius, style }:
       <View style={containerStyle}>
         {isDirectRenderableImageUrl(thumbTrim) ? (
           <Image
-            source={{ uri: thumbTrim }}
+            source={{ uri: toRenderableImageUrl(thumbTrim) }}
             style={imgStyle}
             onError={() => setThumbnailError(true)}
           />

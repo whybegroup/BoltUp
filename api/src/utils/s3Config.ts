@@ -13,7 +13,9 @@ export function getS3Config(): S3Config | null {
   if (!keyId || !secret || !bucket) return null;
   const region = process.env.S3_REGION?.trim() || 'us-west-1';
   const explicitBase = process.env.S3_PUBLIC_URL_BASE?.trim().replace(/\/$/, '');
-  const publicBase = explicitBase || `https://${bucket}.s3.${region}.amazonaws.com`;
+  // Path-style: virtual-hosted HTTPS breaks when the bucket name contains dots
+  // (e.g. moijia.com → moijia.com.s3.region.amazonaws.com fails TLS).
+  const publicBase = explicitBase || `https://s3.${region}.amazonaws.com/${bucket}`;
   return { bucket, region, publicBase };
 }
 

@@ -74,6 +74,9 @@ export function useClearOptimisticSubpageWhenSynced(
     if (optimisticSubpage.kind === 'poll' && pathnameSubpage.kind === 'poll') {
       if (optimisticSubpage.pollId !== pathnameSubpage.pollId) return;
     }
+    if (optimisticSubpage.kind === 'storage-category' && pathnameSubpage.kind === 'storage-category') {
+      if (optimisticSubpage.category !== pathnameSubpage.category) return;
+    }
     setOptimisticSubpage(null);
   }, [optimisticSubpage, pathnameSubpage, setOptimisticSubpage]);
 

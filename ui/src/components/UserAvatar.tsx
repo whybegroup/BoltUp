@@ -3,7 +3,7 @@ import { Image, View, StyleProp, ViewStyle } from 'react-native';
 import { avatarColor } from '../utils/helpers';
 import { InitialsAvatar } from './Avatar';
 import { ResolvableImage } from './ResolvableImage';
-import { isDirectRenderableImageUrl } from '../services/resolveImageViewUrls';
+import { isDirectRenderableImageUrl, toRenderableImageUrl } from '../services/resolveImageViewUrls';
 
 interface UserAvatarProps {
   /** Seed for generated avatar (DiceBear bottts). Fallback: user.avatarSeed ?? user.name ?? DEFAULT_AVATAR_SEED */
@@ -38,7 +38,7 @@ export function UserAvatar({ seed, backgroundColor, thumbnail, size = 36, style 
     return (
       <View style={containerStyle}>
         {isDirectRenderableImageUrl(thumbTrim) ? (
-          <Image source={{ uri: thumbTrim }} style={imgStyle} onError={() => setThumbnailError(true)} />
+          <Image source={{ uri: toRenderableImageUrl(thumbTrim) }} style={imgStyle} onError={() => setThumbnailError(true)} />
         ) : (
           <ResolvableImage
             storedUrl={thumbTrim}

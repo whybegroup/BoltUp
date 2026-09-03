@@ -3,6 +3,14 @@ import { createS3Client, getS3Config, type S3Config } from './s3Config';
 
 export const STORAGE_KEY_PREFIX = 'storage';
 
+function decodedPath(pathname: string): string {
+  return pathname
+    .replace(/^\//, '')
+    .split('/')
+    .map((s) => decodeURIComponent(s))
+    .join('/');
+}
+
 export function urlMatchesOurObjectStore(url: string, cfg: S3Config): boolean {
   let u: URL;
   try {
@@ -17,10 +25,34 @@ export function urlMatchesOurObjectStore(url: string, cfg: S3Config): boolean {
   }
   if (u.host === `${cfg.bucket}.s3.${cfg.region}.amazonaws.com`) return true;
   if (u.host === `${cfg.bucket}.s3.amazonaws.com`) return true;
+  if (u.host === `s3.${cfg.region}.amazonaws.com`) return true;
+  if (u.host === 's3.amazonaws.com') return true;
   return false;
 }
 
-/** Object key from a stored public S3 URL. */
+function objectKeyFromUrl(u: URL, cfg: S3Config): string | null {
+  let path = decodedPath(u.pathname);
+  const bucketPrefix = `${cfg.bucket}/`;
+  if (
+    (u.host === `s3.${cfg.region}.amazonaws.com` || u.host === 's3.amazonaws.com') &&
+    path.startsWith(bucketPrefix)
+  ) {
+    path = path.slice(bucketPrefix.length);
+  } else {
+    try {
+      const basePath = decodedPath(new URL(cfg.publicBase).pathname).replace(/\/$/, '');
+      if (basePath && path.startsWith(`${basePath}/`)) {
+        path = path.slice(basePath.length + 1);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!path.startsWith(`${STORAGE_KEY_PREFIX}/`)) return null;
+  return path;
+}
+
+/** Object key from a stored public S3 URL (path-style, virtual-hosted, or custom public base). */
 export function tryExtractUploadObjectKey(sourceUrl: string, cfg?: S3Config | null): string | null {
   if (!sourceUrl?.trim()) return null;
   let u: URL;
@@ -33,14 +65,7 @@ export function tryExtractUploadObjectKey(sourceUrl: string, cfg?: S3Config | nu
 
   const resolved = cfg ?? getS3Config();
   if (!resolved || !urlMatchesOurObjectStore(sourceUrl, resolved)) return null;
-
-  const path = u.pathname
-    .replace(/^\//, '')
-    .split('/')
-    .map((s) => decodeURIComponent(s))
-    .join('/');
-  if (!path.startsWith(`${STORAGE_KEY_PREFIX}/`)) return null;
-  return path;
+  return objectKeyFromUrl(u, resolved);
 }
 
 export function publicFileUrl(key: string, cfg: S3Config): string {

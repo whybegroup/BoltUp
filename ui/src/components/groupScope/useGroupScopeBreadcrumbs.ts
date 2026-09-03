@@ -8,6 +8,7 @@ import { useGroupsBreadcrumbGroupSwitch } from '../groupsBreadcrumbDropdown';
 import { useGroupsActivitySectionSwitch, type GroupsActivitySection } from '../GroupsActivitySectionSwitch';
 import { breadcrumbTruncate } from '../../utils/helpers';
 import { ALL_GROUPS_HREF, navigateGroupsTabTo } from '../../utils/tabBreadcrumbNav';
+import { GROUP_STORAGE_CATEGORY_LABELS } from '../../utils/groupStorageCategories';
 import { groupIdFromPathname } from './groupIdFromPathname';
 import { useGroupScopeNav } from './GroupScopeNavContext';
 import type { GroupSubpage } from './useGroupSubpage';
@@ -15,6 +16,7 @@ import type { GroupSubpage } from './useGroupSubpage';
 const SUBPAGE_LABEL: Partial<Record<GroupSubpage['kind'], string>> = {
   members: 'Members',
   settings: 'Settings',
+  storage: 'Manage Storage',
 };
 
 function activitySectionForSubpage(subpage: GroupSubpage): GroupsActivitySection | null {
@@ -111,6 +113,15 @@ export function useGroupScopeBreadcrumbs(
       return out;
     }
 
+    if (subpage.kind === 'storage-category') {
+      out.push({
+        label: 'Manage Storage',
+        onPress: () => navigateTo(`/(tabs)/groups/${groupId}/storage` as Href),
+      });
+      out.push({ label: GROUP_STORAGE_CATEGORY_LABELS[subpage.category] });
+      return out;
+    }
+
     const extra = SUBPAGE_LABEL[subpage.kind];
     if (extra) out.push({ label: extra });
 
@@ -127,6 +138,7 @@ export function useGroupScopeBreadcrumbs(
     subpage.kind,
     poll?.title,
     event?.name,
+    subpage.kind === 'storage-category' ? subpage.category : undefined,
   ]);
 
   return {
