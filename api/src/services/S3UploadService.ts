@@ -93,6 +93,7 @@ export class S3UploadService {
     userId: string;
     publicUrl: string;
     groupId?: string;
+    filename?: string;
   }): Promise<void> {
     const cfg = requireS3Config();
     const key = tryExtractUploadObjectKey(input.publicUrl, cfg);
@@ -129,6 +130,7 @@ export class S3UploadService {
       objectKey: key,
       publicUrl: input.publicUrl,
       byteSize,
+      originalName: input.filename,
     });
   }
 

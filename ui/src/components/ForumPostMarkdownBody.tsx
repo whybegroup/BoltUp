@@ -6,6 +6,8 @@ import { useAppRouter } from '../hooks/useAppRouter';
 import { openContentLink } from '../utils/inAppLinks';
 import { MentionText } from './MentionText';
 import { ResolvableImage } from './ResolvableImage';
+import { FileExtensionPreview } from './FileExtensionPreview';
+import { isImageFileUrl } from '../utils/fileKind';
 
 /**
  * The library's default parser leaves markdown-it's `linkify` off, so bare URLs stay inert
@@ -66,8 +68,9 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
         const src = typeof rawSrc === 'string' ? rawSrc.trim() : '';
         if (!src) return null;
         const alt = typeof node.attributes?.alt === 'string' ? node.attributes.alt : '';
+        const isImage = isImageFileUrl(src, alt);
         return (
-          <View key={node.key} style={styles.markdownImageWrap}>
+          <View key={node.key} style={isImage ? styles.markdownImageWrap : styles.markdownFileWrap}>
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() =>
@@ -81,7 +84,11 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
                 })
               }
             >
-              <ResolvableImage storedUrl={src} style={styles.inlineImage} resizeMode="cover" />
+              {isImage ? (
+                <ResolvableImage storedUrl={src} style={styles.inlineImage} resizeMode="cover" />
+              ) : (
+                <FileExtensionPreview url={src} fileName={alt} variant="inline" />
+              )}
             </TouchableOpacity>
           </View>
         );
@@ -132,4 +139,5 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   markdownImageWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
+  markdownFileWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
 });

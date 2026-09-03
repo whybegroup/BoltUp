@@ -20,8 +20,10 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { FileExtensionPreview } from './FileExtensionPreview';
 import { apiErrorMessage } from '../utils/apiErrors';
 import { formatStorageBytes } from '../utils/groupStorage';
+import { displayFileName, isImageFileUrl } from '../utils/fileKind';
 import {
   isGroupStorageCategory,
   GROUP_STORAGE_CATEGORY_LABELS,
@@ -33,8 +35,13 @@ const COLS = 3;
 const GAP = 4;
 const PAD = 20;
 
-function photoNoun(n: number) {
-  return n === 1 ? 'photo' : 'photos';
+function fileNoun(n: number) {
+  return n === 1 ? 'file' : 'files';
+}
+
+function fileIsDeletable(file: { canDelete?: boolean }, isAdmin: boolean) {
+  if (typeof file.canDelete === 'boolean') return file.canDelete;
+  return isAdmin;
 }
 
 export function GroupStorageCategoryView({
@@ -65,12 +72,14 @@ export function GroupStorageCategoryView({
     groupId,
     currentUserId ?? ''
   );
-  const canManage = group?.membershipStatus === 'admin';
+  const canView =
+    group?.membershipStatus === 'member' || group?.membershipStatus === 'admin';
+  const isAdmin = group?.membershipStatus === 'admin';
   const { data: list, refetch: refetchFiles } = useGroupStorageFiles(
     groupId,
     validCategory ?? '',
     currentUserId ?? '',
-    !!validCategory && canManage
+    !!validCategory && canView
   );
   const deleteFile = useDeleteGroupStorageFile(groupId, currentUserId ?? '');
   const { refreshControl } = usePullToRefresh([refetchGroup, refetchFiles]);
@@ -84,13 +93,18 @@ export function GroupStorageCategoryView({
   useMissingGroupRedirect(isError, groupError, group?.membershipStatus, fallbackHref);
 
   useEffect(() => {
-    if (group && !canManage) router.replace(fallbackHref);
-  }, [group, canManage, router, fallbackHref]);
+    if (group && !canView) router.replace(fallbackHref);
+  }, [group, canView, router, fallbackHref]);
 
   const files = list?.files ?? [];
   const urls = useMemo(() => files.map((f) => f.url), [files]);
+  const deletableUrls = useMemo(
+    () => files.filter((f) => fileIsDeletable(f, !!isAdmin)).map((f) => f.url),
+    [files, isAdmin]
+  );
+  const deletableSet = useMemo(() => new Set(deletableUrls), [deletableUrls]);
   const selectedCount = selected.size;
-  const allSelected = files.length > 0 && selectedCount === files.length;
+  const allSelected = deletableUrls.length > 0 && selectedCount === deletableUrls.length;
 
   useEffect(() => {
     const live = new Set(urls);
@@ -115,28 +129,31 @@ export function GroupStorageCategoryView({
   const enterSelect = useCallback((initial?: string) => {
     setLightboxIndex(null);
     setSelecting(true);
-    setSelected(initial ? new Set([initial]) : new Set());
-  }, []);
+    setSelected(initial && deletableSet.has(initial) ? new Set([initial]) : new Set());
+  }, [deletableSet]);
 
   const toggleSelected = useCallback((url: string) => {
+    if (!deletableSet.has(url)) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(url)) next.delete(url);
       else next.add(url);
       return next;
     });
-  }, []);
+  }, [deletableSet]);
 
   const toggleSelectAll = useCallback(() => {
     setSelected((prev) => {
-      if (files.length > 0 && prev.size === files.length) return new Set();
-      return new Set(files.map((f) => f.url));
+      if (deletableUrls.length > 0 && prev.size === deletableUrls.length) return new Set();
+      return new Set(deletableUrls);
     });
-  }, [files]);
+  }, [deletableUrls]);
 
   const confirmDelete = useCallback(
     (toDelete: string | string[]) => {
-      const listToDelete = Array.isArray(toDelete) ? toDelete : [toDelete];
+      const listToDelete = (Array.isArray(toDelete) ? toDelete : [toDelete]).filter((u) =>
+        deletableSet.has(u)
+      );
       if (listToDelete.length === 0) return;
       const many = listToDelete.length > 1;
       const run = async () => {
@@ -151,17 +168,17 @@ export function GroupStorageCategoryView({
             return Math.min(idx, remaining.length - 1);
           });
         } catch (e) {
-          const msg = apiErrorMessage(e, many ? 'Could not delete photos' : 'Could not delete photo');
+          const msg = apiErrorMessage(e, many ? 'Could not delete files' : 'Could not delete file');
           if (Platform.OS === 'web') window.alert(msg);
           else Alert.alert('Error', msg);
         }
       };
-      const title = many ? `Delete ${listToDelete.length} photos` : 'Delete photo';
+      const title = many ? `Delete ${listToDelete.length} files` : 'Delete file';
       const message = many
-        ? 'These photos will be removed from the group and deleted from storage.'
-        : 'This photo will be removed from the group and deleted from storage.';
+        ? 'These files will be removed from the group and deleted from storage.'
+        : 'This file will be removed from the group and deleted from storage.';
       if (Platform.OS === 'web') {
-        if (window.confirm(many ? `Delete ${listToDelete.length} photos from the group?` : 'Delete this photo from the group?')) {
+        if (window.confirm(many ? `Delete ${listToDelete.length} files from the group?` : 'Delete this file from the group?')) {
           void run();
         }
         return;
@@ -171,10 +188,10 @@ export function GroupStorageCategoryView({
         { text: 'Delete', style: 'destructive', onPress: () => void run() },
       ]);
     },
-    [deleteFile, urls]
+    [deleteFile, urls, deletableSet]
   );
 
-  if (!group || !canManage || !validCategory) {
+  if (!group || !canView || !validCategory) {
     return (
       <View style={styles.loadingWrap}>
         <ActivityIndicator color={Colors.textSub} />
@@ -193,10 +210,11 @@ export function GroupStorageCategoryView({
       >
         {files.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No photos in {label.toLowerCase()}</Text>
+            <Text style={styles.emptyText}>No files in {label.toLowerCase()}</Text>
           </View>
         ) : (
           <>
+            {(selecting || deletableUrls.length > 0) ? (
             <View style={styles.toolbar}>
               {selecting ? (
                 <>
@@ -226,54 +244,74 @@ export function GroupStorageCategoryView({
                   hitSlop={8}
                   style={styles.toolbarSelect}
                   accessibilityRole="button"
-                  accessibilityLabel="Select photos"
+                  accessibilityLabel="Select files"
                 >
                   <Text style={styles.toolbarAction}>Select</Text>
                 </TouchableOpacity>
               )}
             </View>
+            ) : null}
             <View style={styles.grid}>
               {files.map((file, i) => {
                 const isSelected = selected.has(file.url);
+                const canDelete = fileIsDeletable(file, !!isAdmin);
+                const isImage = isImageFileUrl(file.url, file.fileName);
+                const shownName = displayFileName(file.url, file.fileName);
                 return (
                   <View key={`${file.url}-${i}`} style={[styles.tileWrap, { width: tile, height: tile }]}>
                     <TouchableOpacity
                       onPress={() => (selecting ? toggleSelected(file.url) : setLightboxIndex(i))}
-                      onLongPress={() => {
-                        if (selecting) toggleSelected(file.url);
-                        else enterSelect(file.url);
-                      }}
+                      onLongPress={
+                        canDelete
+                          ? () => {
+                              if (selecting) toggleSelected(file.url);
+                              else enterSelect(file.url);
+                            }
+                          : undefined
+                      }
                       delayLongPress={280}
                       activeOpacity={0.9}
                       accessibilityRole="button"
-                      accessibilityLabel={file.sourceLabel ? `${file.sourceLabel} photo` : 'Photo'}
-                      accessibilityState={selecting ? { selected: isSelected } : undefined}
-                      accessibilityHint={selecting ? undefined : 'Long press to select'}
+                      accessibilityLabel={
+                        file.sourceLabel
+                          ? `${file.sourceLabel}: ${shownName}`
+                          : shownName
+                      }
+                      accessibilityState={selecting && canDelete ? { selected: isSelected } : undefined}
+                      accessibilityHint={
+                        selecting || !canDelete ? undefined : 'Long press to select'
+                      }
                     >
-                      <ResolvableImage
-                        storedUrl={file.url}
-                        style={{ width: tile, height: tile, backgroundColor: Colors.bg }}
-                        resizeMode="cover"
-                      />
+                      {isImage ? (
+                        <ResolvableImage
+                          storedUrl={file.url}
+                          style={{ width: tile, height: tile, backgroundColor: Colors.bg }}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={{ width: tile, height: tile }}>
+                          <FileExtensionPreview url={file.url} fileName={file.fileName} />
+                        </View>
+                      )}
                       {selecting && isSelected ? <View style={styles.selectedDim} /> : null}
                     </TouchableOpacity>
-                    {selecting ? (
+                    {selecting && canDelete ? (
                       <View style={styles.checkBtn} pointerEvents="none">
                         <View style={[styles.check, isSelected && styles.checkOn]}>
                           {isSelected ? <Ionicons name="checkmark" size={12} color="#fff" /> : null}
                         </View>
                       </View>
-                    ) : (
+                    ) : !selecting && canDelete ? (
                       <TouchableOpacity
                         onPress={() => confirmDelete(file.url)}
                         style={styles.removeBtn}
                         accessibilityRole="button"
-                        accessibilityLabel="Delete photo"
+                        accessibilityLabel="Delete file"
                         disabled={deleteFile.isPending}
                       >
                         <Ionicons name="close" size={11} color="#fff" />
                       </TouchableOpacity>
-                    )}
+                    ) : null}
                     {file.byteSize > 0 ? (
                       <View style={styles.sizeBadge} pointerEvents="none">
                         <Text style={styles.sizeText}>{formatStorageBytes(file.byteSize)}</Text>
@@ -293,7 +331,7 @@ export function GroupStorageCategoryView({
             disabled={selectedCount === 0 || deleteFile.isPending}
             style={[styles.deleteBtn, selectedCount === 0 && styles.deleteBtnDisabled]}
             accessibilityRole="button"
-            accessibilityLabel={`Delete ${selectedCount} ${photoNoun(selectedCount)}`}
+            accessibilityLabel={`Delete ${selectedCount} ${fileNoun(selectedCount)}`}
           >
             {deleteFile.isPending ? (
               <ActivityIndicator color="#fff" />
@@ -301,7 +339,7 @@ export function GroupStorageCategoryView({
               <Text style={styles.deleteBtnText}>
                 {selectedCount === 0
                   ? 'Delete'
-                  : `Delete ${selectedCount} ${photoNoun(selectedCount)}`}
+                  : `Delete ${selectedCount} ${fileNoun(selectedCount)}`}
               </Text>
             )}
           </TouchableOpacity>
@@ -310,12 +348,17 @@ export function GroupStorageCategoryView({
       <ImageLightboxModal
         visible={!selecting && lightboxIndex != null && urls.length > 0}
         urls={urls}
+        names={files.map((f) => f.fileName)}
         index={lightboxIndex ?? 0}
         onChangeIndex={(i) => setLightboxIndex(i)}
         onClose={() => setLightboxIndex(null)}
         title={lightboxIndex != null ? files[lightboxIndex]?.sourceLabel || label : label}
         showCounter
-        onDelete={confirmDelete}
+        onDelete={
+          lightboxIndex != null && fileIsDeletable(files[lightboxIndex] ?? {}, !!isAdmin)
+            ? confirmDelete
+            : undefined
+        }
         deleting={deleteFile.isPending}
       />
     </View>

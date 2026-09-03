@@ -617,7 +617,7 @@ export class GroupService {
   }
 
   public async getStorageBreakdown(groupId: string, userId: string): Promise<GroupStorageBreakdown> {
-    await groupStorage.requireOwnerOrAdmin(groupId, userId);
+    await groupStorage.requireActiveMember(groupId, userId);
     return groupStorage.getBreakdown(groupId);
   }
 
@@ -626,12 +626,18 @@ export class GroupService {
     userId: string,
     category: string
   ): Promise<GroupStorageFileList> {
-    await groupStorage.requireOwnerOrAdmin(groupId, userId);
-    return groupStorage.listFiles(groupId, groupStorage.parseStorageCategory(category));
+    const { role } = await groupStorage.requireActiveMember(groupId, userId);
+    return groupStorage.listFiles(groupId, groupStorage.parseStorageCategory(category), {
+      userId,
+      role,
+    });
   }
 
   public async deleteStorageFile(groupId: string, userId: string, url: string): Promise<void> {
-    await groupStorage.requireOwnerOrAdmin(groupId, userId);
+    const { role } = await groupStorage.requireActiveMember(groupId, userId);
+    if (!groupStorage.canDeleteStorageFile(url, userId, role)) {
+      throw httpError(403, 'You can only delete photos you uploaded');
+    }
     await groupStorage.unlinkFileFromGroup(groupId, url);
     await objectStore.deleteManagedUploadBestEffort(url);
   }

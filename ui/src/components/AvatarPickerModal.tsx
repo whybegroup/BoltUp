@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
+import { UploadProgressBanner } from './UploadProgressBanner';
 import { GroupAvatarPicker } from './GroupAvatarPicker';
 import { UserAvatarPicker } from './UserAvatarPicker';
 import { uploadPendingAvatarFile, type PendingAvatarFile } from '../services/pickAndUploadImage';
@@ -190,6 +191,7 @@ export function AvatarPickerModal({
             </TouchableOpacity>
           ) : null}
         </View>
+        <UploadProgressBanner />
       </View>
     </Modal>
   );

@@ -7,6 +7,7 @@ import { focusManager } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppToastMount } from '../components/AppToastMount';
+import { UploadProgressBanner } from '../components/UploadProgressBanner';
 import {
   useFonts,
   DMSans_400Regular,
@@ -159,6 +160,7 @@ export default function RootLayout() {
                 <StatusBar style="dark" />
                 <RootLayoutNav />
                 <AppToastMount />
+                <UploadProgressBanner />
                 {Platform.OS !== 'web' ? <ForegroundNotificationBanner /> : null}
               </SafeAreaProvider>
             </GestureHandlerRootView>

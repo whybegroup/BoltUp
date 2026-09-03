@@ -4,7 +4,15 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { StorageService } from '@moijia/client';
+import * as FileSystem from 'expo-file-system/legacy';
 import { apiErrorMessage } from '../utils/apiErrors';
+import {
+  abandonUploadSessionIfAuto,
+  completeUploadFile,
+  ensureUploadSession,
+  setUploadFileFraction,
+  withUploadSession,
+} from './uploadProgress';
 
 export type UploadOpts = { groupId?: string };
 
@@ -243,7 +251,17 @@ function bodyByteLength(body: Blob | ArrayBuffer): number {
   return body instanceof Blob ? body.size : body.byteLength;
 }
 
-async function throwIfPutFailed(put: Response): Promise<void> {
+type PutResult = {
+  ok: boolean;
+  status: number;
+  text: () => Promise<string>;
+};
+
+type PutSource =
+  | { kind: 'uri'; uri: string; byteLength: number }
+  | { kind: 'body'; body: Blob | ArrayBuffer; byteLength: number };
+
+async function throwIfPutFailed(put: PutResult): Promise<void> {
   if (put.ok) return;
   let message = `Upload failed (${put.status}).`;
   try {
@@ -264,44 +282,124 @@ async function throwIfPutFailed(put: Response): Promise<void> {
   throw new Error(message);
 }
 
+function reportPutProgress(loaded: number, total: number) {
+  const frac = total > 0 ? Math.min(1, loaded / total) : 0.5;
+  setUploadFileFraction(0.05 + 0.9 * frac);
+}
+
+function putWithXhr(
+  url: string,
+  body: Blob | ArrayBuffer,
+  contentType: string
+): Promise<PutResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) reportPutProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        text: async () => String(xhr.responseText ?? ''),
+      });
+    };
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.onabort = () => reject(new Error('cancelled'));
+    xhr.send(body);
+  });
+}
+
+async function putNativeFile(url: string, fileUri: string, contentType: string): Promise<PutResult> {
+  const task = FileSystem.createUploadTask(
+    url,
+    fileUri,
+    {
+      httpMethod: 'PUT',
+      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      headers: { 'Content-Type': contentType },
+    },
+    ({ totalBytesSent, totalBytesExpectedToSend }) => {
+      reportPutProgress(totalBytesSent, totalBytesExpectedToSend);
+    }
+  );
+  const result = await task.uploadAsync();
+  if (!result) throw new Error('Upload failed');
+  return {
+    ok: result.status >= 200 && result.status < 300,
+    status: result.status,
+    text: async () => result.body,
+  };
+}
+
+async function putSource(url: string, source: PutSource, contentType: string): Promise<PutResult> {
+  if (source.kind === 'uri' && Platform.OS !== 'web') {
+    try {
+      return await putNativeFile(url, source.uri, contentType);
+    } catch {
+      const body = await readUploadBody(source.uri);
+      return putWithXhr(url, body, contentType);
+    }
+  }
+  const body = source.kind === 'body' ? source.body : await readUploadBody(source.uri);
+  return putWithXhr(url, body, contentType);
+}
+
+async function sourceForLocalUri(uri: string): Promise<PutSource> {
+  if (Platform.OS === 'web') {
+    const body = await readUploadBody(uri);
+    return { kind: 'body', body, byteLength: bodyByteLength(body) };
+  }
+  const file = new ExpoFile(uri);
+  return { kind: 'uri', uri, byteLength: file.size || 0 };
+}
+
 async function presignAndPut(input: {
   userId: string;
   contentType: string;
   filename?: string;
-  body: Blob | ArrayBuffer;
+  source: PutSource;
   groupId?: string;
 }): Promise<string> {
-  let presign;
+  ensureUploadSession();
+  setUploadFileFraction(0.04);
   try {
-    presign = await StorageService.presignUpload({
-      userId: input.userId,
-      contentType: input.contentType,
-      filename: input.filename,
-      groupId: input.groupId?.trim() || undefined,
-      contentLength: bodyByteLength(input.body),
-    });
-  } catch (e) {
-    throw new Error(apiErrorMessage(e, 'Upload failed'));
-  }
-
-  const put = await fetch(presign.uploadUrl, {
-    method: 'PUT',
-    body: input.body,
-    headers: { 'Content-Type': input.contentType },
-  });
-  await throwIfPutFailed(put);
-  if (input.groupId?.trim()) {
+    let presign;
     try {
-      await StorageService.completeUpload({
+      presign = await StorageService.presignUpload({
         userId: input.userId,
-        publicUrl: presign.publicUrl,
-        groupId: input.groupId.trim(),
+        contentType: input.contentType,
+        filename: input.filename,
+        groupId: input.groupId?.trim() || undefined,
+        contentLength: input.source.byteLength || undefined,
       });
     } catch (e) {
       throw new Error(apiErrorMessage(e, 'Upload failed'));
     }
+
+    const put = await putSource(presign.uploadUrl, input.source, input.contentType);
+    await throwIfPutFailed(put);
+    setUploadFileFraction(0.96);
+    if (input.groupId?.trim()) {
+      try {
+        await StorageService.completeUpload({
+          userId: input.userId,
+          publicUrl: presign.publicUrl,
+          groupId: input.groupId.trim(),
+          filename: input.filename,
+        });
+      } catch (e) {
+        throw new Error(apiErrorMessage(e, 'Upload failed'));
+      }
+    }
+    completeUploadFile();
+    return presign.publicUrl;
+  } catch (e) {
+    abandonUploadSessionIfAuto();
+    throw e;
   }
-  return presign.publicUrl;
 }
 
 /**
@@ -313,12 +411,12 @@ export async function uploadPickedImageAsset(
   opts?: UploadOpts
 ): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload photos.');
-  const body = await readUploadBody(asset.uri);
+  const source = await sourceForLocalUri(asset.uri);
   return presignAndPut({
     userId,
     contentType: asset.contentType,
     filename: asset.fileName,
-    body,
+    source,
     groupId: opts?.groupId,
   });
 }
@@ -329,12 +427,12 @@ export async function uploadPickedFileAsset(
   opts?: UploadOpts
 ): Promise<string> {
   if (!userId) throw new Error('You must be signed in to upload files.');
-  const body = await readUploadBody(asset.uri);
+  const source = await sourceForLocalUri(asset.uri);
   return presignAndPut({
     userId,
     contentType: asset.contentType,
     filename: asset.fileName,
-    body,
+    source,
     groupId: opts?.groupId,
   });
 }
@@ -362,11 +460,13 @@ export async function pickAndUploadImageFromLibrary(userId: string, opts?: Uploa
 
 export async function pickAndUploadImagesFromLibrary(userId: string, opts?: UploadOpts): Promise<string[]> {
   const assets = await pickImagesFromLibrary({ multiple: true });
-  const urls: string[] = [];
-  for (const asset of assets) {
-    urls.push(await uploadPickedImageAsset(userId, asset, opts));
-  }
-  return urls;
+  return withUploadSession(assets.length, async () => {
+    const urls: string[] = [];
+    for (const asset of assets) {
+      urls.push(await uploadPickedImageAsset(userId, asset, opts));
+    }
+    return urls;
+  });
 }
 
 export async function pickAndUploadImageFromCamera(userId: string, opts?: UploadOpts): Promise<string> {
@@ -441,19 +541,23 @@ export async function uploadCoverPhotoDrafts(
   drafts: CoverPhotoDraft[],
   opts?: UploadOpts
 ): Promise<string[]> {
-  const out: string[] = [];
-  for (const d of drafts) {
-    if (d.kind === 'remote') {
-      out.push(d.url);
-    } else {
-      const url = await uploadPendingAvatarFile(userId, d.pending, opts);
-      if (d.pending.kind === 'web') {
-        URL.revokeObjectURL(d.pending.objectUrl);
+  const pendingCount = drafts.filter((d) => d.kind === 'pending').length;
+  const run = async () => {
+    const out: string[] = [];
+    for (const d of drafts) {
+      if (d.kind === 'remote') {
+        out.push(d.url);
+      } else {
+        const url = await uploadPendingAvatarFile(userId, d.pending, opts);
+        if (d.pending.kind === 'web') {
+          URL.revokeObjectURL(d.pending.objectUrl);
+        }
+        out.push(url);
       }
-      out.push(url);
     }
-  }
-  return out;
+    return out;
+  };
+  return pendingCount > 0 ? withUploadSession(pendingCount, run) : run();
 }
 
 function pendingFromPicked(asset: PickedImageAsset): { previewUri: string; pending: PendingAvatarFile } {
@@ -506,7 +610,7 @@ export async function uploadWebImageFile(userId: string, file: File, opts?: Uplo
     userId,
     contentType,
     filename: ready.name,
-    body: ready,
+    source: { kind: 'body', body: ready, byteLength: ready.size },
     groupId: opts?.groupId,
   });
 }

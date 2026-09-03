@@ -226,6 +226,10 @@ export interface GroupStorageFileItem {
   url: string;
   byteSize: number;
   sourceLabel?: string;
+  /** Original or derived file name (used for non-image tiles). */
+  fileName?: string;
+  /** Viewer may delete this file (owner/admin, or the member who uploaded it). */
+  canDelete: boolean;
 }
 
 export interface GroupStorageFileList {

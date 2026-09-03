@@ -55,6 +55,7 @@ import {
 } from './ThreadedCommentsSection';
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { FileExtensionIcon } from './FileExtensionPreview';
 import { AddImageButton } from './AddImageButton';
 import { ForumPostMarkdownBody, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import { type GroupPost, type GroupPostComment, type GroupScoped } from '@moijia/client';
@@ -1636,11 +1637,10 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
           <View style={styles.composerFileChipsList}>
             {fileAttachments.map((file, i) => (
               <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
-                <Ionicons
-                  name="document-outline"
+                <FileExtensionIcon
+                  url={file.url}
+                  fileName={file.name}
                   size={14}
-                  color={Colors.textSub}
-                  style={styles.composerFileChipIcon}
                 />
                 <Text style={styles.composerFileChipText} numberOfLines={1}>
                   {file.name || 'Attachment'}
@@ -1925,11 +1925,10 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                                 accessibilityRole="link"
                                 accessibilityLabel={`Open attached file ${file.name || 'Attachment'}`}
                               >
-                                <Ionicons
-                                  name="document-outline"
+                                <FileExtensionIcon
+                                  url={file.url}
+                                  fileName={file.name}
                                   size={14}
-                                  color={Colors.accent}
-                                  style={styles.postAttachmentFileIcon}
                                 />
                                 <Text
                                   style={styles.postAttachmentFileText}
@@ -2344,6 +2343,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       <ImageLightboxModal
         visible={imageLightbox !== null}
         urls={imageLightbox?.urls ?? []}
+        names={imageLightbox?.alts}
         index={imageLightbox?.index ?? 0}
         onChangeIndex={(nextIndex) => setImageLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))}
         onClose={() => setImageLightbox(null)}

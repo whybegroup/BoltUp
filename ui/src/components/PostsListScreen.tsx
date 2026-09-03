@@ -53,6 +53,7 @@ import { formSectionTitleStyle } from './ui';
 import { AddImageButton } from './AddImageButton';
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { FileExtensionIcon } from './FileExtensionPreview';
 import { ForumPostMarkdownBody, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import {
   pickAndUploadCoverPhoto,
@@ -1098,11 +1099,10 @@ export function PostsListScreen() {
                 <View style={styles.composerFileChipsList}>
                   {newPostFileAttachments.map((file, i) => (
                     <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
-                      <Ionicons
-                        name="document-outline"
+                      <FileExtensionIcon
+                        url={file.url}
+                        fileName={file.name}
                         size={14}
-                        color={Colors.textSub}
-                        style={styles.composerFileChipIcon}
                       />
                       <Text style={styles.composerFileChipText} numberOfLines={1}>
                         {file.name || 'Attachment'}
@@ -1295,11 +1295,10 @@ export function PostsListScreen() {
                           <View style={styles.composerFileChipsList}>
                             {editPostFileAttachments.map((file, i) => (
                               <View key={`${file.url}-${i}`} style={styles.composerFileChip}>
-                                <Ionicons
-                                  name="document-outline"
+                                <FileExtensionIcon
+                                  url={file.url}
+                                  fileName={file.name}
                                   size={14}
-                                  color={Colors.textSub}
-                                  style={styles.composerFileChipIcon}
                                 />
                                 <Text style={styles.composerFileChipText} numberOfLines={1}>
                                   {file.name || 'Attachment'}
@@ -1414,11 +1413,10 @@ export function PostsListScreen() {
                             accessibilityRole="link"
                             accessibilityLabel={`Open attached file ${file.name || 'Attachment'}`}
                           >
-                            <Ionicons
-                              name="document-outline"
+                            <FileExtensionIcon
+                              url={file.url}
+                              fileName={file.name}
                               size={14}
-                              color={Colors.accent}
-                              style={styles.postAttachmentFileIcon}
                             />
                             <Text
                               style={styles.postAttachmentFileText}
@@ -1957,6 +1955,7 @@ export function PostsListScreen() {
       <ImageLightboxModal
         visible={imageLightbox !== null}
         urls={imageLightbox?.urls ?? []}
+        names={imageLightbox?.alts}
         index={imageLightbox?.index ?? 0}
         onChangeIndex={(nextIndex) =>
           setImageLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))

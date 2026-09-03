@@ -75,14 +75,14 @@ export function GroupStorageUsageBar({
 
   return (
     <View style={styles.wrap}>
-      {showSectionLabel ? <Text style={styles.sectionLabel}>STORAGE</Text> : null}
+      {showSectionLabel ? <Text style={styles.sectionLabel}>MEDIA</Text> : null}
       <View style={styles.card}>
         {onPress ? (
           <TouchableOpacity
             onPress={onPress}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel="Manage storage"
+            accessibilityLabel="Media"
           >
             <View style={styles.headerRow}>
               <View style={styles.headerMain}>{usageBlock}</View>

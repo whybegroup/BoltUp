@@ -140,7 +140,7 @@ export function buildGroupSettingsUrl(
 }
 
 /**
- * Build a group manage-storage URL with optional fromEventId
+ * Build a group media URL with optional fromEventId
  */
 export function buildGroupStorageUrl(
   groupId: string,

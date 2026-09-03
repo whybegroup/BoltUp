@@ -265,7 +265,7 @@ export function useEventScopeBreadcrumbs(
             label: breadcrumbTruncate(group.name || 'Group'),
             onPress: () => navigateTo(groupHref),
           });
-          segs.push({ label: 'Manage Storage' });
+          segs.push({ label: 'Media' });
         }
         return segs;
 
@@ -284,7 +284,7 @@ export function useEventScopeBreadcrumbs(
             onPress: () => navigateTo(groupHref),
           });
           segs.push({
-            label: 'Manage Storage',
+            label: 'Media',
             onPress: () => navigateTo(storageHref),
           });
           segs.push({ label: GROUP_STORAGE_CATEGORY_LABELS[subpage.category] });

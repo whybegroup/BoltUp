@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
+import { UploadProgressBanner } from './UploadProgressBanner';
 import {
   pickImagesFromLibrary,
   uploadPickedImageAsset,
@@ -20,6 +21,7 @@ import {
   isCancelled,
 } from '../services/pickAndUploadImage';
 import { uid } from '../utils/api-helpers';
+import { withUploadSession } from '../services/uploadProgress';
 
 export type PhotoUrlOrUploadModalProps = {
   visible: boolean;
@@ -85,20 +87,24 @@ export function PhotoUrlOrUploadModal({
       if (onPickPreview) {
         onClose();
         setBusy(false);
-        for (const asset of assets) {
-          const uploadId = uid();
-          previewIds.push(uploadId);
-          onPickPreview(asset.uri, uploadId);
-          const url = await uploadPickedImageAsset(userId, asset, { groupId });
-          onAdd(url, uploadId);
-        }
+        await withUploadSession(assets.length, async () => {
+          for (const asset of assets) {
+            const uploadId = uid();
+            previewIds.push(uploadId);
+            onPickPreview(asset.uri, uploadId);
+            const url = await uploadPickedImageAsset(userId, asset, { groupId });
+            onAdd(url, uploadId);
+          }
+        });
         return;
       }
       setInlinePreviewUri(assets[0]?.uri ?? null);
-      for (const asset of assets) {
-        const url = await uploadPickedImageAsset(userId, asset, { groupId });
-        onAdd(url);
-      }
+      await withUploadSession(assets.length, async () => {
+        for (const asset of assets) {
+          const url = await uploadPickedImageAsset(userId, asset, { groupId });
+          onAdd(url);
+        }
+      });
       resetAndClose();
     } catch (e) {
       if (isCancelled(e)) {
@@ -139,16 +145,18 @@ export function PhotoUrlOrUploadModal({
       onClose();
       setBusy(true);
       try {
-        for (const file of files) {
-          const uploadId = uid();
-          const previewUri = URL.createObjectURL(file);
-          previewIds.push(uploadId);
-          previewUris.push(previewUri);
-          onPickPreview(previewUri, uploadId);
-          const url = await uploadWebImageFile(userId, file, { groupId });
-          onAdd(url, uploadId);
-          URL.revokeObjectURL(previewUri);
-        }
+        await withUploadSession(files.length, async () => {
+          for (const file of files) {
+            const uploadId = uid();
+            const previewUri = URL.createObjectURL(file);
+            previewIds.push(uploadId);
+            previewUris.push(previewUri);
+            onPickPreview(previewUri, uploadId);
+            const url = await uploadWebImageFile(userId, file, { groupId });
+            onAdd(url, uploadId);
+            URL.revokeObjectURL(previewUri);
+          }
+        });
       } catch (err) {
         for (const id of previewIds) onUploadFailed?.(id);
         for (const uri of previewUris) URL.revokeObjectURL(uri);
@@ -165,10 +173,12 @@ export function PhotoUrlOrUploadModal({
     setInlinePreviewUri(objectUrl);
     setBusy(true);
     try {
-      for (const file of files) {
-        const url = await uploadWebImageFile(userId, file, { groupId });
-        onAdd(url);
-      }
+      await withUploadSession(files.length, async () => {
+        for (const file of files) {
+          const url = await uploadWebImageFile(userId, file, { groupId });
+          onAdd(url);
+        }
+      });
       clearInlinePreview();
       resetAndClose();
     } catch (err) {
@@ -220,7 +230,6 @@ export function PhotoUrlOrUploadModal({
               <Image source={{ uri: inlinePreviewUri }} style={styles.inlinePreview} resizeMode="contain" />
               {busy ? (
                 <View style={styles.uploadingRow}>
-                  <ActivityIndicator color={Colors.accent} />
                   <Text style={styles.uploadingText}>Uploading…</Text>
                 </View>
               ) : null}
@@ -253,6 +262,7 @@ export function PhotoUrlOrUploadModal({
             <Text style={styles.secondaryBtnText}>Cancel</Text>
           </TouchableOpacity>
         </View>
+        <UploadProgressBanner />
       </View>
     </Modal>
   );

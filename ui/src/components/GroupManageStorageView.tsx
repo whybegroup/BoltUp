@@ -43,14 +43,15 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
     groupId,
     currentUserId ?? ''
   );
-  const isAdmin = group?.membershipStatus === 'admin';
+  const isMember =
+    group?.membershipStatus === 'member' || group?.membershipStatus === 'admin';
   const isOwner = (group?.ownerId ?? '') === currentUserId;
-  const canManage = !!currentUserId && isAdmin;
+  const canView = !!currentUserId && isMember;
 
   const { data: breakdown, refetch: refetchBreakdown } = useGroupStorageBreakdown(
     groupId,
     currentUserId ?? '',
-    canManage
+    canView
   );
   const cancelSub = useCancelGroupStorageSubscription(groupId, currentUserId ?? '');
   const { refreshControl } = usePullToRefresh([refetchGroup, refetchBreakdown]);
@@ -58,12 +59,12 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
   useMissingGroupRedirect(isError, groupError, group?.membershipStatus, fallbackHref);
 
   useEffect(() => {
-    if (group && !canManage) {
+    if (group && !canView) {
       router.replace(fallbackHref);
     }
-  }, [group, canManage, router, fallbackHref]);
+  }, [group, canView, router, fallbackHref]);
 
-  if (!group || !canManage) {
+  if (!group || !canView) {
     return (
       <View style={styles.loadingWrap}>
         <ActivityIndicator color={Colors.textSub} />
@@ -95,7 +96,7 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
             categories={breakdown ? categories : undefined}
             showSectionLabel={false}
           />
-          <Text style={styles.sectionLabel}>USAGE BY TYPE</Text>
+          <Text style={styles.sectionLabel}>MEDIA BY TYPE</Text>
           <View style={styles.card}>
             {categories.map((cat, i) => (
               <TouchableOpacity
@@ -187,7 +188,7 @@ const styles = StyleSheet.create({
   },
   rowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border },
   rowDot: { width: 10, height: 10, borderRadius: 5 },
-  rowLabel: { flex: 1, fontSize: 16, fontFamily: Fonts.semiBold, color: Colors.text },
+  rowLabel: { flex: 1, fontSize: 14, fontFamily: Fonts.medium, color: Colors.text },
   cancelBtn: {
     marginHorizontal: 20,
     marginTop: 12,

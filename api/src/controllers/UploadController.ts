@@ -54,6 +54,7 @@ export class UploadController extends Controller {
       userId: body.userId.trim(),
       publicUrl: body.publicUrl.trim(),
       groupId: body.groupId?.trim(),
+      filename: body.filename?.trim(),
     });
   }
 

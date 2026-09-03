@@ -93,6 +93,8 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import DateTimePicker from './AppDateTimePicker';
 import { useCurrentUserContext } from '../contexts/CurrentUserContext';
 import { ResolvableImage } from './ResolvableImage';
+import { FileExtensionPreview } from './FileExtensionPreview';
+import { isImageFileUrl } from '../utils/fileKind';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import { EmojiBar } from './EmojiBar';
 import { ImageLightboxModal } from './ImageLightboxModal';
@@ -230,19 +232,34 @@ function CommentPhotoGallery({
           onPress={() => onPhotoPress(photo, index)}
           activeOpacity={0.8}
         >
-          <ResolvableImage
-            storedUrl={photo}
-            urlMap={urlMap}
-            style={{
-              width: COMMENT_PHOTO_SIZE,
-              height: COMMENT_PHOTO_SIZE,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: Colors.border,
-              backgroundColor: Colors.bg,
-            }}
-            resizeMode="cover"
-          />
+          {isImageFileUrl(photo) ? (
+            <ResolvableImage
+              storedUrl={photo}
+              urlMap={urlMap}
+              style={{
+                width: COMMENT_PHOTO_SIZE,
+                height: COMMENT_PHOTO_SIZE,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: Colors.border,
+                backgroundColor: Colors.bg,
+              }}
+              resizeMode="cover"
+            />
+          ) : (
+            <View
+              style={{
+                width: COMMENT_PHOTO_SIZE,
+                height: COMMENT_PHOTO_SIZE,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: Colors.border,
+                overflow: 'hidden',
+              }}
+            >
+              <FileExtensionPreview url={photo} />
+            </View>
+          )}
         </TouchableOpacity>
       ))}
     </ScrollView>

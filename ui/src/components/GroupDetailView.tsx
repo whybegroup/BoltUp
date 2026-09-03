@@ -228,7 +228,8 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const { data: storageBreakdown, refetch: refetchStorageBreakdown } = useGroupStorageBreakdown(
     groupId,
     currentUserId ?? '',
-    !!currentUserId && group?.membershipStatus === 'admin'
+    !!currentUserId &&
+      (group?.membershipStatus === 'member' || group?.membershipStatus === 'admin')
   );
   const updateGroup = useUpdateGroup(groupId, currentUserId ?? '');
   const regenerateInviteCodeMutation = useRegenerateInviteCode(groupId, currentUserId ?? '');
@@ -949,7 +950,9 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
           </View>
         </View>
 
-        {(isAdmin || isOwner) && typeof group.usedStorageBytes === 'number' ? (
+        {!isPending &&
+        (group.membershipStatus === 'member' || group.membershipStatus === 'admin') &&
+        typeof group.usedStorageBytes === 'number' ? (
           <GroupStorageUsageBar
             usedBytes={group.usedStorageBytes}
             maxBytes={group.maxStorageBytes}

@@ -16,7 +16,7 @@ import type { GroupSubpage } from './useGroupSubpage';
 const SUBPAGE_LABEL: Partial<Record<GroupSubpage['kind'], string>> = {
   members: 'Members',
   settings: 'Settings',
-  storage: 'Manage Storage',
+  storage: 'Media',
 };
 
 function activitySectionForSubpage(subpage: GroupSubpage): GroupsActivitySection | null {
@@ -115,7 +115,7 @@ export function useGroupScopeBreadcrumbs(
 
     if (subpage.kind === 'storage-category') {
       out.push({
-        label: 'Manage Storage',
+        label: 'Media',
         onPress: () => navigateTo(`/(tabs)/groups/${groupId}/storage` as Href),
       });
       out.push({ label: GROUP_STORAGE_CATEGORY_LABELS[subpage.category] });

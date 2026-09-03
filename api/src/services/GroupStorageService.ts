@@ -1,7 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import {
+  extractUploadItemsFromForumBody,
+  extractUploadItemsFromPlainText,
   extractUploadUrlsFromForumBody,
-  isLikelyUploadedImageUrl,
   removeUploadUrlFromForumBody,
 } from '../utils/groupPostBodyUploads';
 import {
@@ -17,6 +18,7 @@ import { httpError } from '../utils/httpError';
 import {
   managedUploadByteSize,
   tryExtractUploadObjectKey,
+  uploadUrlOwnedByUser,
 } from '../utils/objectStorePaths';
 import { getS3Config } from '../utils/s3Config';
 import { NotificationService } from './NotificationService';
@@ -91,8 +93,10 @@ export class GroupStorageService {
     objectKey: string;
     publicUrl: string;
     byteSize: number;
+    originalName?: string;
   }): Promise<void> {
     const byteSize = Math.max(0, Math.floor(input.byteSize));
+    const originalName = input.originalName?.trim() || undefined;
     await prisma.groupStorageFile.upsert({
       where: { objectKey: input.objectKey },
       create: {
@@ -100,11 +104,13 @@ export class GroupStorageService {
         objectKey: input.objectKey,
         publicUrl: input.publicUrl,
         byteSize,
+        originalName,
       },
       update: {
         groupId: input.groupId,
         publicUrl: input.publicUrl,
         byteSize,
+        ...(originalName ? { originalName } : {}),
       },
     });
   }
@@ -123,7 +129,10 @@ export class GroupStorageService {
     await this.removeByObjectKey(key);
   }
 
-  public async requireOwnerOrAdmin(groupId: string, userId: string): Promise<void> {
+  public async requireActiveMember(
+    groupId: string,
+    userId: string
+  ): Promise<{ role: string }> {
     const group = await prisma.group.findUnique({
       where: { id: groupId },
       select: { id: true, deletedAt: true },
@@ -135,13 +144,15 @@ export class GroupStorageService {
       where: { groupId_userId: { groupId, userId } },
       select: { status: true, role: true },
     });
-    if (
-      !member ||
-      member.status !== 'active' ||
-      (member.role !== 'owner' && member.role !== 'admin')
-    ) {
-      throw httpError(403, 'Must be a group owner or admin');
+    if (!member || member.status !== 'active') {
+      throw httpError(403, 'Must be an active group member');
     }
+    return { role: member.role };
+  }
+
+  public canDeleteStorageFile(url: string, userId: string, role: string): boolean {
+    if (role === 'owner' || role === 'admin') return true;
+    return uploadUrlOwnedByUser(url, userId);
   }
 
   public parseStorageCategory(raw: string): GroupStorageCategoryId {
@@ -186,11 +197,46 @@ export class GroupStorageService {
     return sizes.get(key) ?? 0;
   }
 
+  private async originalNameMapForGroup(groupId: string): Promise<Map<string, string>> {
+    const tracked = await prisma.groupStorageFile.findMany({
+      where: { groupId, originalName: { not: null } },
+      select: { objectKey: true, publicUrl: true, originalName: true },
+    });
+    const names = new Map<string, string>();
+    for (const row of tracked) {
+      const name = row.originalName?.trim();
+      if (!name) continue;
+      if (row.objectKey) names.set(row.objectKey, name);
+      if (row.publicUrl) names.set(row.publicUrl, name);
+    }
+    return names;
+  }
+
+  private resolvedFileName(
+    item: { url: string; fileName?: string },
+    storedNames: Map<string, string>
+  ): string | undefined {
+    const uuidFile = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+    const fromBody = item.fileName?.trim();
+    if (
+      fromBody &&
+      !/^(image|photo|img|attachment)$/i.test(fromBody) &&
+      !uuidFile.test(fromBody)
+    ) {
+      return fromBody;
+    }
+    const key = tryExtractUploadObjectKey(item.url, getS3Config());
+    const stored = (key ? storedNames.get(key) : undefined) || storedNames.get(item.url);
+    const name = stored?.trim();
+    if (name && !uuidFile.test(name)) return name;
+    return undefined;
+  }
+
   public async collectCategorizedUploadUrls(groupId: string): Promise<{
-    events: Array<{ url: string; label: string }>;
-    polls: Array<{ url: string; label: string }>;
-    posts: Array<{ url: string; label: string }>;
-    group: Array<{ url: string; label: string }>;
+    events: Array<{ url: string; label: string; fileName?: string }>;
+    polls: Array<{ url: string; label: string; fileName?: string }>;
+    posts: Array<{ url: string; label: string; fileName?: string }>;
+    group: Array<{ url: string; label: string; fileName?: string }>;
   }> {
     const group = await prisma.group.findUnique({
       where: { id: groupId },
@@ -201,7 +247,7 @@ export class GroupStorageService {
           select: {
             name: true,
             coverPhotos: { select: { photoUrl: true } },
-            comments: { select: { photos: { select: { photoUrl: true } } } },
+            comments: { select: { text: true, photos: { select: { photoUrl: true } } } },
           },
         },
         polls: { select: { title: true, photos: { select: { photoUrl: true } } } },
@@ -215,21 +261,28 @@ export class GroupStorageService {
       },
     });
 
-    const events: Array<{ url: string; label: string }> = [];
-    const polls: Array<{ url: string; label: string }> = [];
-    const posts: Array<{ url: string; label: string }> = [];
-    const groupFiles: Array<{ url: string; label: string }> = [];
+    type Collected = { url: string; label: string; fileName?: string };
+    const events: Collected[] = [];
+    const polls: Collected[] = [];
+    const posts: Collected[] = [];
+    const groupFiles: Collected[] = [];
     if (!group) return { events, polls, posts, group: groupFiles };
 
     const pushUnique = (
-      bucket: Array<{ url: string; label: string }>,
+      bucket: Collected[],
       url: string | null | undefined,
-      label: string
+      label: string,
+      fileName?: string
     ) => {
       const u = url?.trim();
       if (!u) return;
-      if (bucket.some((item) => item.url === u)) return;
-      bucket.push({ url: u, label });
+      const name = fileName?.trim() || undefined;
+      const existing = bucket.find((item) => item.url === u);
+      if (existing) {
+        if (name && !existing.fileName) existing.fileName = name;
+        return;
+      }
+      bucket.push({ url: u, label, fileName: name });
     };
 
     pushUnique(groupFiles, group.thumbnail, 'Group photo');
@@ -240,6 +293,9 @@ export class GroupStorageService {
       for (const p of ev.coverPhotos) pushUnique(events, p.photoUrl, label);
       for (const c of ev.comments) {
         for (const p of c.photos) pushUnique(events, p.photoUrl, label);
+        for (const item of extractUploadItemsFromPlainText(c.text)) {
+          pushUnique(events, item.url, label, item.fileName);
+        }
       }
     }
     for (const poll of group.polls) {
@@ -248,12 +304,12 @@ export class GroupStorageService {
     }
     for (const post of group.posts) {
       const label = post.title?.trim() || 'Post';
-      for (const u of extractUploadUrlsFromForumBody(post.body)) {
-        pushUnique(posts, u, label);
+      for (const item of extractUploadItemsFromForumBody(post.body)) {
+        pushUnique(posts, item.url, label, item.fileName);
       }
       for (const c of post.comments) {
-        for (const u of extractUploadUrlsFromForumBody(c.body)) {
-          pushUnique(posts, u, label);
+        for (const item of extractUploadItemsFromForumBody(c.body)) {
+          pushUnique(posts, item.url, label, item.fileName);
         }
       }
     }
@@ -278,15 +334,13 @@ export class GroupStorageService {
     ]);
     const allUrls = [...cats.group, ...cats.events, ...cats.polls, ...cats.posts].map((i) => i.url);
     const sizes = await this.sizeMapForGroup(groupId, allUrls);
-    const photoCount = (items: Array<{ url: string }>) =>
-      items.filter((i) => isLikelyUploadedImageUrl(i.url)).length;
     const summary = (
       id: GroupStorageCategoryId,
       items: Array<{ url: string }>
     ): GroupStorageBreakdown['categories'][number] => ({
       id,
       usedBytes: this.bytesForUrls(items.map((i) => i.url), sizes),
-      fileCount: photoCount(items),
+      fileCount: items.length,
     });
     return {
       usedBytes,
@@ -300,19 +354,28 @@ export class GroupStorageService {
     };
   }
 
-  public async listFiles(groupId: string, category: GroupStorageCategoryId): Promise<GroupStorageFileList> {
+  public async listFiles(
+    groupId: string,
+    category: GroupStorageCategoryId,
+    viewer: { userId: string; role: string }
+  ): Promise<GroupStorageFileList> {
     const cats = await this.collectCategorizedUploadUrls(groupId);
-    const items = cats[category].filter((i) => isLikelyUploadedImageUrl(i.url));
-    const sizes = await this.sizeMapForGroup(
-      groupId,
-      items.map((i) => i.url)
-    );
+    const items = cats[category];
+    const [sizes, storedNames] = await Promise.all([
+      this.sizeMapForGroup(
+        groupId,
+        items.map((i) => i.url)
+      ),
+      this.originalNameMapForGroup(groupId),
+    ]);
     return {
       category,
       files: items.map((item) => ({
         url: item.url,
         byteSize: this.byteSizeForUrl(item.url, sizes),
         sourceLabel: item.label,
+        fileName: this.resolvedFileName(item, storedNames),
+        canDelete: this.canDeleteStorageFile(item.url, viewer.userId, viewer.role),
       })),
     };
   }

@@ -6,12 +6,12 @@ import { isDirectRenderableImageUrl, resolveImageViewUrls, toRenderableImageUrl 
 function extensionFromUrl(url: string): string {
   try {
     const path = new URL(url).pathname;
-    const m = path.match(/\.(jpe?g|png|gif|webp|heic|bmp)$/i);
+    const m = path.match(/\.([a-z0-9]{1,8})$/i);
     if (m) return m[1].toLowerCase().replace('jpeg', 'jpg');
   } catch {
     /* ignore */
   }
-  return 'jpg';
+  return 'bin';
 }
 
 function fileNameFromUrl(url: string): string {

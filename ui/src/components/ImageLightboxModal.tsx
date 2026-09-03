@@ -25,11 +25,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Fonts, Radius } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { ResolvableImage } from './ResolvableImage';
+import { FileExtensionPreview } from './FileExtensionPreview';
 import { shareImage } from '../services/downloadImage';
+import { isImageFileUrl } from '../utils/fileKind';
 
 type ImageLightboxModalProps = {
   visible: boolean;
   urls: string[];
+  /** Parallel to `urls` — original file names for non-image items. */
+  names?: Array<string | undefined>;
   index: number;
   onChangeIndex: (nextIndex: number) => void;
   onClose: () => void;
@@ -62,6 +66,7 @@ function clampZoomPan(tx: number, ty: number, s: number, w: number, h: number): 
 export function ImageLightboxModal({
   visible,
   urls,
+  names,
   index,
   onChangeIndex,
   onClose,
@@ -467,12 +472,20 @@ export function ImageLightboxModal({
                       i === safeIndex ? zoomStyle : null,
                     ]}
                   >
-                    <ResolvableImage
-                      storedUrl={url}
-                      urlMap={normalizedUrlMap}
-                      style={styles.image}
-                      resizeMode="contain"
-                    />
+                    {isImageFileUrl(url, names?.[i]) ? (
+                      <ResolvableImage
+                        storedUrl={url}
+                        urlMap={normalizedUrlMap}
+                        style={styles.image}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <FileExtensionPreview
+                        url={url}
+                        fileName={names?.[i]}
+                        variant="viewer"
+                      />
+                    )}
                   </Animated.View>
                 ))}
               </Animated.View>

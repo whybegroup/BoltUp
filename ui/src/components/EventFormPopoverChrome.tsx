@@ -4,6 +4,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Colors, Radius, Shadows } from '../constants/theme';
 import { useGuardedPress } from '../hooks/useGuardedPress';
 import { AppToastMount } from './AppToastMount';
+import { UploadProgressBanner } from './UploadProgressBanner';
 import { KeyboardFormRoot } from './KeyboardSafeScrollView';
 
 const POPOVER_MAX_W = 560;
@@ -61,6 +62,7 @@ export function EventFormPopoverChrome({ children, onClose }: Props) {
         </SafeAreaView>
       )}
       <AppToastMount />
+      <UploadProgressBanner skipSafeArea />
     </View>
   );
 }

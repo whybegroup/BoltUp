@@ -52,6 +52,16 @@ function objectKeyFromUrl(u: URL, cfg: S3Config): string | null {
   return path;
 }
 
+export function objectKeyOwnedByUser(objectKey: string, userId: string): boolean {
+  if (!userId) return false;
+  return objectKey.startsWith(`${STORAGE_KEY_PREFIX}/${userId}/`);
+}
+
+export function uploadUrlOwnedByUser(sourceUrl: string, userId: string, cfg?: S3Config | null): boolean {
+  const key = tryExtractUploadObjectKey(sourceUrl, cfg);
+  return !!key && objectKeyOwnedByUser(key, userId);
+}
+
 /** Object key from a stored public S3 URL (path-style, virtual-hosted, or custom public base). */
 export function tryExtractUploadObjectKey(sourceUrl: string, cfg?: S3Config | null): string | null {
   if (!sourceUrl?.trim()) return null;

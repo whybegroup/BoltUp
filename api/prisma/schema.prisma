@@ -86,12 +86,13 @@ model Group {
 /// Tracks managed S3 uploads billed against a group's storage quota.
 /// No FK: files may be uploaded with a client-generated group id before the group row exists.
 model GroupStorageFile {
-  id        String   @id @default(uuid())
-  groupId   String
-  objectKey String   @unique
-  publicUrl String
-  byteSize  Int
-  createdAt DateTime @default(now())
+  id           String   @id @default(uuid())
+  groupId      String
+  objectKey    String   @unique
+  publicUrl    String
+  byteSize     Int
+  originalName String?
+  createdAt    DateTime @default(now())
 
   @@index([groupId])
   @@map("group_storage_files")

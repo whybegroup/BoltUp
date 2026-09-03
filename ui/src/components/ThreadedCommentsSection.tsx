@@ -30,6 +30,7 @@ import { CommentsSection } from './CommentsSection';
 import { CommentReplyQuote } from './CommentReplyQuote';
 import { AddImageButton } from './AddImageButton';
 import { ResolvableImage } from './ResolvableImage';
+import { FileExtensionIcon } from './FileExtensionPreview';
 import { CommentMentionInput } from './CommentMentionInput';
 import type { User } from '@moijia/client';
 
@@ -872,7 +873,7 @@ export function ThreadedCommentsSection({
                 <View style={styles.commentComposerPendingFilesRow}>
                   {draftPendingFiles.map((f) => (
                     <View key={f.id} style={styles.commentComposerPendingFileChip}>
-                      <Ionicons name="document-outline" size={14} color={Colors.textSub} />
+                      <FileExtensionIcon url={f.name} fileName={f.name} size={14} />
                       <Text style={styles.commentComposerPendingFileName} numberOfLines={1}>
                         {f.name}
                       </Text>

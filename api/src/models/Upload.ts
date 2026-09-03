@@ -24,6 +24,8 @@ export interface CompleteUploadRequest {
   userId: string;
   publicUrl: string;
   groupId?: string;
+  /** Original file name from the client (shown for non-image media). */
+  filename?: string;
 }
 
 export interface PresignGetBatchRequest {

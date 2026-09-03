@@ -284,7 +284,7 @@ export class GroupController extends Controller {
   }
 
   /**
-   * Storage usage broken down by events, polls, and posts. Requires owner or admin.
+   * Storage usage broken down by events, polls, and posts. Requires an active member.
    */
   @Get('{id}/storage-breakdown')
   public async getStorageBreakdown(
@@ -299,7 +299,7 @@ export class GroupController extends Controller {
   }
 
   /**
-   * Photos billed to a storage category. Requires owner or admin.
+   * Files billed to a storage category. Requires an active member.
    */
   @Get('{id}/storage-files/{category}')
   public async getStorageFiles(
@@ -315,7 +315,8 @@ export class GroupController extends Controller {
   }
 
   /**
-   * Remove a photo from this group's records and delete it from S3. Requires owner or admin.
+   * Remove a photo from this group's records and delete it from S3.
+   * Owner/admin may delete any photo; members may delete photos they uploaded.
    */
   @Delete('{id}/storage-files')
   public async deleteStorageFile(
