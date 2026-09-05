@@ -1651,7 +1651,14 @@ export class EventService {
       throw { status: 404, message: 'Comment not found' };
     }
     if (comment.userId !== input.actorId) {
-      throw { status: 403, message: 'Only the author can edit this comment' };
+      const event = await prisma.event.findUnique({
+        where: { id: comment.eventId },
+        select: { groupId: true },
+      });
+      const role = event ? await this.getActiveMemberRole(event.groupId, input.actorId) : null;
+      if (!role || !this.isAdminOrOwnerRole(role)) {
+        throw { status: 403, message: 'Only the author can edit this comment' };
+      }
     }
 
     if (comment.text === COMMENT_DELETED_BY_ADMIN_TEXT) {

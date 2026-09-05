@@ -662,6 +662,14 @@ export class GroupService {
     }
   }
 
+  private async isActiveAdminOrOwner(groupId: string, userId: string): Promise<boolean> {
+    const member = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+      select: { role: true, status: true },
+    });
+    return !!member && member.status === 'active' && (member.role === 'admin' || member.role === 'owner');
+  }
+
   private async actorDisplayName(userId: string): Promise<string> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -954,10 +962,13 @@ export class GroupService {
       select: { id: true, groupId: true, userId: true, body: true },
     });
     if (!post) throw new Error('Post not found');
-    if (post.userId !== input.userId) {
+    await this.requireActiveMember(post.groupId, input.userId);
+    if (
+      post.userId !== input.userId &&
+      !(await this.isActiveAdminOrOwner(post.groupId, input.userId))
+    ) {
       throw new Error('You can only edit your own post');
     }
-    await this.requireActiveMember(post.groupId, input.userId);
     const body = input.body.trim();
     if (!body) throw new Error('Post body is required');
     const title = input.title.trim() || 'Post';
@@ -1161,10 +1172,13 @@ export class GroupService {
       include: { post: { select: { groupId: true, title: true } } },
     });
     if (!comment) throw new Error('Comment not found');
-    if (comment.userId !== input.userId) {
+    await this.requireActiveMember(comment.post.groupId, input.userId);
+    if (
+      comment.userId !== input.userId &&
+      !(await this.isActiveAdminOrOwner(comment.post.groupId, input.userId))
+    ) {
       throw new Error('You can only edit your own comment');
     }
-    await this.requireActiveMember(comment.post.groupId, input.userId);
     const body = input.body.trim();
     if (!body) throw new Error('Comment body is required');
 

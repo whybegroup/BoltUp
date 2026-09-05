@@ -26,11 +26,15 @@ function extensionFromFilenameOrType(filename: string | undefined, contentType: 
   if (contentType.includes('pdf')) return 'pdf';
   if (contentType.includes('json')) return 'json';
   if (contentType.includes('zip')) return 'zip';
+  if (contentType.includes('text/html')) return 'html';
   if (contentType.includes('text/plain')) return 'txt';
   if (contentType.includes('msword')) return 'doc';
   if (contentType.includes('officedocument.wordprocessingml.document')) return 'docx';
   if (contentType.includes('spreadsheetml')) return 'xlsx';
   if (contentType.includes('presentationml')) return 'pptx';
+  if (contentType.includes('opendocument.text')) return 'odt';
+  if (contentType.includes('opendocument.spreadsheet')) return 'ods';
+  if (contentType.includes('opendocument.presentation')) return 'odp';
   if (contentType.includes('png')) return 'png';
   if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'jpg';
   if (contentType.includes('webp')) return 'webp';

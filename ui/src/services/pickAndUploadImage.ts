@@ -38,6 +38,7 @@ const GIF_TYPE = /^image\/gif$/i;
 const COMPRESSED_MAX_EDGE = 1920;
 const COMPRESSED_JPEG_QUALITY = 0.72;
 const LIBRARY_SELECTION_LIMIT = 20;
+const FILE_SELECTION_LIMIT = 20;
 
 function inferContentType(
   mimeType: string | null | undefined,
@@ -221,6 +222,22 @@ async function pickCameraImageForUpload(): Promise<PickedImageAsset> {
 }
 
 /** Opens the document picker; throws `cancelled` if the user backs out. */
+export async function pickFilesFromDevice(): Promise<PickedFileAsset[]> {
+  const result = await DocumentPicker.getDocumentAsync({
+    multiple: true,
+    copyToCacheDirectory: true,
+    type: '*/*',
+  });
+  if (result.canceled || !result.assets?.length) {
+    throw new Error('cancelled');
+  }
+  return result.assets.slice(0, FILE_SELECTION_LIMIT).map((asset) => ({
+    uri: asset.uri,
+    contentType: asset.mimeType || 'application/octet-stream',
+    fileName: asset.name?.trim() || `file-${Date.now()}`,
+  }));
+}
+
 export async function pickFileFromDevice(): Promise<PickedFileAsset> {
   const result = await DocumentPicker.getDocumentAsync({
     multiple: false,
@@ -231,11 +248,10 @@ export async function pickFileFromDevice(): Promise<PickedFileAsset> {
     throw new Error('cancelled');
   }
   const asset = result.assets[0];
-  const fileName = asset.name?.trim() || `file-${Date.now()}`;
   return {
     uri: asset.uri,
     contentType: asset.mimeType || 'application/octet-stream',
-    fileName,
+    fileName: asset.name?.trim() || `file-${Date.now()}`,
   };
 }
 
@@ -437,14 +453,20 @@ export async function uploadPickedFileAsset(
   });
 }
 
-/** Picks any file from the device and uploads it. Throws `cancelled` when picker closes. */
+/** Picks one or more files from the device and uploads them. Throws `cancelled` when picker closes. */
 export async function pickAndUploadFileFromDevice(
   userId: string,
   opts?: UploadOpts
-): Promise<{ publicUrl: string; fileName: string }> {
-  const asset = await pickFileFromDevice();
-  const publicUrl = await uploadPickedFileAsset(userId, asset, opts);
-  return { publicUrl, fileName: asset.fileName };
+): Promise<{ publicUrl: string; fileName: string }[]> {
+  const assets = await pickFilesFromDevice();
+  return withUploadSession(assets.length, async () => {
+    const uploaded: { publicUrl: string; fileName: string }[] = [];
+    for (const asset of assets) {
+      const publicUrl = await uploadPickedFileAsset(userId, asset, opts);
+      uploaded.push({ publicUrl, fileName: asset.fileName });
+    }
+    return uploaded;
+  });
 }
 
 /** File attachments use the public S3 URL. */

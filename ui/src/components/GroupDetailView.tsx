@@ -48,6 +48,7 @@ import { ResolvableImage } from './ResolvableImage';
 import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 import Toast from 'react-native-toast-message';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { dropLightboxItem } from './ForumPostMarkdownBody';
 import { GroupStorageUsageBar } from './GroupStorageUsageBar';
 import { groupSubpageFromPathname } from './groupScope/useGroupSubpage';
 import { groupsTabParentHref, navigateGroupsTabTo } from '../utils/tabBreadcrumbNav';
@@ -625,6 +626,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
   const removeCoverPhotoAt = async (index: number) => {
     if (!currentUserId || !canEditPhotos) return;
     const prev = localCoverPhotos;
+    const removed = prev[index];
     const next = prev.filter((_, j) => j !== index);
     setLocalCoverPhotos(next);
     try {
@@ -632,11 +634,43 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
         coverPhotos: next,
         updatedBy: currentUserId,
       });
+      if (removed) deleteManagedUploadFireAndForget(currentUserId, removed);
     } catch {
       setLocalCoverPhotos(prev);
       if (Platform.OS === 'web') window.alert('Failed to remove photo');
       else Alert.alert('Error', 'Failed to remove photo');
     }
+  };
+
+  const confirmRemoveGroupCoverPhoto = (url: string) => {
+    if (!currentUserId || !canEditPhotos) return;
+    const run = async () => {
+      const prev = localCoverPhotos;
+      const next = prev.filter((u) => u !== url);
+      if (next.length === prev.length) return;
+      setLocalCoverPhotos(next);
+      setGroupPhotoLightbox((cur) => (cur ? dropLightboxItem(cur, url) : cur));
+      try {
+        await updateGroup.mutateAsync({
+          coverPhotos: next,
+          updatedBy: currentUserId,
+        });
+        deleteManagedUploadFireAndForget(currentUserId, url);
+      } catch {
+        setLocalCoverPhotos(prev);
+        if (Platform.OS === 'web') window.alert('Failed to remove photo');
+        else Alert.alert('Error', 'Failed to remove photo');
+      }
+    };
+    const go = () => void run();
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this photo from the group?')) go();
+      return;
+    }
+    Alert.alert('Delete photo?', 'This photo will be removed from the group and deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: go },
+    ]);
   };
 
   const addCoverPhoto = async (url: string | string[]) => {
@@ -713,7 +747,12 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
             {coverPhotosForDisplay.map((uri, i) => (
               <View key={`${uri}-${i}`} style={{ position: 'relative' }}>
                 <TouchableOpacity
-                  onPress={() => setGroupPhotoLightbox({ urls: coverPhotosForDisplay, index: i })}
+                  onPress={() =>
+                    setGroupPhotoLightbox({
+                      urls: coverPhotosForDisplay,
+                      index: i,
+                    })
+                  }
                   activeOpacity={0.9}
                 >
                   <ResolvableImage
@@ -1120,6 +1159,7 @@ export function GroupDetailView({ groupId }: GroupDetailViewProps) {
           setGroupPhotoLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
         }
         onClose={() => setGroupPhotoLightbox(null)}
+        onDelete={canEditPhotos ? confirmRemoveGroupCoverPhoto : undefined}
         headerAvatar={<Avatar name={group.name} size={28} />}
         title={group.name}
         subtitle={

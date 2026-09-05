@@ -31,9 +31,11 @@ import { uploadPendingAvatarFile } from '../services/pickAndUploadImage';
 import { pickAndUploadCoverPhoto, takeAndUploadCoverPhoto } from '../services/pickAndUploadImage';
 import { AddImageButton } from '../components/AddImageButton';
 import { ImageLightboxModal } from '../components/ImageLightboxModal';
+import { dropLightboxItem } from '../components/ForumPostMarkdownBody';
 import { ResolvableImage } from '../components/ResolvableImage';
 import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
 import { ApiError } from '@moijia/client';
+import { deleteManagedUploadFireAndForget } from '../services/managedUploadDelete';
 
 const DEFAULT_AVATAR_SEED = 'auto';
 const AVATAR_SIZE = 56;
@@ -179,6 +181,13 @@ export default function CreateGroupScreen() {
     const clean = url.trim();
     if (!clean) return;
     setDraftCoverPhotos((prev) => [...prev, clean]);
+  };
+
+  const removeDraftCoverPhoto = (url: string) => {
+    setDraftCoverPhotos((prev) => prev.filter((u) => u !== url));
+    const uid = (currentUserId ?? user?.uid ?? '').trim();
+    if (uid) deleteManagedUploadFireAndForget(uid, url);
+    setGroupPhotoLightbox((cur) => (cur ? dropLightboxItem(cur, url) : cur));
   };
 
   const handleBack = useCallback(() => {
@@ -411,7 +420,7 @@ export default function CreateGroupScreen() {
                             />
                           </TouchableOpacity>
                           <TouchableOpacity
-                            onPress={() => setDraftCoverPhotos((prev) => prev.filter((_, j) => j !== i))}
+                            onPress={() => removeDraftCoverPhoto(uri)}
                             style={styles.removeThumb}
                           >
                             <Ionicons name="close" size={11} color="#fff" />
@@ -470,6 +479,7 @@ export default function CreateGroupScreen() {
           setGroupPhotoLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
         }
         onClose={() => setGroupPhotoLightbox(null)}
+        onDelete={removeDraftCoverPhoto}
         headerAvatar={<Avatar name={displayNameForChrome} size={28} />}
         title={displayNameForChrome}
         subtitle={

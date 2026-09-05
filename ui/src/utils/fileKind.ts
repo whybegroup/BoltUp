@@ -6,11 +6,13 @@ type IoniconName = ComponentProps<typeof Ionicons>['name'];
 const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|heic|heif|svg|avif)$/i;
 const AUDIO_EXT = /^(mp3|wav|m4a|aac|ogg|flac|opus|wma)$/i;
 const VIDEO_EXT = /^(mp4|mov|webm|m4v|avi|mkv)$/i;
-const TEXT_EXT = /^(txt|json|csv|md|xml|log|html|css|js|ts)$/i;
+const TEXT_EXT = /^(txt|json|csv|md|xml|log|css|js|ts)$/i;
+const HTML_EXT = /^(html|htm)$/i;
+const DOCUMENT_EXT = /^(zip|docx?|xlsx?|pptx?|rtf|odt|ods|odp)$/i;
 const NON_IMAGE_EXT =
-  /^(pdf|docx?|xlsx?|csv|pptx?|zip|json|txt|rtf|mp3|wav|m4a|aac|ogg|flac|opus|wma|mp4|mov|webm|m4v|avi|mkv)$/i;
+  /^(pdf|docx?|xlsx?|csv|pptx?|zip|json|txt|rtf|html|htm|odt|ods|odp|mp3|wav|m4a|aac|ogg|flac|opus|wma|mp4|mov|webm|m4v|avi|mkv)$/i;
 
-export type FileViewerKind = 'image' | 'audio' | 'video' | 'pdf' | 'text' | 'other';
+export type FileViewerKind = 'image' | 'audio' | 'video' | 'pdf' | 'html' | 'text' | 'document' | 'other';
 
 const UUID_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
 
@@ -40,8 +42,10 @@ export function fileViewerKind(url: string, fileName?: string): FileViewerKind {
   if (isImageFileUrl(url, fileName)) return 'image';
   const ext = extensionFromFileNameOrUrl(fileName?.trim() || url);
   if (ext === 'pdf') return 'pdf';
+  if (HTML_EXT.test(ext)) return 'html';
   if (AUDIO_EXT.test(ext)) return 'audio';
   if (VIDEO_EXT.test(ext)) return 'video';
+  if (DOCUMENT_EXT.test(ext)) return 'document';
   if (TEXT_EXT.test(ext)) return 'text';
   return 'other';
 }
@@ -96,10 +100,19 @@ export function fileKindStyle(url: string, fileName?: string): FileKindStyle {
       return { icon: 'easel-outline', color: '#EA580C', label };
     case 'zip':
       return { icon: 'archive-outline', color: '#7C3AED', label };
+    case 'odt':
+      return { icon: 'document-text-outline', color: '#2563EB', label };
+    case 'ods':
+      return { icon: 'grid-outline', color: '#16A34A', label };
+    case 'odp':
+      return { icon: 'easel-outline', color: '#EA580C', label };
     case 'json':
       return { icon: 'code-slash-outline', color: '#CA8A04', label };
     case 'txt':
       return { icon: 'document-text-outline', color: '#71717A', label };
+    case 'html':
+    case 'htm':
+      return { icon: 'globe-outline', color: '#EA580C', label };
     case 'mp3':
     case 'wav':
     case 'm4a':

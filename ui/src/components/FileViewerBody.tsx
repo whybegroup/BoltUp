@@ -23,6 +23,8 @@ import {
 import { displayFileName, fileViewerKind } from '../utils/fileKind';
 import { FileExtensionPreview } from './FileExtensionPreview';
 import { FileViewerPdf } from './FileViewerPdf';
+import { FileViewerHtml } from './FileViewerHtml';
+import { FileViewerDocument } from './FileViewerDocument';
 
 const TEXT_LIMIT = 200_000;
 
@@ -280,6 +282,12 @@ export function FileViewerBody({ storedUrl, fileName, urlMap, active }: Props) {
   }
   if (kind === 'pdf') {
     return <FileViewerPdf uri={viewUrl} fileName={fileName} />;
+  }
+  if (kind === 'html') {
+    return <FileViewerHtml uri={viewUrl} fileName={fileName} />;
+  }
+  if (kind === 'document') {
+    return <FileViewerDocument uri={viewUrl} fileName={fileName} />;
   }
   if (kind === 'text') {
     return <TextViewer uri={viewUrl} fileName={fileName} />;

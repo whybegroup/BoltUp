@@ -527,7 +527,13 @@ export class PollService {
     });
     if (!existing) throw Object.assign(new Error('Poll not found'), { status: 404 });
     if (existing.createdBy !== actorUserId) {
-      throw Object.assign(new Error('Only the poll creator can edit this poll'), { status: 403 });
+      const role = await this.getActiveMemberRole(existing.groupId, actorUserId);
+      if (role !== 'admin' && role !== 'owner') {
+        throw Object.assign(
+          new Error('Only the poll creator or group admins can edit this poll'),
+          { status: 403 }
+        );
+      }
     }
 
     const t = input.title?.trim();

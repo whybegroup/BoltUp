@@ -41,6 +41,7 @@ import {
   usePollOptionSuggestions,
   useSuggestPollOption,
   useDecidePollOptionSuggestion,
+  useUpdatePoll,
   useGroup,
   useGroupMemberColor,
 } from '../hooks/api';
@@ -63,12 +64,16 @@ import {
   type GroupsTabNavCallbacks,
   type PollsTabNavCallbacks,
 } from '../utils/tabBreadcrumbNav';
-import { PollOptionInputKind, type Poll, type PollQuestionResult, type PollResults } from '@moijia/client';
+import { PollOptionInputKind, type Poll, type PollInput, type PollQuestionResult, type PollResults } from '@moijia/client';
 import { ResolvableImage } from './ResolvableImage';
+import { ImageLightboxModal } from './ImageLightboxModal';
+import { dropLightboxItem } from './ForumPostMarkdownBody';
 import { UserAvatar } from './UserAvatar';
 import { getDefaultGroupThemeFromName, getGroupColor, formatCreatedAtLabel, isContentEdited } from '../utils/helpers';
 import { sharePoll } from '../utils/shareContent';
 import { ChromeHeaderTrailingRow, DetailActionIcon, RegisterChromeHeader } from './chromeHeaderSlot';
+import { deleteManagedUploadFireAndForget } from '../services/managedUploadDelete';
+import { canDeleteManagedMedia } from '../utils/canDeleteManagedMedia';
 
 const MAX_OPTIONS_PER_QUESTION = 50;
 const POLL_SIDE_MARGIN = 20;
@@ -77,6 +82,28 @@ const POLL_COVER_PHOTO_SIZE = Math.min(
   112,
   Math.round((Dimensions.get('window').width - POLL_SIDE_MARGIN * 2 - POLL_H_PAD * 2 - 24) / 3),
 );
+
+function pollToUpdateInput(poll: Poll, coverPhotos: string[]): PollInput {
+  return {
+    groupId: poll.groupId,
+    createdBy: poll.createdBy,
+    title: poll.title,
+    description: poll.description,
+    deadline: poll.deadline,
+    coverPhotos,
+    anonymousVotes: poll.anonymousVotes,
+    multipleChoice: poll.multipleChoice,
+    ranking: poll.ranking,
+    options: poll.options.map((o) => ({
+      id: o.id,
+      inputKind: o.inputKind,
+      sortOrder: o.sortOrder,
+      textHtml: o.textHtml,
+      textFont: o.textFont,
+      dateTimeValue: o.dateTimeValue,
+    })),
+  };
+}
 
 function stripHtmlPreview(html: string): string {
   return html
@@ -988,6 +1015,7 @@ export function PollDetailScreen({
   );
   const submitVoteMutation = useSubmitPollVote(id ?? '', userId ?? '');
   const deletePollMutation = useDeletePoll(userId ?? '');
+  const updatePollMutation = useUpdatePoll(id ?? '', userId ?? '');
   const closePollMutation = useClosePoll(userId ?? '');
   const setWatchMutation = useSetPollWatch(id ?? '', userId ?? undefined);
   const suggestOptionMutation = useSuggestPollOption(id ?? '', userId ?? '');
@@ -1015,6 +1043,7 @@ export function PollDetailScreen({
   /** Question keys that failed required validation (yellow outline until fixed). */
   const [missingRequiredKeys, setMissingRequiredKeys] = useState<string[]>([]);
   const [suggestModal, setSuggestModal] = useState<{ questionKey: string; title: string } | null>(null);
+  const [coverLightbox, setCoverLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [suggestLabelDraft, setSuggestLabelDraft] = useState('');
   const [suggestedSuccessQuestionKey, setSuggestedSuccessQuestionKey] = useState<string | null>(null);
   const suggestSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1042,6 +1071,14 @@ export function PollDetailScreen({
     memberColorData?.colorHex || getDefaultGroupThemeFromName(group?.name ?? 'Group');
   const palette = getGroupColor(userColorHex);
 
+  const canDeletePollCoverPhotos = useMemo(() => {
+    if (!poll || !userId) return false;
+    return canDeleteManagedMedia({
+      currentUserId: userId,
+      group,
+      resourceOwnerId: poll.createdBy,
+    });
+  }, [poll, userId, group]);
   const canDeletePoll = useMemo(() => {
     if (!poll || !userId) return false;
     if (poll.createdBy === userId) return true;
@@ -1250,6 +1287,29 @@ export function PollDetailScreen({
       { text: 'Delete', style: 'destructive', onPress: () => void run() },
     ]);
   }, [deletePollMutation, id, router, userId, variant, routeGroupId]);
+
+  const confirmRemovePollCoverPhoto = (url: string) => {
+    if (!poll || !userId || !canDeletePollCoverPhotos) return;
+    const run = async () => {
+      const next = (poll.coverPhotos ?? []).filter((u) => u !== url);
+      try {
+        await updatePollMutation.mutateAsync(pollToUpdateInput(poll, next));
+        deleteManagedUploadFireAndForget(userId, url);
+        setCoverLightbox((cur) => (cur ? dropLightboxItem(cur, url) : cur));
+      } catch (e: unknown) {
+        Alert.alert('Could not delete photo', apiErrorMessage(e));
+      }
+    };
+    const go = () => void run();
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this photo from the poll?')) go();
+      return;
+    }
+    Alert.alert('Delete photo?', 'This photo will be removed from the poll and deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: go },
+    ]);
+  };
 
   const onClosePoll = useCallback(() => {
     if (!id || !userId) return;
@@ -1463,17 +1523,24 @@ export function PollDetailScreen({
                         paddingBottom: 8,
                       }}
                     >
-                      {poll.coverPhotos.map((url) => (
-                        <ResolvableImage
+                      {poll.coverPhotos.map((url, i) => (
+                        <TouchableOpacity
                           key={url}
-                          storedUrl={url}
-                          style={{
-                            width: POLL_COVER_PHOTO_SIZE,
-                            height: POLL_COVER_PHOTO_SIZE,
-                            borderRadius: Radius.lg,
-                          }}
-                          resizeMode="cover"
-                        />
+                          onPress={() =>
+                            setCoverLightbox({ urls: poll.coverPhotos ?? [], index: i })
+                          }
+                          activeOpacity={0.9}
+                        >
+                          <ResolvableImage
+                            storedUrl={url}
+                            style={{
+                              width: POLL_COVER_PHOTO_SIZE,
+                              height: POLL_COVER_PHOTO_SIZE,
+                              borderRadius: Radius.lg,
+                            }}
+                            resizeMode="cover"
+                          />
+                        </TouchableOpacity>
                       ))}
                     </ScrollView>
                   </View>
@@ -2197,6 +2264,30 @@ export function PollDetailScreen({
             </View>
           </View>
         </Modal>
+        <ImageLightboxModal
+          visible={coverLightbox !== null}
+          urls={coverLightbox?.urls ?? []}
+          index={coverLightbox?.index ?? 0}
+          onChangeIndex={(nextIndex) =>
+            setCoverLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
+          }
+          onClose={() => setCoverLightbox(null)}
+          onDelete={canDeletePollCoverPhotos ? confirmRemovePollCoverPhoto : undefined}
+          headerAvatar={
+            <UserAvatar
+              seed={(poll?.createdByName?.trim()) || poll?.createdBy || 'Poll'}
+              size={28}
+            />
+          }
+          title={(poll?.createdByName?.trim()) || poll?.createdBy || 'Poll'}
+          subtitle={
+            coverLightbox
+              ? coverLightbox.urls.length > 1
+                ? `Photos · ${coverLightbox.index + 1} of ${coverLightbox.urls.length}`
+                : 'Photo'
+              : undefined
+          }
+        />
       </View>
   );
 

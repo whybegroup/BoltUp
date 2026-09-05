@@ -53,7 +53,7 @@ import { AddImageButton } from './AddImageButton';
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { FileExtensionIcon } from './FileExtensionPreview';
-import { ForumPostMarkdownBody, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
+import { ForumPostMarkdownBody, dropLightboxItem, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import {
   pickAndUploadCoverPhoto,
   takeAndUploadCoverPhoto,
@@ -67,6 +67,15 @@ import {
   patchForumGroupNewPost,
   savePostsTabDraft,
 } from '../utils/forumPostDrafts';
+import {
+  clearTrackedUploads,
+  deleteManagedUploadFireAndForget,
+  deleteTrackedUploadIfNeeded,
+  discardTrackedUploads,
+  trackManagedUploadUrl,
+  trackManagedUploadUrls,
+} from '../services/managedUploadDelete';
+import { canDeleteManagedMedia } from '../utils/canDeleteManagedMedia';
 
 const POST_ATTACHMENT_MARKER = '[[MOIJIA_POST_ATTACHMENTS]]';
 
@@ -156,6 +165,24 @@ function mergeComposerBodyForApi(
   return `${t}\n\n${marker}\n${attachmentLines.join('\n')}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripAttachmentUrlFromBody(body: string, url: string): string {
+  const split = splitStoredPostBody(body);
+  const images = split.attachmentImages.filter((img) => img.url !== url);
+  const files = split.attachmentFiles.filter((f) => f.url !== url);
+  const reImg = new RegExp(`!\\[[^\\]]*\\]\\(${escapeRegExp(url)}\\)`, 'g');
+  const reLink = new RegExp(`\\[[^\\]]*\\]\\(${escapeRegExp(url)}\\)`, 'g');
+  const markdown = split.markdownSource.replace(reImg, '').replace(reLink, '').replace(/\n{3,}/g, '\n\n').trim();
+  return mergeComposerBodyForApi(
+    markdown,
+    images.map((img) => img.url),
+    files
+  );
+}
+
 function forumId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -231,6 +258,9 @@ export function PostsListScreen() {
     files: [] as Array<{ name: string; url: string }>,
     groupId: null as string | null,
   });
+  const newPostTrackedUploadsRef = useRef<Set<string>>(new Set());
+  const editPostTrackedUploadsRef = useRef<Set<string>>(new Set());
+  const commentTrackedUploadsRef = useRef<Record<string, Set<string>>>({});
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [imageLightbox, setImageLightbox] = useState<ForumPostImageLightboxState>(null);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -406,6 +436,7 @@ export function PostsListScreen() {
   );
 
   const discardNewPostDraft = useCallback(() => {
+    discardTrackedUploads(currentUserId, newPostTrackedUploadsRef.current);
     draftPersistEpochRef.current += 1;
     setNewPostBody('');
     setNewPostPhotoUrls([]);
@@ -485,10 +516,125 @@ export function PostsListScreen() {
       )
     : null;
 
+  const trackedUploadsForComposer = useCallback((target: 'new' | 'edit') => {
+    return target === 'edit' ? editPostTrackedUploadsRef.current : newPostTrackedUploadsRef.current;
+  }, []);
+
+  const commentTrackedUploads = useCallback((postId: string) => {
+    let set = commentTrackedUploadsRef.current[postId];
+    if (!set) {
+      set = new Set();
+      commentTrackedUploadsRef.current[postId] = set;
+    }
+    return set;
+  }, []);
+
   const addComposerPhoto = useCallback((url: string, target: 'new' | 'edit') => {
     if (target === 'edit') setEditPostPhotoUrls((prev) => [...prev, url]);
     else setNewPostPhotoUrls((prev) => [...prev, url]);
   }, []);
+
+  const removeLightboxUrl = useCallback((url: string) => {
+    setImageLightbox((prev) => (prev ? dropLightboxItem(prev, url) : prev));
+  }, []);
+
+  const removeNewDraftMedia = useCallback(
+    (url: string) => {
+      deleteTrackedUploadIfNeeded(currentUserId, newPostTrackedUploadsRef.current, url);
+      setNewPostPhotoUrls((prev) => prev.filter((u) => u !== url));
+      setNewPostFileAttachments((prev) => prev.filter((f) => f.url !== url));
+      removeLightboxUrl(url);
+    },
+    [currentUserId, removeLightboxUrl]
+  );
+
+  const removeEditDraftMedia = useCallback(
+    (url: string) => {
+      deleteTrackedUploadIfNeeded(currentUserId, editPostTrackedUploadsRef.current, url);
+      setEditPostPhotoUrls((prev) => prev.filter((u) => u !== url));
+      setEditPostFileAttachments((prev) => prev.filter((f) => f.url !== url));
+      removeLightboxUrl(url);
+    },
+    [currentUserId, removeLightboxUrl]
+  );
+
+  const confirmDeleteOwnPostFile = useCallback(
+    (post: GroupPost & { groupId: string }, url: string) => {
+      if (!currentUserId) return;
+      const run = async () => {
+        const nextBody = stripAttachmentUrlFromBody(post.body || '', url);
+        if (!nextBody.trim()) {
+          Alert.alert('Delete file', 'A post needs some content. Delete the post instead.');
+          return;
+        }
+        const title =
+          nextBody
+            .replace(/\[\[MOIJIA_POST_ATTACHMENTS\]\]/g, '')
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find(Boolean)
+            ?.slice(0, 80) || post.title || 'Post';
+        try {
+          await GroupsService.updateGroupPost(post.id, {
+            userId: currentUserId,
+            title,
+            body: nextBody,
+          });
+          deleteManagedUploadFireAndForget(currentUserId, url);
+          removeLightboxUrl(url);
+          queryClient.invalidateQueries({ queryKey: queryKeys.groups.posts(post.groupId, currentUserId) });
+        } catch {
+          Alert.alert('Error', 'Could not delete file');
+        }
+      };
+      const go = () => void run();
+      if (Platform.OS === 'web') {
+        if (window.confirm('Delete this file from the post?')) go();
+        return;
+      }
+      Alert.alert('Delete file?', 'This file will be removed from the post and deleted.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: go },
+      ]);
+    },
+    [currentUserId, queryClient, removeLightboxUrl]
+  );
+
+  const confirmDeleteCommentFile = useCallback(
+    (post: GroupPost & { groupId: string }, comment: GroupPostComment, url: string) => {
+      if (!currentUserId) return;
+      const run = async () => {
+        const nextBody = stripAttachmentUrlFromBody(comment.body || '', url);
+        if (!nextBody.trim()) {
+          Alert.alert('Delete file', 'A comment needs some content. Delete the comment instead.');
+          return;
+        }
+        try {
+          await GroupsService.updateGroupPostComment(comment.id, {
+            userId: currentUserId,
+            body: nextBody,
+            parentCommentId: comment.parentCommentId ?? null,
+          });
+          deleteManagedUploadFireAndForget(currentUserId, url);
+          removeLightboxUrl(url);
+          queryClient.invalidateQueries({ queryKey: queryKeys.groups.posts(post.groupId, currentUserId) });
+        } catch {
+          Alert.alert('Error', 'Could not delete file');
+        }
+      };
+      const go = () => void run();
+      if (Platform.OS === 'web') {
+        if (window.confirm('Delete this file from the comment?')) go();
+        return;
+      }
+      Alert.alert('Delete file?', 'This file will be removed from the comment and deleted.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: go },
+      ]);
+    },
+    [currentUserId, queryClient, removeLightboxUrl]
+  );
 
   const uploadComposerPhoto = useCallback(async (target: 'new' | 'edit' = 'new') => {
     if (!currentUserId || isUploadingAttachment) return;
@@ -498,6 +644,7 @@ export function PostsListScreen() {
         groupId: selectedGroupForPost || undefined,
       });
       if (!publicUrls?.length) return;
+      trackManagedUploadUrls(trackedUploadsForComposer(target), publicUrls);
       for (const publicUrl of publicUrls) addComposerPhoto(publicUrl, target);
     } finally {
       setIsUploadingAttachment(false);
@@ -512,6 +659,7 @@ export function PostsListScreen() {
         groupId: selectedGroupForPost || undefined,
       });
       if (!publicUrl) return;
+      trackManagedUploadUrl(trackedUploadsForComposer(target), publicUrl);
       addComposerPhoto(publicUrl, target);
     } catch (e) {
       Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
@@ -527,13 +675,17 @@ export function PostsListScreen() {
       const uploaded = await pickAndUploadFileFromDevice(currentUserId, {
         groupId: selectedGroupForPost || undefined,
       });
-      if (!uploaded?.publicUrl) return;
-      const fileEntry = {
-        name: uploaded.fileName || 'Attachment',
-        url: uploadUrlToDownloadUrl(uploaded.publicUrl),
-      };
-      if (target === 'edit') setEditPostFileAttachments((prev) => [...prev, fileEntry]);
-      else setNewPostFileAttachments((prev) => [...prev, fileEntry]);
+      if (!uploaded?.length) return;
+      const fileEntries = uploaded.map((file) => ({
+        name: file.fileName || 'Attachment',
+        url: uploadUrlToDownloadUrl(file.publicUrl),
+      }));
+      trackManagedUploadUrls(
+        trackedUploadsForComposer(target),
+        fileEntries.map((f) => f.url)
+      );
+      if (target === 'edit') setEditPostFileAttachments((prev) => [...prev, ...fileEntries]);
+      else setNewPostFileAttachments((prev) => [...prev, ...fileEntries]);
     } catch (e) {
       if (e instanceof Error && e.message === 'cancelled') return;
       Alert.alert('Upload', e instanceof Error ? e.message : 'Could not attach file');
@@ -578,6 +730,7 @@ export function PostsListScreen() {
       // Reset state after successful creation
       draftPersistEpochRef.current += 1;
       const postedGroupId = selectedGroupForPost;
+      clearTrackedUploads(newPostTrackedUploadsRef.current);
       setNewPostBody('');
       setNewPostPhotoUrls([]);
       setNewPostFileAttachments([]);
@@ -714,6 +867,7 @@ export function PostsListScreen() {
         setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [postId]: [] }));
         setDraftCommentFilesByPost((prev) => ({ ...prev, [postId]: [] }));
         setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
+        clearTrackedUploads(commentTrackedUploads(postId));
         invalidatePostsForGroup(groupId);
       } catch (e) {
         Alert.alert('Comment', e instanceof Error ? e.message : 'Failed to post comment');
@@ -818,6 +972,7 @@ export function PostsListScreen() {
   }, []);
 
   const beginEditPost = useCallback((post: GroupPost) => {
+    clearTrackedUploads(editPostTrackedUploadsRef.current);
     const split = splitStoredPostBody(post.body || '');
     setEditingPostId(post.id);
     setEditPostBody(split.markdownSource);
@@ -827,11 +982,12 @@ export function PostsListScreen() {
   }, []);
 
   const cancelEditPost = useCallback(() => {
+    discardTrackedUploads(currentUserId, editPostTrackedUploadsRef.current);
     setEditingPostId(null);
     setEditPostBody('');
     setEditPostPhotoUrls([]);
     setEditPostFileAttachments([]);
-  }, []);
+  }, [currentUserId]);
 
   const submitEditPost = useCallback(async (groupId: string) => {
     if (!editingPostId || !currentUserId) return;
@@ -852,7 +1008,11 @@ export function PostsListScreen() {
         body,
       });
       invalidatePostsForGroup(groupId);
-      cancelEditPost();
+      clearTrackedUploads(editPostTrackedUploadsRef.current);
+      setEditingPostId(null);
+      setEditPostBody('');
+      setEditPostPhotoUrls([]);
+      setEditPostFileAttachments([]);
     } catch {
       if (Platform.OS === 'web') window.alert('Failed to update post');
       else Alert.alert('Error', 'Failed to update post');
@@ -1078,13 +1238,13 @@ export function PostsListScreen() {
                   {newPostPhotoUrls.map((uri, i) => (
                     <View key={`${uri}-${i}`} style={styles.composerPhotoThumbWrap}>
                       <TouchableOpacity
-                        onPress={() => setImageLightbox({ urls: newPostPhotoUrls, index: i })}
+                        onPress={() => setImageLightbox({ urls: newPostPhotoUrls, index: i, onDelete: removeNewDraftMedia })}
                         activeOpacity={0.9}
                       >
                         <ResolvableImage storedUrl={uri} style={styles.composerPhotoThumb} resizeMode="cover" />
                       </TouchableOpacity>
                       <TouchableOpacity
-                        onPress={() => setNewPostPhotoUrls((prev) => prev.filter((_, idx) => idx !== i))}
+                        onPress={() => removeNewDraftMedia(uri)}
                         style={styles.composerPhotoRemoveBtn}
                         accessibilityLabel="Remove photo"
                       >
@@ -1105,6 +1265,7 @@ export function PostsListScreen() {
                             urls: newPostFileAttachments.map((f) => f.url),
                             index: i,
                             alts: newPostFileAttachments.map((f) => f.name || ''),
+                            onDelete: removeNewDraftMedia,
                           })
                         }
                         accessibilityRole="button"
@@ -1120,7 +1281,7 @@ export function PostsListScreen() {
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        onPress={() => setNewPostFileAttachments((prev) => prev.filter((_, idx) => idx !== i))}
+                        onPress={() => removeNewDraftMedia(file.url)}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                         accessibilityLabel="Remove attached file"
                         style={styles.composerFileChipRemove}
@@ -1195,6 +1356,11 @@ export function PostsListScreen() {
                 splitStoredPostBody(post.body || '');
               const joined = markdownSource.trim();
               const isEditing = editingPostId === post.id;
+              const canDeleteThisPostMedia = canDeleteManagedMedia({
+                currentUserId,
+                group,
+                resourceOwnerId: post.userId,
+              });
               
               return (
                 <View
@@ -1286,6 +1452,7 @@ export function PostsListScreen() {
                                       ownerName: getUserDisplayName(post.userId),
                                       ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                       ownerThumbnail: postOwner?.thumbnail ?? null,
+                                      onDelete: removeEditDraftMedia,
                                     })
                                   }
                                   activeOpacity={0.9}
@@ -1293,7 +1460,7 @@ export function PostsListScreen() {
                                   <ResolvableImage storedUrl={uri} style={styles.composerPhotoThumb} resizeMode="cover" />
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                  onPress={() => setEditPostPhotoUrls((prev) => prev.filter((_, idx) => idx !== i))}
+                                  onPress={() => removeEditDraftMedia(uri)}
                                   style={styles.composerPhotoRemoveBtn}
                                   accessibilityLabel="Remove photo"
                                 >
@@ -1317,6 +1484,7 @@ export function PostsListScreen() {
                                       ownerName: getUserDisplayName(post.userId),
                                       ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                       ownerThumbnail: postOwner?.thumbnail ?? null,
+                                      onDelete: removeEditDraftMedia,
                                     })
                                   }
                                   accessibilityRole="button"
@@ -1332,7 +1500,7 @@ export function PostsListScreen() {
                                   </Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                  onPress={() => setEditPostFileAttachments((prev) => prev.filter((_, idx) => idx !== i))}
+                                  onPress={() => removeEditDraftMedia(file.url)}
                                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                                   accessibilityLabel="Remove attached file"
                                   style={styles.composerFileChipRemove}
@@ -1396,6 +1564,11 @@ export function PostsListScreen() {
                         ownerAvatarSeed={postOwner?.avatarSeed ?? null}
                         ownerThumbnail={postOwner?.thumbnail ?? null}
                         setImageLightbox={setImageLightbox}
+                        onDeleteUrl={
+                          canDeleteThisPostMedia
+                            ? (url) => confirmDeleteOwnPostFile(post, url)
+                            : undefined
+                        }
                       />
                     ) : null}
                     {!isEditing && attachmentImages.length > 0 ? (
@@ -1417,6 +1590,9 @@ export function PostsListScreen() {
                                   ownerName: getUserDisplayName(post.userId),
                                   ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                   ownerThumbnail: postOwner?.thumbnail ?? null,
+                                  onDelete: canDeleteThisPostMedia
+                                    ? (url) => confirmDeleteOwnPostFile(post, url)
+                                    : undefined,
                                 })
                               }
                             >
@@ -1445,6 +1621,9 @@ export function PostsListScreen() {
                                 ownerName: getUserDisplayName(post.userId),
                                 ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                 ownerThumbnail: postOwner?.thumbnail ?? null,
+                                onDelete: canDeleteThisPostMedia
+                                  ? (url) => confirmDeleteOwnPostFile(post, url)
+                                  : undefined,
                               })
                             }
                             accessibilityRole="button"
@@ -1541,21 +1720,38 @@ export function PostsListScreen() {
                         onDraftPhotoUrlsChange={(urls) =>
                           setDraftCommentPhotoUrlsByPost((prev) => ({ ...prev, [post.id]: urls }))
                         }
-                        onRemoveDraftPhotoAtIndex={(index) =>
+                        onRemoveDraftPhotoAtIndex={(index) => {
+                          const url = (draftCommentPhotoUrlsByPost[post.id] ?? [])[index];
+                          if (url) {
+                            deleteTrackedUploadIfNeeded(
+                              currentUserId,
+                              commentTrackedUploads(post.id),
+                              url
+                            );
+                          }
                           setDraftCommentPhotoUrlsByPost((prev) => ({
                             ...prev,
                             [post.id]: (prev[post.id] ?? []).filter((_, i) => i !== index),
-                          }))
-                        }
+                          }));
+                        }}
                         draftPendingFiles={(draftCommentFilesByPost[post.id] ?? []).map((f) => ({
                           id: f.id,
                           name: f.name,
                         }))}
                         onRemoveDraftPendingFile={(fileId) =>
-                          setDraftCommentFilesByPost((prev) => ({
-                            ...prev,
-                            [post.id]: (prev[post.id] ?? []).filter((f) => f.id !== fileId),
-                          }))
+                          setDraftCommentFilesByPost((prev) => {
+                            const list = prev[post.id] ?? [];
+                            const removed = list.find((f) => f.id === fileId);
+                            if (removed) {
+                              deleteTrackedUploadIfNeeded(
+                                currentUserId,
+                                commentTrackedUploads(post.id),
+                                removed.url
+                              );
+                              removeLightboxUrl(removed.url);
+                            }
+                            return { ...prev, [post.id]: list.filter((f) => f.id !== fileId) };
+                          })
                         }
                         onUploadDraftPhoto={async () => {
                           if (!currentUserId || uploadingCommentPhotoPostId === post.id) return;
@@ -1565,6 +1761,7 @@ export function PostsListScreen() {
                               groupId: post.groupId,
                             });
                             if (urls?.length) {
+                              trackManagedUploadUrls(commentTrackedUploads(post.id), urls);
                               setDraftCommentPhotoUrlsByPost((prev) => ({
                                 ...prev,
                                 [post.id]: [...(prev[post.id] ?? []), ...urls],
@@ -1582,6 +1779,7 @@ export function PostsListScreen() {
                               groupId: post.groupId,
                             });
                             if (url) {
+                              trackManagedUploadUrl(commentTrackedUploads(post.id), url);
                               setDraftCommentPhotoUrlsByPost((prev) => ({
                                 ...prev,
                                 [post.id]: [...(prev[post.id] ?? []), url],
@@ -1609,17 +1807,19 @@ export function PostsListScreen() {
                             const uploaded = await pickAndUploadFileFromDevice(currentUserId, {
                               groupId: post.groupId,
                             });
-                            if (!uploaded?.publicUrl) return;
+                            if (!uploaded?.length) return;
+                            const files = uploaded.map((file) => ({
+                              id: forumId('comment-file'),
+                              name: file.fileName || 'Attachment',
+                              url: uploadUrlToDownloadUrl(file.publicUrl),
+                            }));
+                            trackManagedUploadUrls(
+                              commentTrackedUploads(post.id),
+                              files.map((f) => f.url)
+                            );
                             setDraftCommentFilesByPost((prev) => ({
                               ...prev,
-                              [post.id]: [
-                                ...(prev[post.id] ?? []),
-                                {
-                                  id: forumId('comment-file'),
-                                  name: uploaded.fileName || 'Attachment',
-                                  url: uploadUrlToDownloadUrl(uploaded.publicUrl),
-                                },
-                              ],
+                              [post.id]: [...(prev[post.id] ?? []), ...files],
                             }));
                           } catch (e) {
                             if (e instanceof Error && e.message === 'cancelled') return;
@@ -1634,6 +1834,22 @@ export function PostsListScreen() {
                             index,
                             alts: urls.map(() => ''),
                             ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                            onDelete: (url) => {
+                              deleteTrackedUploadIfNeeded(
+                                currentUserId,
+                                commentTrackedUploads(post.id),
+                                url
+                              );
+                              setDraftCommentPhotoUrlsByPost((prev) => ({
+                                ...prev,
+                                [post.id]: (prev[post.id] ?? []).filter((u) => u !== url),
+                              }));
+                              setDraftCommentFilesByPost((prev) => ({
+                                ...prev,
+                                [post.id]: (prev[post.id] ?? []).filter((f) => f.url !== url),
+                              }));
+                              removeLightboxUrl(url);
+                            },
                           })
                         }
                         replyTargetId={replyTargetByPost[post.id] ?? null}
@@ -1680,6 +1896,7 @@ export function PostsListScreen() {
                         }}
                         renderCommentBody={(comment) => {
                           const owner = usersById.get(comment.userId);
+                          const full = (post.comments ?? []).find((x) => x.id === comment.id);
                           return (
                             <ForumPostMarkdownBody
                               markdownBody={comment.body || ''}
@@ -1688,6 +1905,16 @@ export function PostsListScreen() {
                               ownerAvatarSeed={owner?.avatarSeed ?? null}
                               ownerThumbnail={owner?.thumbnail ?? null}
                               setImageLightbox={setImageLightbox}
+                              onDeleteUrl={
+                                full &&
+                                canDeleteManagedMedia({
+                                  currentUserId,
+                                  group,
+                                  resourceOwnerId: comment.userId,
+                                })
+                                  ? (url) => confirmDeleteCommentFile(post, full, url)
+                                  : undefined
+                              }
                             />
                           );
                         }}
@@ -1998,6 +2225,7 @@ export function PostsListScreen() {
           setImageLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))
         }
         onClose={() => setImageLightbox(null)}
+        onDelete={imageLightbox?.onDelete}
         headerAvatar={
           imageLightbox ? (
             <UserAvatar

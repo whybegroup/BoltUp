@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   useWindowDimensions,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -51,7 +53,10 @@ const MAX_SCALE = 4;
 const ZOOM_EPS = 1.01;
 const DOUBLE_TAP_SCALE = 2.5;
 const SLIDE = { duration: 220, easing: Easing.out(Easing.cubic) };
-const DISMISS = { duration: 220, easing: Easing.in(Easing.cubic) };
+const DISMISS = { duration: 180, easing: Easing.in(Easing.cubic) };
+const FADE = { duration: 120, easing: Easing.out(Easing.cubic) };
+const HEADER_ROW = 40;
+const HEADER_PAD_BOTTOM = 12;
 
 function clampZoomPan(tx: number, ty: number, s: number, w: number, h: number): { x: number; y: number } {
   'worklet';
@@ -80,10 +85,14 @@ export function ImageLightboxModal({
 }: ImageLightboxModalProps) {
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
-  const headerReserve = Math.max(insets.top, 12) + 58;
-  const footerReserve = Math.max(insets.bottom, 12) + 40;
-  const imageHeight = Math.max(280, winH - headerReserve - footerReserve);
+  const headerPadTop = Math.max(insets.top, 12) + 8;
+  const headerH = headerPadTop + HEADER_ROW + HEADER_PAD_BOTTOM;
+  const [stageSize, setStageSize] = useState({ w: winW, h: Math.max(280, winH - headerH) });
   const [sharing, setSharing] = useState(false);
+  const gestureClosingRef = useRef(false);
+
+  const stageW = stageSize.w > 1 ? stageSize.w : winW;
+  const stageH = stageSize.h > 1 ? stageSize.h : Math.max(280, winH - 160);
 
   const hasMany = urls.length > 1;
   const hasHeader = !!title || !!subtitle || !!headerAvatar;
@@ -109,9 +118,10 @@ export function ImageLightboxModal({
   const pageIndexSv = useSharedValue(safeIndex);
   const pageCountSv = useSharedValue(Math.max(urls.length, 1));
   const widthSv = useSharedValue(winW);
-  const heightSv = useSharedValue(imageHeight);
+  const heightSv = useSharedValue(stageH);
   const dragOrigin = useSharedValue(0);
   const isPaging = useSharedValue(0);
+  const overlayOpacity = useSharedValue(visible ? 1 : 0);
 
   const goToIndex = useCallback(
     (nextIndex: number) => {
@@ -121,14 +131,22 @@ export function ImageLightboxModal({
   );
 
   const closeViewer = useCallback(() => {
+    gestureClosingRef.current = true;
     onClose();
   }, [onClose]);
+
+  const requestClose = useCallback(() => {
+    if (gestureClosingRef.current) return;
+    overlayOpacity.value = withTiming(0, FADE, (finished) => {
+      if (finished) runOnJS(onClose)();
+    });
+  }, [onClose, overlayOpacity]);
 
   const jumpToIndex = useCallback(
     (nextIndex: number) => {
       const target = Math.max(0, Math.min(urls.length - 1, nextIndex));
       pageIndexSv.value = target;
-      pageOffset.value = withTiming(-target * winW, SLIDE);
+      pageOffset.value = withTiming(-target * stageW, SLIDE);
       scale.value = 1;
       savedScale.value = 1;
       translateX.value = 0;
@@ -139,7 +157,7 @@ export function ImageLightboxModal({
     },
     [
       urls.length,
-      winW,
+      stageW,
       onChangeIndex,
       pageIndexSv,
       pageOffset,
@@ -164,19 +182,22 @@ export function ImageLightboxModal({
 
   useEffect(() => {
     pageCountSv.value = Math.max(urls.length, 1);
-    widthSv.value = winW;
-    heightSv.value = imageHeight;
-  }, [urls.length, winW, imageHeight, pageCountSv, widthSv, heightSv]);
+    widthSv.value = stageW;
+    heightSv.value = stageH;
+  }, [urls.length, stageW, stageH, pageCountSv, widthSv, heightSv]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!visible) {
-      dismissY.value = 0;
-      panAxis.value = 0;
-      isPaging.value = 0;
+      if (gestureClosingRef.current) {
+        overlayOpacity.value = 0;
+        gestureClosingRef.current = false;
+      }
       return;
     }
+    gestureClosingRef.current = false;
+    overlayOpacity.value = 1;
     pageIndexSv.value = safeIndex;
-    pageOffset.value = -safeIndex * winW;
+    pageOffset.value = -safeIndex * stageW;
     dismissY.value = 0;
     panAxis.value = 0;
     isPaging.value = 0;
@@ -186,21 +207,7 @@ export function ImageLightboxModal({
     translateY.value = 0;
     savedTranslateX.value = 0;
     savedTranslateY.value = 0;
-  }, [
-    visible,
-    winW,
-    scale,
-    savedScale,
-    translateX,
-    translateY,
-    savedTranslateX,
-    savedTranslateY,
-    pageOffset,
-    dismissY,
-    panAxis,
-    pageIndexSv,
-    isPaging,
-  ]);
+  }, [visible, stageW]);
 
   const pinch = useMemo(
     () =>
@@ -414,11 +421,15 @@ export function ImageLightboxModal({
   });
 
   const backdropStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(dismissY.value, [0, winH * 0.42], [1, 0.12], Extrapolation.CLAMP),
+    opacity: overlayOpacity.value * interpolate(dismissY.value, [0, winH * 0.42], [1, 0.12], Extrapolation.CLAMP),
   }));
 
   const chromeStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(dismissY.value, [0, 140], [1, 0], Extrapolation.CLAMP),
+    opacity: overlayOpacity.value * interpolate(dismissY.value, [0, 140], [1, 0], Extrapolation.CLAMP),
+  }));
+
+  const contentFadeStyle = useAnimatedStyle(() => ({
+    opacity: overlayOpacity.value,
   }));
 
   const onShare = useCallback(async () => {
@@ -434,12 +445,25 @@ export function ImageLightboxModal({
     }
   }, [currentUrl, sharing, normalizedUrlMap]);
 
+  const onStageLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    if (width < 2 || height < 2) return;
+    setStageSize((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
+  }, []);
+
   return (
-    <Modal {...edgeToEdgeModalProps} visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      {...edgeToEdgeModalProps}
+      visible={visible}
+      transparent
+      animationType="none"
+      presentationStyle={Platform.OS === 'ios' ? 'overFullScreen' : undefined}
+      onRequestClose={requestClose}
+    >
       <GestureHandlerRootView style={styles.gestureRoot}>
         <View style={styles.root}>
           <Animated.View style={[styles.backdrop, backdropStyle]} />
-          <Animated.View style={[styles.header, { paddingTop: Math.max(insets.top, 12) + 8 }, chromeStyle]}>
+          <Animated.View style={[styles.header, { paddingTop: headerPadTop }, chromeStyle]}>
             <View style={styles.headerLeft}>
               {headerAvatar}
               {hasHeader ? (
@@ -478,88 +502,93 @@ export function ImageLightboxModal({
                   <Ionicons name="share-outline" size={22} color="#fff" />
                 )}
               </TouchableOpacity>
-              <TouchableOpacity onPress={onClose} style={styles.iconBtn} accessibilityLabel="Close">
+              <TouchableOpacity onPress={requestClose} style={styles.iconBtn} accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color="#fff" />
               </TouchableOpacity>
             </View>
           </Animated.View>
 
-          <View style={[{ width: winW, height: imageHeight }, styles.clip]}>
-            <GestureDetector gesture={composed}>
-              <Animated.View
-                style={[
-                  {
-                    height: imageHeight,
-                    width: Math.max(urls.length, 1) * winW,
-                    flexDirection: 'row',
-                  },
-                  slideStyle,
-                ]}
-              >
-                {urls.map((url, i) => (
-                  <Animated.View
-                    key={`${i}-${url}`}
-                    style={[
-                      styles.page,
-                      { width: winW, height: imageHeight },
-                      i === safeIndex ? zoomStyle : null,
-                    ]}
+          <Animated.View style={[styles.stage, contentFadeStyle]} onLayout={onStageLayout}>
+            <View style={[{ width: stageW, height: stageH }, styles.clip]}>
+              <GestureDetector gesture={composed}>
+                <Animated.View
+                  style={[
+                    {
+                      height: stageH,
+                      width: Math.max(urls.length, 1) * stageW,
+                      flexDirection: 'row',
+                    },
+                    slideStyle,
+                  ]}
+                >
+                  {urls.map((url, i) => (
+                    <Animated.View
+                      key={`${i}-${url}`}
+                      style={[
+                        styles.page,
+                        { width: stageW, height: stageH },
+                        i === safeIndex ? zoomStyle : null,
+                      ]}
+                    >
+                      {isImageFileUrl(url, names?.[i]) ? (
+                        <ResolvableImage
+                          storedUrl={url}
+                          urlMap={normalizedUrlMap}
+                          style={styles.image}
+                          resizeMode="contain"
+                          placeholderStyle={styles.imagePlaceholder}
+                        />
+                      ) : Math.abs(i - safeIndex) <= 1 ? (
+                        <FileViewerBody
+                          storedUrl={url}
+                          fileName={names?.[i]}
+                          urlMap={normalizedUrlMap}
+                          active={visible && i === safeIndex}
+                        />
+                      ) : (
+                        <View style={styles.image} />
+                      )}
+                    </Animated.View>
+                  ))}
+                </Animated.View>
+              </GestureDetector>
+            </View>
+
+            {hasMany ? (
+              <>
+                <Animated.View style={[styles.navWrap, styles.navPrev, chromeStyle]}>
+                  <TouchableOpacity
+                    onPress={() => jumpToIndex(safeIndex - 1)}
+                    disabled={safeIndex <= 0}
+                    style={[styles.iconBtn, safeIndex <= 0 && styles.navDisabled]}
+                    accessibilityLabel="Previous file"
                   >
-                    {isImageFileUrl(url, names?.[i]) ? (
-                      <ResolvableImage
-                        storedUrl={url}
-                        urlMap={normalizedUrlMap}
-                        style={styles.image}
-                        resizeMode="contain"
-                      />
-                    ) : Math.abs(i - safeIndex) <= 1 ? (
-                      <FileViewerBody
-                        storedUrl={url}
-                        fileName={names?.[i]}
-                        urlMap={normalizedUrlMap}
-                        active={visible && i === safeIndex}
-                      />
-                    ) : (
-                      <View style={styles.image} />
-                    )}
-                  </Animated.View>
-                ))}
-              </Animated.View>
-            </GestureDetector>
-          </View>
+                    <Ionicons name="chevron-back" size={22} color="#fff" />
+                  </TouchableOpacity>
+                </Animated.View>
+                <Animated.View style={[styles.navWrap, styles.navNext, chromeStyle]}>
+                  <TouchableOpacity
+                    onPress={() => jumpToIndex(safeIndex + 1)}
+                    disabled={safeIndex >= urls.length - 1}
+                    style={[styles.iconBtn, safeIndex >= urls.length - 1 && styles.navDisabled]}
+                    accessibilityLabel="Next file"
+                  >
+                    <Ionicons name="chevron-forward" size={22} color="#fff" />
+                  </TouchableOpacity>
+                </Animated.View>
+              </>
+            ) : null}
 
-          {hasMany ? (
-            <>
-              <Animated.View style={[styles.navWrap, styles.navPrev, { top: winH / 2 - 20 }, chromeStyle]}>
-                <TouchableOpacity
-                  onPress={() => jumpToIndex(safeIndex - 1)}
-                  disabled={safeIndex <= 0}
-                  style={[styles.iconBtn, safeIndex <= 0 && styles.navDisabled]}
-                  accessibilityLabel="Previous file"
-                >
-                  <Ionicons name="chevron-back" size={22} color="#fff" />
-                </TouchableOpacity>
+            {showCounter && hasMany ? (
+              <Animated.View
+                style={[styles.counterWrap, { bottom: Math.max(insets.bottom, 12) }, chromeStyle]}
+              >
+                <Text style={styles.counter}>
+                  {safeIndex + 1} / {urls.length}
+                </Text>
               </Animated.View>
-              <Animated.View style={[styles.navWrap, styles.navNext, { top: winH / 2 - 20 }, chromeStyle]}>
-                <TouchableOpacity
-                  onPress={() => jumpToIndex(safeIndex + 1)}
-                  disabled={safeIndex >= urls.length - 1}
-                  style={[styles.iconBtn, safeIndex >= urls.length - 1 && styles.navDisabled]}
-                  accessibilityLabel="Next file"
-                >
-                  <Ionicons name="chevron-forward" size={22} color="#fff" />
-                </TouchableOpacity>
-              </Animated.View>
-            </>
-          ) : null}
-
-          {showCounter && hasMany ? (
-            <Animated.View style={[styles.counterWrap, { bottom: Math.max(insets.bottom, 16) + 24 }, chromeStyle]}>
-              <Text style={styles.counter}>
-                {safeIndex + 1} / {urls.length}
-              </Text>
-            </Animated.View>
-          ) : null}
+            ) : null}
+          </Animated.View>
         </View>
       </GestureHandlerRootView>
     </Modal>
@@ -570,24 +599,19 @@ const styles = StyleSheet.create({
   gestureRoot: { flex: 1 },
   root: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.93)',
   },
   header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingBottom: HEADER_PAD_BOTTOM,
     zIndex: 8,
+    minHeight: HEADER_ROW + HEADER_PAD_BOTTOM,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -624,11 +648,17 @@ const styles = StyleSheet.create({
   },
   navWrap: {
     position: 'absolute',
+    top: '50%',
+    marginTop: -20,
     zIndex: 8,
   },
   navPrev: { left: 10 },
   navNext: { right: 10 },
   navDisabled: { opacity: 0.28 },
+  stage: {
+    flex: 1,
+    width: '100%',
+  },
   clip: {
     overflow: 'hidden',
   },
@@ -639,8 +669,15 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  imagePlaceholder: {
+    backgroundColor: 'transparent',
+  },
   counterWrap: {
     position: 'absolute',
+    alignSelf: 'center',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
   },
   counter: {
     color: '#fff',

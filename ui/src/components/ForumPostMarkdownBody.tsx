@@ -24,7 +24,21 @@ export type ForumPostImageLightboxState = {
   ownerName?: string;
   ownerAvatarSeed?: string | null;
   ownerThumbnail?: string | null;
+  onDelete?: (url: string) => void;
 } | null;
+
+export function dropLightboxItem<T extends { urls: string[]; index: number; alts?: string[] }>(
+  prev: T,
+  url: string
+): T | null {
+  const idx = prev.urls.indexOf(url);
+  if (idx < 0) return prev;
+  const urls = prev.urls.filter((_, i) => i !== idx);
+  if (urls.length === 0) return null;
+  const alts = prev.alts ? prev.alts.filter((_, i) => i !== idx) : prev.alts;
+  const index = Math.min(idx < prev.index ? prev.index - 1 : prev.index, urls.length - 1);
+  return { ...prev, urls, alts, index };
+}
 
 type ForumPostMarkdownBodyProps = {
   markdownBody: string;
@@ -33,6 +47,7 @@ type ForumPostMarkdownBodyProps = {
   ownerAvatarSeed: string | null;
   ownerThumbnail: string | null;
   setImageLightbox: Dispatch<SetStateAction<ForumPostImageLightboxState>>;
+  onDeleteUrl?: (url: string) => void;
 };
 
 export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
@@ -42,6 +57,7 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
   ownerAvatarSeed,
   ownerThumbnail,
   setImageLightbox,
+  onDeleteUrl,
 }: ForumPostMarkdownBodyProps) {
   const router = useAppRouter();
 
@@ -81,6 +97,7 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
                   ownerName: posterDisplayName,
                   ownerAvatarSeed,
                   ownerThumbnail,
+                  onDelete: onDeleteUrl,
                 })
               }
             >
@@ -94,7 +111,7 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
         );
       },
     }),
-    [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox]
+    [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox, onDeleteUrl]
   );
 
   const onLinkPress = useCallback(

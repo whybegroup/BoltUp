@@ -56,7 +56,7 @@ import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { FileExtensionIcon } from './FileExtensionPreview';
 import { AddImageButton } from './AddImageButton';
-import { ForumPostMarkdownBody, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
+import { ForumPostMarkdownBody, dropLightboxItem, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import { type GroupPost, type GroupPostComment, type GroupScoped } from '@moijia/client';
 import { formatCreatedAtLabel, isContentEdited } from '../utils/helpers';
 import { CommentMentionInput } from './CommentMentionInput';
@@ -78,7 +78,7 @@ import {
   coverPhotoDraftDisplayUri,
   pickDeferredCoverPhotoNative,
   pickDeferredCoverPhotoFromCamera,
-  pickFileFromDevice,
+  pickFilesFromDevice,
   revokeCoverPhotoDraftPreview,
   uploadCoverPhotoDrafts,
   uploadPickedFileAsset,
@@ -89,6 +89,15 @@ import {
   type ForumGroupDraftV1,
   type ForumPostFileAttachment,
 } from '../utils/forumPostDrafts';
+import {
+  clearTrackedUploads,
+  deleteManagedUploadFireAndForget,
+  deleteTrackedUploadIfNeeded,
+  discardTrackedUploads,
+  trackManagedUploadUrl,
+  trackManagedUploadUrls,
+} from '../services/managedUploadDelete';
+import { canDeleteManagedMedia } from '../utils/canDeleteManagedMedia';
 
 export type GroupForumViewProps = {
   groupId: string;
@@ -228,6 +237,24 @@ function mergeComposerBodyForApi(
   return `${t}\n\n${marker}\n${attachmentLines.join('\n')}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripAttachmentUrlFromBody(body: string, url: string): string {
+  const split = splitStoredPostBody(body);
+  const images = split.attachmentImages.filter((img) => img.url !== url);
+  const files = split.attachmentFiles.filter((f) => f.url !== url);
+  const reImg = new RegExp(`!\\[[^\\]]*\\]\\(${escapeRegExp(url)}\\)`, 'g');
+  const reLink = new RegExp(`\\[[^\\]]*\\]\\(${escapeRegExp(url)}\\)`, 'g');
+  const markdown = split.markdownSource.replace(reImg, '').replace(reLink, '').replace(/\n{3,}/g, '\n\n').trim();
+  return mergeComposerBodyForApi(
+    markdown,
+    images.map((img) => img.url),
+    files
+  );
+}
+
 function mergeCommentBodyForApi(text: string, photoUrls: string[]): string {
   const t = text.trim();
   const photoLines = photoUrls.map((u) => `![](${u})`);
@@ -310,6 +337,8 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const [newPostPhotoUrls, setNewPostPhotoUrls] = useState<string[]>([]);
   const [composerFileAttachments, setComposerFileAttachments] = useState<ForumPostFileAttachment[]>([]);
   const [newPostFileAttachments, setNewPostFileAttachments] = useState<ForumPostFileAttachment[]>([]);
+  const newPostTrackedUploadsRef = useRef<Set<string>>(new Set());
+  const editPostTrackedUploadsRef = useRef<Set<string>>(new Set());
   /** Remount TextInput after clear so grown multiline height resets to minHeight. */
   const [newPostInputKey, setNewPostInputKey] = useState(0);
   const [composerSelection, setComposerSelection] = useState<{ start: number; end: number }>({
@@ -636,10 +665,109 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     else setComposerPhotoUrls((prev) => [...prev, url]);
   }, []);
 
-  const removeComposerPhotoAtFor = useCallback((channel: ForumComposerChannel, index: number) => {
-    if (channel === 'new') setNewPostPhotoUrls((prev) => prev.filter((_, i) => i !== index));
-    else setComposerPhotoUrls((prev) => prev.filter((_, i) => i !== index));
+  const trackedUploadsForComposer = useCallback((channel: ForumComposerChannel) => {
+    return channel === 'edit' ? editPostTrackedUploadsRef.current : newPostTrackedUploadsRef.current;
   }, []);
+
+  const removeLightboxUrl = useCallback((url: string) => {
+    setImageLightbox((prev) => (prev ? dropLightboxItem(prev, url) : prev));
+  }, []);
+
+  const removeDraftMedia = useCallback(
+    (channel: ForumComposerChannel, url: string) => {
+      deleteTrackedUploadIfNeeded(currentUserId, trackedUploadsForComposer(channel), url);
+      if (channel === 'new') {
+        setNewPostPhotoUrls((prev) => prev.filter((u) => u !== url));
+        setNewPostFileAttachments((prev) => prev.filter((f) => f.url !== url));
+      } else {
+        setComposerPhotoUrls((prev) => prev.filter((u) => u !== url));
+        setComposerFileAttachments((prev) => prev.filter((f) => f.url !== url));
+      }
+      removeLightboxUrl(url);
+    },
+    [currentUserId, removeLightboxUrl, trackedUploadsForComposer]
+  );
+
+  const confirmDeleteOwnPostFile = useCallback(
+    (post: GroupPost, url: string) => {
+      if (!currentUserId) return;
+      const run = async () => {
+        const nextBody = stripAttachmentUrlFromBody(post.body || '', url);
+        if (!nextBody.trim()) {
+          Alert.alert('Delete file', 'A post needs some content. Delete the post instead.');
+          return;
+        }
+        const title =
+          nextBody
+            .replace(/\[\[MOIJIA_POST_ATTACHMENTS\]\]/g, '')
+            .trim()
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find(Boolean)
+            ?.slice(0, 80) || post.title || 'Post';
+        try {
+          await updatePostMutation.mutateAsync({
+            postId: post.id,
+            title,
+            body: nextBody,
+          });
+          deleteManagedUploadFireAndForget(currentUserId, url);
+          removeLightboxUrl(url);
+        } catch {
+          Alert.alert('Error', 'Could not delete file');
+        }
+      };
+      const go = () => void run();
+      if (Platform.OS === 'web') {
+        if (window.confirm('Delete this file from the post?')) go();
+        return;
+      }
+      Alert.alert('Delete file?', 'This file will be removed from the post and deleted.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: go },
+      ]);
+    },
+    [currentUserId, removeLightboxUrl, updatePostMutation]
+  );
+
+  const confirmDeleteCommentFile = useCallback(
+    (comment: GroupPostComment, url: string) => {
+      if (!currentUserId) return;
+      const run = async () => {
+        const nextBody = stripAttachmentUrlFromBody(comment.body || '', url);
+        if (!nextBody.trim()) {
+          Alert.alert('Delete file', 'A comment needs some content. Delete the comment instead.');
+          return;
+        }
+        try {
+          await updateCommentMutation.mutateAsync({
+            commentId: comment.id,
+            body: nextBody,
+            parentCommentId: comment.parentCommentId ?? null,
+          });
+          deleteManagedUploadFireAndForget(currentUserId, url);
+          removeLightboxUrl(url);
+        } catch {
+          Alert.alert('Error', 'Could not delete file');
+        }
+      };
+      const go = () => void run();
+      if (Platform.OS === 'web') {
+        if (window.confirm('Delete this file from the comment?')) go();
+        return;
+      }
+      Alert.alert('Delete file?', 'This file will be removed from the comment and deleted.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: go },
+      ]);
+    },
+    [currentUserId, removeLightboxUrl, updateCommentMutation]
+  );
+
+  const removeComposerPhotoAtFor = useCallback((channel: ForumComposerChannel, index: number) => {
+    const url = channel === 'new' ? newPostPhotoUrls[index] : composerPhotoUrls[index];
+    if (url) removeDraftMedia(channel, url);
+  }, [composerPhotoUrls, newPostPhotoUrls, removeDraftMedia]);
 
   const uploadComposerPhoto = useCallback(
     async (channel: ForumComposerChannel) => {
@@ -648,6 +776,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         setIsUploadingAttachment(true);
         const publicUrls = await pickAndUploadCoverPhoto(currentUserId, { groupId });
         if (!publicUrls?.length) return;
+        trackManagedUploadUrls(trackedUploadsForComposer(channel), publicUrls);
         for (const publicUrl of publicUrls) addComposerPhotoFor(channel, publicUrl);
       } finally {
         setIsUploadingAttachment(false);
@@ -662,13 +791,17 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       try {
         setIsUploadingAttachment(true);
         const uploaded = await pickAndUploadFileFromDevice(currentUserId, { groupId });
-        if (!uploaded?.publicUrl) return;
-        const fileEntry: ForumPostFileAttachment = {
-          name: uploaded.fileName || 'Attachment',
-          url: uploadUrlToDownloadUrl(uploaded.publicUrl),
-        };
+        if (!uploaded?.length) return;
+        const fileEntries: ForumPostFileAttachment[] = uploaded.map((file) => ({
+          name: file.fileName || 'Attachment',
+          url: uploadUrlToDownloadUrl(file.publicUrl),
+        }));
+        trackManagedUploadUrls(
+          trackedUploadsForComposer(channel),
+          fileEntries.map((f) => f.url)
+        );
         const setFiles = channel === 'new' ? setNewPostFileAttachments : setComposerFileAttachments;
-        setFiles((prev) => [...prev, fileEntry]);
+        setFiles((prev) => [...prev, ...fileEntries]);
       } catch (e) {
         if (e instanceof Error && e.message === 'cancelled') return;
         Alert.alert('Upload', e instanceof Error ? e.message : 'Could not attach file');
@@ -680,9 +813,9 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   );
 
   const removeComposerFileAtFor = useCallback((channel: ForumComposerChannel, index: number) => {
-    if (channel === 'new') setNewPostFileAttachments((prev) => prev.filter((_, i) => i !== index));
-    else setComposerFileAttachments((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+    const url = channel === 'new' ? newPostFileAttachments[index]?.url : composerFileAttachments[index]?.url;
+    if (url) removeDraftMedia(channel, url);
+  }, [composerFileAttachments, newPostFileAttachments, removeDraftMedia]);
 
   const takePhotoAndAddComposerPhoto = useCallback(
     async (channel: ForumComposerChannel) => {
@@ -691,6 +824,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         setIsUploadingAttachment(true);
         const publicUrl = await takeAndUploadCoverPhoto(currentUserId, { groupId });
         if (!publicUrl) return;
+        trackManagedUploadUrl(trackedUploadsForComposer(channel), publicUrl);
         addComposerPhotoFor(channel, publicUrl);
       } catch (e) {
         Alert.alert('Upload', e instanceof Error ? e.message : 'Could not upload photo');
@@ -971,6 +1105,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   }, [postMenuTarget]);
 
   const cancelEditPost = useCallback(() => {
+    discardTrackedUploads(currentUserId, editPostTrackedUploadsRef.current);
     const id = editingPostId;
     pendingScrollToEditPostIdRef.current = null;
     if (id) delete postEditsRef.current[id];
@@ -1005,6 +1140,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   ]);
 
   const discardNewPostDraft = useCallback(() => {
+    discardTrackedUploads(currentUserId, newPostTrackedUploadsRef.current);
     setNewPostBody('');
     setNewPostPhotoUrls([]);
     setNewPostFileAttachments([]);
@@ -1020,6 +1156,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const beginEditPost = useCallback(
     (post: GroupPost) => {
       if (!currentUserId) return;
+      clearTrackedUploads(editPostTrackedUploadsRef.current);
       const persisted = postEditsRef.current[post.id];
       setEditingPostId(post.id);
       const persistedFiles = persisted?.files ?? [];
@@ -1072,6 +1209,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       body,
       ...(mids.length > 0 ? { mentionedUserIds: mids } : {}),
     });
+    clearTrackedUploads(newPostTrackedUploadsRef.current);
     setNewPostBody('');
     setNewPostPhotoUrls([]);
     setNewPostFileAttachments([]);
@@ -1114,6 +1252,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       });
       delete postEditsRef.current[pid];
       bumpDraftBadgeTick();
+      clearTrackedUploads(editPostTrackedUploadsRef.current);
       setEditingPostId(null);
       setPostBody('');
       setComposerPhotoUrls([]);
@@ -1390,12 +1529,12 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
     async (postId: string) => {
       if (uploadingCommentPhotoPostId === postId) return;
       try {
-        const asset = await pickFileFromDevice();
+        const assets = await pickFilesFromDevice();
         setDraftCommentPendingFilesByPost((prev) => ({
           ...prev,
           [postId]: [
             ...(prev[postId] ?? []),
-            { id: forumId('comment-file'), name: asset.fileName, asset },
+            ...assets.map((asset) => ({ id: forumId('comment-file'), name: asset.fileName, asset })),
           ],
         }));
       } catch (e) {
@@ -1615,6 +1754,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                       index: i,
                       alts: photos.map(() => ''),
                       ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                      onDelete: (url) => removeDraftMedia(channel, url),
                     })
                   }
                   activeOpacity={0.9}
@@ -1644,6 +1784,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                       index: i,
                       alts: fileAttachments.map((f) => f.name || ''),
                       ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                      onDelete: (url) => removeDraftMedia(channel, url),
                     })
                   }
                   accessibilityRole="button"
@@ -1841,6 +1982,11 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                     const shouldCollapse = !!(natural && natural.h > POST_BODY_PREVIEW_MAX_HEIGHT);
                     const showClamp = shouldCollapse && !expanded;
                     const postOwner = usersById.get(post.userId);
+                    const canDeleteThisPostMedia = canDeleteManagedMedia({
+                      currentUserId,
+                      group,
+                      resourceOwnerId: post.userId,
+                    });
                     return (
                       <>
                         {hasText ? (
@@ -1876,6 +2022,11 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                                 ownerAvatarSeed={postOwner?.avatarSeed ?? null}
                                 ownerThumbnail={postOwner?.thumbnail ?? null}
                                 setImageLightbox={setImageLightbox}
+                                onDeleteUrl={
+                                  canDeleteThisPostMedia
+                                    ? (url) => confirmDeleteOwnPostFile(post, url)
+                                    : undefined
+                                }
                               />
                             </View>
                             {shouldCollapse ? (
@@ -1914,6 +2065,9 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                                       ownerName: getUserDisplayName(post.userId),
                                       ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                       ownerThumbnail: postOwner?.thumbnail ?? null,
+                                      onDelete: canDeleteThisPostMedia
+                                        ? (url) => confirmDeleteOwnPostFile(post, url)
+                                        : undefined,
                                     })
                                   }
                                 >
@@ -1942,6 +2096,9 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                                     ownerName: getUserDisplayName(post.userId),
                                     ownerAvatarSeed: postOwner?.avatarSeed ?? null,
                                     ownerThumbnail: postOwner?.thumbnail ?? null,
+                                    onDelete: canDeleteThisPostMedia
+                                      ? (url) => confirmDeleteOwnPostFile(post, url)
+                                      : undefined,
                                   })
                                 }
                                 accessibilityRole="button"
@@ -2082,6 +2239,17 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                         index,
                         alts: urls.map(() => ''),
                         ownerName: currentUserId ? getUserDisplayName(currentUserId) : group?.name,
+                        onDelete: (url) => {
+                          setDraftCommentPhotoDraftsByPost((prev) => {
+                            const list = prev[post.id] ?? [];
+                            const idx = list.map(coverPhotoDraftDisplayUri).indexOf(url);
+                            if (idx < 0) return prev;
+                            const removed = list[idx];
+                            if (removed) revokeCoverPhotoDraftPreview(removed);
+                            return { ...prev, [post.id]: list.filter((_, i) => i !== idx) };
+                          });
+                          removeLightboxUrl(url);
+                        },
                       })
                     }
                     replyTargetId={replyTargetByPost[post.id] ?? null}
@@ -2128,6 +2296,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                     }}
                     renderCommentBody={(comment) => {
                       const owner = usersById.get(comment.userId);
+                      const full = post.comments.find((x) => x.id === comment.id);
                       return (
                         <ForumPostMarkdownBody
                           markdownBody={comment.body || ''}
@@ -2136,6 +2305,16 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
                           ownerAvatarSeed={owner?.avatarSeed ?? null}
                           ownerThumbnail={owner?.thumbnail ?? null}
                           setImageLightbox={setImageLightbox}
+                          onDeleteUrl={
+                            full &&
+                            canDeleteManagedMedia({
+                              currentUserId,
+                              group,
+                              resourceOwnerId: comment.userId,
+                            })
+                              ? (url) => confirmDeleteCommentFile(full, url)
+                              : undefined
+                          }
                         />
                       );
                     }}
@@ -2369,6 +2548,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         index={imageLightbox?.index ?? 0}
         onChangeIndex={(nextIndex) => setImageLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))}
         onClose={() => setImageLightbox(null)}
+        onDelete={imageLightbox?.onDelete}
         headerAvatar={
           imageLightbox ? (
             <UserAvatar

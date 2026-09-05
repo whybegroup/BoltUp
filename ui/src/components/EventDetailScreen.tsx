@@ -98,6 +98,7 @@ import { isImageFileUrl } from '../utils/fileKind';
 import { ReactionEmojiGlyph } from './ReactionEmojiGlyph';
 import { EmojiBar } from './EmojiBar';
 import { ImageLightboxModal } from './ImageLightboxModal';
+import { dropLightboxItem } from './ForumPostMarkdownBody';
 import { AddImageButton } from './AddImageButton';
 import {
   pickAndUploadCoverPhoto,
@@ -105,6 +106,8 @@ import {
   pickAndUploadFileFromDevice,
   uploadUrlToDownloadUrl,
 } from '../services/pickAndUploadImage';
+import { deleteManagedUploadFireAndForget } from '../services/managedUploadDelete';
+import { canDeleteManagedMedia } from '../utils/canDeleteManagedMedia';
 import { useResolvedImageUrls } from '../hooks/useResolvedImageUrls';
 import { useLocationSuggestions } from '../hooks/useLocationSuggestions';
 import {
@@ -574,7 +577,13 @@ export function EventDetailScreen({
     emoji: string;
     userIds: string[];
   } | null>(null);
-  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; name: string; ts: Date } | null>(null);
+  const [lightbox, setLightbox] = useState<{
+    urls: string[];
+    index: number;
+    name: string;
+    ts: Date;
+    onDelete?: (url: string) => void;
+  } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showTimeSuggestModal, setShowTimeSuggestModal] = useState(false);
   const [suggestStartDate, setSuggestStartDate] = useState('');
@@ -1181,9 +1190,12 @@ export function EventDetailScreen({
     try {
       setCommentDraftPhotoBusy(true);
       const uploaded = await pickAndUploadFileFromDevice(currentUserId, { groupId: ev?.groupId });
-      if (!uploaded?.publicUrl) return;
+      if (!uploaded?.length) return;
       setCommentDraft((prev) =>
-        appendFileLinkLine(prev, uploaded.fileName, uploadUrlToDownloadUrl(uploaded.publicUrl))
+        uploaded.reduce(
+          (text, file) => appendFileLinkLine(text, file.fileName, uploadUrlToDownloadUrl(file.publicUrl)),
+          prev
+        )
       );
     } catch (e) {
       if (e instanceof Error && e.message === 'cancelled') return;
@@ -1933,14 +1945,91 @@ export function EventDetailScreen({
   const removeCoverPhotoAt = async (index: number) => {
     if (!currentUserId || !canEditPhotos) return;
     const prev = localCoverPhotos;
+    const removed = prev[index];
     const next = prev.filter((_, j) => j !== index);
     setLocalCoverPhotos(next);
     try {
       await persistCoverPhotos(next);
+      if (removed) deleteManagedUploadFireAndForget(currentUserId, removed);
     } catch {
       setLocalCoverPhotos(prev);
       Alert.alert('Error', 'Failed to remove photo');
     }
+  };
+
+  const confirmRemoveEventCoverPhoto = (url: string) => {
+    if (!currentUserId || !canEditPhotos) return;
+    const run = async () => {
+      const prev = localCoverPhotos;
+      const next = prev.filter((u) => u !== url);
+      if (next.length === prev.length) return;
+      setLocalCoverPhotos(next);
+      setLightbox((cur) => (cur ? dropLightboxItem(cur, url) : cur));
+      try {
+        await persistCoverPhotos(next);
+        deleteManagedUploadFireAndForget(currentUserId, url);
+      } catch {
+        setLocalCoverPhotos(prev);
+        Alert.alert('Error', 'Failed to remove photo');
+      }
+    };
+    const go = () => void run();
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this photo from the event?')) go();
+      return;
+    }
+    Alert.alert('Delete photo?', 'This photo will be removed from the event and deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: go },
+    ]);
+  };
+
+  const confirmDeleteEventCommentPhoto = (
+    comment: { id: string; userId: string; text: string; photos: string[] },
+    url: string
+  ) => {
+    if (!currentUserId) return;
+    if (
+      !canDeleteManagedMedia({
+        currentUserId,
+        group,
+        resourceOwnerId: comment.userId,
+        url,
+      })
+    ) {
+      return;
+    }
+    const nextPhotos = comment.photos.filter((u) => u !== url);
+    const text = (comment.text || '').trim();
+    if (!text && nextPhotos.length === 0) {
+      Alert.alert('Delete file', 'A comment needs some content. Delete the comment instead.');
+      return;
+    }
+    const run = async () => {
+      try {
+        await updateCommentMutation.mutateAsync({
+          commentId: comment.id,
+          input: {
+            actorId: currentUserId,
+            photos: nextPhotos,
+            text: comment.text,
+          },
+        });
+        deleteManagedUploadFireAndForget(currentUserId, url);
+        setLightbox((cur) => (cur ? dropLightboxItem(cur, url) : cur));
+      } catch {
+        Alert.alert('Error', 'Could not delete photo');
+      }
+    };
+    const go = () => void run();
+    if (Platform.OS === 'web') {
+      if (window.confirm('Delete this photo from the comment?')) go();
+      return;
+    }
+    Alert.alert('Delete photo?', 'This photo will be removed from the comment and deleted.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: go },
+    ]);
   };
 
   const addCoverPhotoFromPicker = async () => {
@@ -2810,6 +2899,7 @@ export function EventDetailScreen({
                           index: i,
                           name: getUserSafe(ev.createdBy).displayName,
                           ts: new Date(ev.createdAt),
+                          onDelete: canEditPhotos ? confirmRemoveEventCoverPhoto : undefined,
                         })
                       }
                       activeOpacity={0.9}
@@ -3074,6 +3164,11 @@ export function EventDetailScreen({
                 index,
                 name: currentUserId ? getUserSafe(currentUserId).displayName : 'You',
                 ts: new Date(),
+                onDelete: (url) => {
+                  setCommentDraftPhotos((prev) => prev.filter((u) => u !== url));
+                  if (currentUserId) deleteManagedUploadFireAndForget(currentUserId, url);
+                  setLightbox((cur) => (cur ? dropLightboxItem(cur, url) : cur));
+                },
               })
             }
             replyTargetId={replyTargetCommentId}
@@ -3124,6 +3219,13 @@ export function EventDetailScreen({
                           index: photoIndex,
                           name: getUserSafe(c.userId).displayName,
                           ts: commentTs,
+                          onDelete: canDeleteManagedMedia({
+                            currentUserId,
+                            group,
+                            resourceOwnerId: c.userId,
+                          })
+                            ? (url) => confirmDeleteEventCommentPhoto(c, url)
+                            : undefined,
                         })
                       }
                     />
@@ -3327,6 +3429,7 @@ export function EventDetailScreen({
         index={lightbox?.index ?? 0}
         onChangeIndex={(nextIndex) => setLightbox((prev) => (prev ? { ...prev, index: nextIndex } : prev))}
         onClose={() => setLightbox(null)}
+        onDelete={lightbox?.onDelete}
         headerAvatar={lightbox ? <Avatar name={lightbox.name} size={28} /> : undefined}
         title={lightbox?.name}
         subtitle={
@@ -3336,7 +3439,7 @@ export function EventDetailScreen({
               : timeAgo(lightbox.ts)
             : undefined
         }
-        urlMap={Object.fromEntries(resolvedImageMap)}
+        urlMap={resolvedImageMap}
       />
 
       {Platform.OS !== 'web' && showDetailStartDatePicker ? (
