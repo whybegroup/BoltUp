@@ -10,13 +10,13 @@ import {
   Platform,
   Animated,
   ActivityIndicator,
-  Alert,
   Dimensions,
   type ScrollView,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import Toast from 'react-native-toast-message';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
@@ -935,9 +935,7 @@ export function ThreadedCommentsSection({
                     onPress={async () => {
                       await Clipboard.setStringAsync(copyText);
                       setCommentOptionsTarget(null);
-                      if (Platform.OS !== 'web') {
-                        Alert.alert('Copied', 'Comment text copied to clipboard.');
-                      }
+                      Toast.show({ type: 'success', text1: 'Copied' });
                     }}
                   >
                     <Ionicons name="copy-outline" size={20} color={Colors.text} />

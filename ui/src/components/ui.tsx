@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useGuardedPress } from '../hooks/useGuardedPress';
 import {
   View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle,
-  Modal, TextInput, Platform, Pressable,
+  Modal, TextInput, Platform, Pressable, useWindowDimensions,
   type TextStyle,
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -250,6 +250,7 @@ export function Sheet({
   dragToDismiss = false,
 }: SheetProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const isDark = variant === 'dark';
   const overlayStyle = !dimBackdrop
     ? styles.sheetOverlayTransparent
@@ -288,13 +289,14 @@ export function Sheet({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} {...edgeToEdgeModalProps}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <GestureHandlerRootView style={{ flex: 1, height: Platform.OS === 'web' ? windowHeight : undefined }}>
         <KeyboardFormRoot style={overlayStyle}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />
           <Animated.View
             style={[
               isDark ? styles.sheetContainerDark : styles.sheetContainer,
               { paddingBottom: insets.bottom + 16 },
+              Platform.OS === 'web' && styles.sheetContainerWeb,
               sheetAnimStyle,
             ]}
           >
@@ -451,6 +453,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 16, borderTopRightRadius: 16,
     maxHeight: '85%', paddingHorizontal: 20,
+    width: '100%',
+    marginTop: 'auto',
   },
   sheetContainerDark: {
     backgroundColor: '#2c2c2e',
@@ -459,6 +463,14 @@ const styles = StyleSheet.create({
     maxHeight: '85%',
     paddingHorizontal: 20,
     overflow: 'hidden',
+    width: '100%',
+    marginTop: 'auto',
+  },
+  sheetContainerWeb: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   sheetHandleHit: {
     alignItems: 'center',

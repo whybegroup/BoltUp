@@ -1361,7 +1361,7 @@ export class GroupService {
   public async joinByInviteCode(
     inviteCode: string,
     userId: string
-  ): Promise<{ groupId: string; groupName: string; status: 'joined' | 'pending' }> {
+  ): Promise<{ groupId: string; groupName: string; status: 'joined' | 'pending'; alreadyMember?: boolean }> {
     // Extract code from URL (e.g. moijia.com/join/ABC123) or use as-is
     let raw = inviteCode.trim();
     const joinMatch = raw.match(/\/join\/([A-Za-z0-9]+)/i);
@@ -1382,7 +1382,7 @@ export class GroupService {
   public async joinGroup(
     groupId: string,
     userId: string
-  ): Promise<{ groupId: string; groupName: string; status: 'joined' | 'pending' }> {
+  ): Promise<{ groupId: string; groupName: string; status: 'joined' | 'pending'; alreadyMember?: boolean }> {
     const group = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group || group.deletedAt) {
       throw Object.assign(new Error('Group not found'), { status: 404 });
@@ -1395,7 +1395,7 @@ export class GroupService {
     });
     if (existing) {
       if (existing.status === 'active') {
-        return { groupId, groupName: group.name, status: 'joined' };
+        return { groupId, groupName: group.name, status: 'joined', alreadyMember: true };
       }
       if (existing.status === 'pending') {
         return { groupId, groupName: group.name, status: 'pending' };

@@ -17,6 +17,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { GroupsService, type GroupPost, type GroupPostComment } from '@moijia/client';
 import { shareFromModal, sharePost } from '../utils/shareContent';
+import { forumPostCopyText } from '../utils/sharePreviewCopy';
+import * as Clipboard from 'expo-clipboard';
+import Toast from 'react-native-toast-message';
 import { Colors, Fonts, Radius, Shadows } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
 import { queryKeys } from '../config/queryClient';
@@ -53,6 +56,8 @@ import { AddImageButton } from './AddImageButton';
 import { ResolvableImage } from './ResolvableImage';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { FileExtensionIcon } from './FileExtensionPreview';
+import { PostAttachmentFileRow, PostMediaImage } from './DeletedPostMedia';
+import { isDeletedMediaUrl } from '../utils/deletedMedia';
 import { ForumPostMarkdownBody, dropLightboxItem, type ForumPostImageLightboxState } from './ForumPostMarkdownBody';
 import {
   pickAndUploadCoverPhoto,
@@ -1581,7 +1586,8 @@ export function PostsListScreen() {
                         {attachmentImages.map((image, idx) => (
                           <View key={`${post.id}-att-${idx}`} style={styles.composerPhotoThumbWrap}>
                             <TouchableOpacity
-                              activeOpacity={0.9}
+                              activeOpacity={isDeletedMediaUrl(image.url) ? 1 : 0.9}
+                              disabled={isDeletedMediaUrl(image.url)}
                               onPress={() =>
                                 setImageLightbox({
                                   urls: attachmentImages.map((img) => img.url),
@@ -1596,7 +1602,7 @@ export function PostsListScreen() {
                                 })
                               }
                             >
-                              <ResolvableImage
+                              <PostMediaImage
                                 storedUrl={image.url}
                                 style={styles.composerPhotoThumb}
                                 resizeMode="cover"
@@ -1609,10 +1615,11 @@ export function PostsListScreen() {
                     {!isEditing && attachmentFiles.length > 0 ? (
                       <View style={styles.postAttachmentFilesList}>
                         {attachmentFiles.map((file, idx) => (
-                          <TouchableOpacity
+                          <PostAttachmentFileRow
                             key={`${post.id}-file-${idx}`}
-                            style={styles.postAttachmentFileLink}
-                            activeOpacity={0.7}
+                            url={file.url}
+                            name={file.name}
+                            textStyle={styles.postAttachmentFileText}
                             onPress={() =>
                               setImageLightbox({
                                 urls: attachmentFiles.map((f) => f.url),
@@ -1626,22 +1633,7 @@ export function PostsListScreen() {
                                   : undefined,
                               })
                             }
-                            accessibilityRole="button"
-                            accessibilityLabel={`View attached file ${file.name || 'Attachment'}`}
-                          >
-                            <FileExtensionIcon
-                              url={file.url}
-                              fileName={file.name}
-                              size={14}
-                            />
-                            <Text
-                              style={styles.postAttachmentFileText}
-                              numberOfLines={1}
-                              ellipsizeMode="middle"
-                            >
-                              {file.name || 'Attachment'}
-                            </Text>
-                          </TouchableOpacity>
+                          />
                         ))}
                       </View>
                     ) : null}
@@ -2025,10 +2017,7 @@ export function PostsListScreen() {
             >
               <View style={styles.postOptionsCard}>
                 <TouchableOpacity
-                  style={[
-                    styles.postOptionsRow,
-                    !canEditMenuPost && !canDeleteMenuPost && styles.postOptionsRowLast,
-                  ]}
+                  style={styles.postOptionsRow}
                   onPress={() => {
                     const { postId, groupId } = postMenuTarget;
                     const groupName = groups.find((g) => g.id === groupId)?.name;
@@ -2048,6 +2037,21 @@ export function PostsListScreen() {
                 >
                   <Ionicons name="share-outline" size={20} color={Colors.text} />
                   <Text style={styles.postOptionsLabel}>Share</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.postOptionsRow,
+                    !canEditMenuPost && !canDeleteMenuPost && styles.postOptionsRowLast,
+                  ]}
+                  onPress={async () => {
+                    const text = forumPostCopyText(postMenuTargetPost?.body);
+                    await Clipboard.setStringAsync(text);
+                    setPostMenuTarget(null);
+                    Toast.show({ type: 'success', text1: 'Copied' });
+                  }}
+                >
+                  <Ionicons name="copy-outline" size={20} color={Colors.text} />
+                  <Text style={styles.postOptionsLabel}>Copy</Text>
                 </TouchableOpacity>
                 {canEditMenuPost ? (
                   <TouchableOpacity

@@ -138,6 +138,7 @@ export function usePushNotifications(userId: string | null) {
     }
     requestAnimationFrame(() => {
       navigateFromNotificationPayload(router, pathname, {
+        type: data.type,
         dest: data.dest,
         eventId: data.eventId,
         groupId: data.groupId,

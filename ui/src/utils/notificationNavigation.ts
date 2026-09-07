@@ -5,6 +5,7 @@ import { resetNavigationLocks, runGuardedNavigation } from './navigationGuard';
 import { navigateToEventCommentMention, navigateToGroupForumMention } from './tabBreadcrumbNav';
 
 export type NotificationNavPayload = {
+  type?: string | null;
   dest?: string | null;
   eventId?: string | null;
   groupId?: string | null;
@@ -33,6 +34,8 @@ export function navigateFromNotificationPayload(
       );
     } else if (payload.eventId && payload.commentId) {
       navigateToEventCommentMention(router, pathname, payload.eventId, payload.commentId);
+    } else if (payload.type === 'group_join_request' && payload.groupId) {
+      router.push(`/(tabs)/groups/${payload.groupId}/members` as Href);
     } else if (dest === Notification.dest.EVENT && payload.eventId) {
       router.push(`/(tabs)/events/${payload.eventId}` as Href);
     } else if (dest === Notification.dest.GROUP && payload.groupId) {
@@ -48,7 +51,7 @@ export function navigateFromNotification(
   pathname: string,
   n: Pick<
     Notification,
-    'dest' | 'eventId' | 'groupId' | 'pollId' | 'postId' | 'commentId' | 'navigable'
+    'type' | 'dest' | 'eventId' | 'groupId' | 'pollId' | 'postId' | 'commentId' | 'navigable'
   >
 ): void {
   navigateFromNotificationPayload(router, pathname, n);

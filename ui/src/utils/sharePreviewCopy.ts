@@ -35,6 +35,21 @@ export function stripForumBodyToText(body: string): string {
     .trim();
 }
 
+/** Full post body for the clipboard (markdown text, no attachment URLs). */
+export function forumPostCopyText(body?: string | null): string {
+  const markerSep = `\n${POST_ATTACHMENT_MARKER}\n`;
+  let markdown = (body ?? '').replace(/\r\n/g, '\n');
+  if (markdown.startsWith(`${POST_ATTACHMENT_MARKER}\n`)) return '';
+  const idx = markdown.indexOf(markerSep);
+  if (idx !== -1) markdown = markdown.slice(0, idx).trimEnd();
+  return markdown
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    .replace(/\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function localeZone(timeZone?: string | null): { timeZone: string } | Record<string, never> {
   const tz = timeZone?.trim();
   return tz ? { timeZone: tz } : {};

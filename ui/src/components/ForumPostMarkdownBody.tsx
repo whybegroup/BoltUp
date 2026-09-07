@@ -1,13 +1,14 @@
 import { memo, useCallback, useMemo, type ComponentProps, type Dispatch, type SetStateAction } from 'react';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { useAppRouter } from '../hooks/useAppRouter';
 import { openContentLink } from '../utils/inAppLinks';
 import { MentionText } from './MentionText';
-import { ResolvableImage } from './ResolvableImage';
 import { FileExtensionPreview } from './FileExtensionPreview';
+import { DeletedImagePlaceholder, PostMediaImage } from './DeletedPostMedia';
 import { isImageFileUrl } from '../utils/fileKind';
+import { isDeletedFileHref, isDeletedImageSrc, isDeletedMediaUrl } from '../utils/deletedMedia';
 
 /**
  * The library's default parser leaves markdown-it's `linkify` off, so bare URLs stay inert
@@ -84,9 +85,23 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
         const src = typeof rawSrc === 'string' ? rawSrc.trim() : '';
         if (!src) return null;
         const alt = typeof node.attributes?.alt === 'string' ? node.attributes.alt : '';
-        const isImage = isImageFileUrl(src, alt);
+        const deletedImage = isDeletedImageSrc(src);
+        const deletedFile = isDeletedFileHref(src);
+        const isImage = deletedImage || isImageFileUrl(src, alt);
+        const wrapStyle = isImage ? styles.markdownImageWrap : styles.markdownFileWrap;
+        if (deletedImage || deletedFile) {
+          return (
+            <View key={node.key} style={wrapStyle}>
+              {isImage ? (
+                <DeletedImagePlaceholder style={styles.inlineImage} />
+              ) : (
+                <FileExtensionPreview url={src} fileName={alt || 'File'} variant="inline" />
+              )}
+            </View>
+          );
+        }
         return (
-          <View key={node.key} style={isImage ? styles.markdownImageWrap : styles.markdownFileWrap}>
+          <View key={node.key} style={wrapStyle}>
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() =>
@@ -102,7 +117,7 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
               }
             >
               {isImage ? (
-                <ResolvableImage storedUrl={src} style={styles.inlineImage} resizeMode="cover" />
+                <PostMediaImage storedUrl={src} style={styles.inlineImage} resizeMode="cover" />
               ) : (
                 <FileExtensionPreview url={src} fileName={alt} variant="inline" />
               )}
@@ -110,12 +125,34 @@ export const ForumPostMarkdownBody = memo(function ForumPostMarkdownBody({
           </View>
         );
       },
+      link: (node: any, children: any, _parent: any, mdStyles: any) => {
+        const href = typeof node.attributes?.href === 'string' ? node.attributes.href.trim() : '';
+        if (isDeletedFileHref(href) || isDeletedMediaUrl(href)) {
+          return (
+            <Text key={node.key} style={styles.deletedFileName}>
+              {children} (deleted)
+            </Text>
+          );
+        }
+        return (
+          <Text
+            key={node.key}
+            style={mdStyles.link}
+            onPress={() => {
+              if (href) openContentLink(router, href);
+            }}
+          >
+            {children}
+          </Text>
+        );
+      },
     }),
-    [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox, onDeleteUrl]
+    [posterDisplayName, ownerAvatarSeed, ownerThumbnail, setImageLightbox, onDeleteUrl, router]
   );
 
   const onLinkPress = useCallback(
     (url: string) => {
+      if (isDeletedMediaUrl(url)) return false;
       openContentLink(router, url);
       return false;
     },
@@ -157,4 +194,10 @@ const styles = StyleSheet.create({
   },
   markdownImageWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
   markdownFileWrap: { width: '100%', alignSelf: 'stretch', marginVertical: 6 },
+  deletedFileName: {
+    color: Colors.textMuted,
+    textDecorationLine: 'line-through',
+    textDecorationColor: Colors.textMuted,
+    fontFamily: Fonts.regular,
+  },
 });

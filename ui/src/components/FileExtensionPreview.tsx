@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
+import { isDeletedFileHref, withDeletedFileSuffix } from '../utils/deletedMedia';
 import { displayFileName, fileKindStyle } from '../utils/fileKind';
 
 export function FileExtensionIcon({
@@ -13,7 +14,8 @@ export function FileExtensionIcon({
   size?: number;
 }) {
   const kind = fileKindStyle(url, fileName);
-  return <Ionicons name={kind.icon} size={size} color={kind.color} />;
+  const deleted = isDeletedFileHref(url);
+  return <Ionicons name={kind.icon} size={size} color={deleted ? Colors.textMuted : kind.color} />;
 }
 
 export function FileExtensionPreview({
@@ -28,15 +30,23 @@ export function FileExtensionPreview({
   style?: StyleProp<ViewStyle>;
 }) {
   const kind = fileKindStyle(url, fileName);
-  const name = displayFileName(url, fileName);
+  const deleted = isDeletedFileHref(url);
+  const name = deleted
+    ? withDeletedFileSuffix(displayFileName(url, fileName))
+    : displayFileName(url, fileName);
   const dark = variant === 'viewer';
   const iconSize = variant === 'viewer' ? 56 : variant === 'inline' ? 22 : 36;
+  const iconColor = deleted ? (dark ? 'rgba(255,255,255,0.45)' : Colors.textMuted) : dark ? '#fff' : kind.color;
 
   if (variant === 'inline') {
     return (
       <View style={[styles.inline, style]}>
-        <Ionicons name={kind.icon} size={iconSize} color={kind.color} />
-        <Text style={styles.inlineName} numberOfLines={1} ellipsizeMode="middle">
+        <Ionicons name={kind.icon} size={iconSize} color={iconColor} />
+        <Text
+          style={[styles.inlineName, deleted && styles.deletedName]}
+          numberOfLines={1}
+          ellipsizeMode="middle"
+        >
           {name}
         </Text>
       </View>
@@ -45,9 +55,14 @@ export function FileExtensionPreview({
 
   return (
     <View style={[styles.stack, dark && styles.stackDark, style]}>
-      <Ionicons name={kind.icon} size={iconSize} color={dark ? '#fff' : kind.color} />
+      <Ionicons name={kind.icon} size={iconSize} color={iconColor} />
       <Text
-        style={[styles.name, dark && styles.nameDark, variant === 'viewer' && styles.nameViewer]}
+        style={[
+          styles.name,
+          dark && !deleted && styles.nameDark,
+          variant === 'viewer' && styles.nameViewer,
+          deleted && (dark ? styles.deletedNameDark : styles.deletedName),
+        ]}
         numberOfLines={variant === 'viewer' ? 3 : 2}
         ellipsizeMode="middle"
       >
@@ -89,6 +104,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     fontFamily: Fonts.semiBold,
+  },
+  deletedName: {
+    color: Colors.textMuted,
+    textDecorationLine: 'line-through',
+    textDecorationColor: Colors.textMuted,
+  },
+  deletedNameDark: {
+    color: 'rgba(255,255,255,0.45)',
+    textDecorationLine: 'line-through',
+    textDecorationColor: 'rgba(255,255,255,0.45)',
   },
   inline: {
     flexDirection: 'row',

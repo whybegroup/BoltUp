@@ -85,7 +85,7 @@ export function KeyboardFormRoot({
   ...rest
 }: KeyboardFormRootProps) {
   if (Platform.OS === 'web') {
-    return <>{children}</>;
+    return <View style={[{ flex: 1 }, style]}>{children}</View>;
   }
   return (
     <KeyboardAvoidingView

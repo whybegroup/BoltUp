@@ -339,7 +339,13 @@ export class GroupController extends Controller {
   @SuccessResponse('200', 'OK')
   public async joinByInviteCode(
     @Body() body: { inviteCode: string; userId: string }
-  ): Promise<{ success: boolean; groupId: string; groupName: string; status: 'joined' | 'pending' }> {
+  ): Promise<{
+    success: boolean;
+    groupId: string;
+    groupName: string;
+    status: 'joined' | 'pending';
+    alreadyMember?: boolean;
+  }> {
     if (!body?.inviteCode?.trim()) {
       this.setStatus(400);
       throw new Error('inviteCode is required');
@@ -370,7 +376,13 @@ export class GroupController extends Controller {
   public async joinGroup(
     @Path() id: string,
     @Body() body: { userId: string }
-  ): Promise<{ success: boolean; groupId: string; groupName: string; status: 'joined' | 'pending' }> {
+  ): Promise<{
+    success: boolean;
+    groupId: string;
+    groupName: string;
+    status: 'joined' | 'pending';
+    alreadyMember?: boolean;
+  }> {
     if (!body?.userId) {
       this.setStatus(400);
       throw new Error('userId is required');

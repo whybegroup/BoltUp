@@ -66,6 +66,12 @@ export function isImageFileUrl(url: string, fileName?: string): boolean {
 export function displayFileName(url: string, fileName?: string): string {
   const named = fileName?.trim();
   const ext = extensionFromFileNameOrUrl(named || url);
+  if (/^moijia:/i.test(url.trim())) {
+    if (named && !/^(image|photo|img|attachment|deleted)$/i.test(named) && !UUID_FILE.test(named)) {
+      return named;
+    }
+    return 'File';
+  }
   if (named && !/^(image|photo|img|attachment)$/i.test(named) && !UUID_FILE.test(named)) {
     if (named.includes('.') || !ext) return named;
     return `${named}.${ext}`;

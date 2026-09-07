@@ -8,6 +8,7 @@ import {
   TextInput,
   Platform,
   Pressable,
+  useWindowDimensions,
   type ScrollView,
   type TextStyle,
 } from 'react-native';
@@ -20,6 +21,7 @@ import { useAppRouter as useRouter } from '../hooks/useAppRouter';
 import { useGuardedPress } from '../hooks/useGuardedPress';
 import { Colors, Fonts, Radius } from '../constants/theme';
 import { useJoinByInviteCode } from '../hooks/api';
+import { showJoinGroupToast } from '../utils/joinGroupToast';
 import { withReturnTo } from '../utils/navigationReturn';
 import { NoGroupForActionModal } from './NoGroupForActionModal';
 
@@ -51,6 +53,7 @@ export function CreateOrJoinButton({
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const joinByCode = useJoinByInviteCode();
   const [menuOpen, setMenuOpen] = useState(false);
   const [noGroupFor, setNoGroupFor] = useState<'event' | 'poll' | null>(null);
@@ -114,13 +117,9 @@ export function CreateOrJoinButton({
     joinByCode.mutate(
       { inviteCode: inviteCode.trim(), userId },
       {
-        onSuccess: (data: { groupName?: string; status?: string }) => {
+        onSuccess: (data: { groupName?: string; status?: string; alreadyMember?: boolean }) => {
           setInviteCode('');
-          const msg =
-            data?.status === 'joined'
-              ? `Joined ${data.groupName || 'the group'}`
-              : `Submitted request to join ${data.groupName || 'the group'}`;
-          Toast.show({ type: 'success', text1: msg });
+          showJoinGroupToast(data);
           closeMenu();
         },
         onError: (e: any) => {
@@ -150,7 +149,18 @@ export function CreateOrJoinButton({
 
       {mode === 'group' ? (
         <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={closeMenu} {...edgeToEdgeModalProps}>
-          <KeyboardFormRoot style={styles.menuRoot}>
+          <KeyboardFormRoot
+            style={[
+              styles.menuRoot,
+              Platform.OS === 'web' && {
+                position: 'fixed' as const,
+                top: 0,
+                left: 0,
+                width: windowWidth,
+                height: windowHeight,
+              },
+            ]}
+          >
             <Pressable style={styles.menuBackdropFill} onPress={closeMenu} />
             <View style={styles.menuCardOuter}>
               <View style={styles.menuCard}>

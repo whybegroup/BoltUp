@@ -21,7 +21,9 @@ import {
   toRenderableImageUrl,
 } from '../services/resolveImageViewUrls';
 import { displayFileName, fileViewerKind } from '../utils/fileKind';
+import { isDeletedFileHref, isDeletedImageSrc } from '../utils/deletedMedia';
 import { FileExtensionPreview } from './FileExtensionPreview';
+import { DeletedImagePlaceholder } from './DeletedPostMedia';
 import { FileViewerPdf } from './FileViewerPdf';
 import { FileViewerHtml } from './FileViewerHtml';
 import { FileViewerDocument } from './FileViewerDocument';
@@ -266,6 +268,16 @@ export function FileViewerBody({ storedUrl, fileName, urlMap, active }: Props) {
   const viewUrl = useResolvedViewUrl(storedUrl, urlMap);
 
   if (!storedUrl?.trim()) return null;
+  if (isDeletedImageSrc(storedUrl)) {
+    return (
+      <View style={styles.center}>
+        <DeletedImagePlaceholder style={styles.deletedImage} />
+      </View>
+    );
+  }
+  if (isDeletedFileHref(storedUrl)) {
+    return <FileExtensionPreview url={storedUrl} fileName={fileName} variant="viewer" />;
+  }
   if (!viewUrl) {
     return (
       <View style={styles.center}>
@@ -297,6 +309,7 @@ export function FileViewerBody({ storedUrl, fileName, urlMap, active }: Props) {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  deletedImage: { width: 160, height: 160 },
   audioWrap: {
     flex: 1,
     width: '100%',

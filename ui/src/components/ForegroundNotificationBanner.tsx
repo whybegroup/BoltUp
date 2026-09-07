@@ -140,6 +140,7 @@ export function ForegroundNotificationBanner() {
     hide();
     requestAnimationFrame(() => {
       navigateFromNotificationPayload(router, pathname, {
+        type: payload.type,
         dest: payload.dest,
         eventId: payload.eventId,
         groupId: payload.groupId,

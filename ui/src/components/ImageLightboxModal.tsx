@@ -26,7 +26,9 @@ import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Fonts, Radius } from '../constants/theme';
 import { edgeToEdgeModalProps } from './edgeToEdgeModalProps';
-import { ResolvableImage } from './ResolvableImage';
+import { FileExtensionPreview } from './FileExtensionPreview';
+import { PostMediaImage } from './DeletedPostMedia';
+import { isDeletedFileHref, isDeletedImageSrc } from '../utils/deletedMedia';
 import { shareImage } from '../services/downloadImage';
 import { displayFileName, isImageFileUrl } from '../utils/fileKind';
 import { FileViewerBody } from './FileViewerBody';
@@ -530,14 +532,14 @@ export function ImageLightboxModal({
                         i === safeIndex ? zoomStyle : null,
                       ]}
                     >
-                      {isImageFileUrl(url, names?.[i]) ? (
-                        <ResolvableImage
+                      {isDeletedImageSrc(url) || isImageFileUrl(url, names?.[i]) ? (
+                        <PostMediaImage
                           storedUrl={url}
-                          urlMap={normalizedUrlMap}
                           style={styles.image}
                           resizeMode="contain"
-                          placeholderStyle={styles.imagePlaceholder}
                         />
+                      ) : isDeletedFileHref(url) ? (
+                        <FileExtensionPreview url={url} fileName={names?.[i]} variant="viewer" />
                       ) : Math.abs(i - safeIndex) <= 1 ? (
                         <FileViewerBody
                           storedUrl={url}

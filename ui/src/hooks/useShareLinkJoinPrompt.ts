@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { Alert, Platform } from 'react-native';
 import { type Href } from 'expo-router';
-import Toast from 'react-native-toast-message';
 import { useAppRouter as useRouter } from './useAppRouter';
 import { useJoinGroup } from './api/useGroups';
 import type { NotGroupMemberInfo } from '../utils/apiErrors';
+import { showJoinGroupToast } from '../utils/joinGroupToast';
 
 export type ShareLinkKind = 'event' | 'poll' | 'post';
 
@@ -80,12 +80,15 @@ export function useShareLinkJoinPrompt(opts: {
         {
           onSuccess: (data) => {
             const name = data.groupName || info.groupName;
+            showJoinGroupToast({
+              groupName: name,
+              status: data.status,
+              alreadyMember: data.alreadyMember,
+            });
             if (data.status === 'joined') {
-              Toast.show({ type: 'success', text1: `Joined ${name}` });
               onJoinedRef.current();
               return;
             }
-            Toast.show({ type: 'success', text1: `Submitted request to join ${name}` });
             router.replace(`/(tabs)/groups/${info.groupId}` as Href);
           },
           onError: (e: unknown) => {

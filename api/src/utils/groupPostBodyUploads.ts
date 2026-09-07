@@ -1,6 +1,10 @@
 /** Matches forum post attachment block delimiter in stored bodies. */
 export const GROUP_POST_ATTACHMENT_MARKER = '[[MOIJIA_POST_ATTACHMENTS]]';
 
+/** Left in post/comment bodies when a stored file is deleted from group storage. */
+export const FORUM_DELETED_IMAGE_SRC = 'moijia:deleted-image';
+export const FORUM_DELETED_FILE_HREF = 'moijia:deleted-file';
+
 export type ForumBodyUpload = { url: string; fileName?: string };
 
 function fileNameFromAlt(alt: string | undefined): string | undefined {
@@ -31,18 +35,10 @@ function parseFileFromLine(trimmedLine: string): ForumBodyUpload | null {
   return { url, fileName: fileNameFromAlt(m[1]) };
 }
 
-function parseImageUrlFromLine(trimmedLine: string): string | null {
-  return parseImageFromLine(trimmedLine)?.url ?? null;
-}
-
-function parseFileUrlFromLine(trimmedLine: string): string | null {
-  return parseFileFromLine(trimmedLine)?.url ?? null;
-}
-
 function addUpload(map: Map<string, ForumBodyUpload>, item: ForumBodyUpload | null) {
   if (!item) return;
   const url = item.url?.trim();
-  if (!url) return;
+  if (!url || !/^https?:\/\//i.test(url)) return;
   const name = item.fileName?.trim();
   const prev = map.get(url);
   if (!prev) {
@@ -141,32 +137,52 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function stripAttachmentBlockUrl(block: string, target: string): string {
+function safeFileLabel(name: string | undefined): string {
+  const n = (name || 'File').replace(/[\[\]]/g, '').trim();
+  return n || 'File';
+}
+
+function imageTombstone(): string {
+  return `![Deleted](${FORUM_DELETED_IMAGE_SRC})`;
+}
+
+function fileTombstone(name: string | undefined): string {
+  return `[${safeFileLabel(name)}](${FORUM_DELETED_FILE_HREF})`;
+}
+
+function replaceAttachmentBlockUrl(block: string, target: string): string {
   return block
     .split(/\r?\n/)
-    .filter((line) => {
+    .map((line) => {
       const trimmed = line.trim();
-      if (!trimmed) return false;
-      if (trimmed === target) return false;
-      if (parseImageUrlFromLine(trimmed) === target) return false;
-      if (parseFileUrlFromLine(trimmed) === target) return false;
-      return true;
+      if (!trimmed) return '';
+      const img = parseImageFromLine(trimmed);
+      if (img?.url === target) return imageTombstone();
+      const file = parseFileFromLine(trimmed);
+      if (file?.url === target) return fileTombstone(file.fileName);
+      if (trimmed === target) {
+        return isLikelyUploadedImageUrl(target) ? imageTombstone() : fileTombstone('File');
+      }
+      return trimmed;
     })
+    .filter(Boolean)
     .join('\n');
 }
 
-function stripMarkdownUrl(src: string, target: string): string {
+function replaceMarkdownUrl(src: string, target: string): string {
   const escaped = escapeRegExp(target);
-  let out = src.replace(new RegExp(`!\\[[^\\]]*\\]\\(${escaped}\\)`, 'g'), '');
-  out = out.replace(new RegExp(`(?<!!)\\[[^\\]]*\\]\\(${escaped}\\)`, 'g'), '');
+  let out = src.replace(new RegExp(`!\\[[^\\]]*\\]\\(${escaped}\\)`, 'g'), imageTombstone());
+  out = out.replace(new RegExp(`(?<!!)\\[([^\\]]*)\\]\\(${escaped}\\)`, 'g'), (_m, name: string) =>
+    fileTombstone(name)
+  );
   out = out
     .split(/\r?\n/)
-    .filter((line) => line.trim() !== target)
+    .map((line) => (line.trim() === target ? imageTombstone() : line))
     .join('\n');
   return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** Remove one upload URL from a group post/comment body (markdown + attachment block). */
+/** Replace one upload URL in a group post/comment body with a deleted-media tombstone. */
 export function removeUploadUrlFromForumBody(body: string | null | undefined, url: string): string {
   const raw = body ?? '';
   const target = url.trim();
@@ -176,21 +192,21 @@ export function removeUploadUrlFromForumBody(body: string | null | undefined, ur
   const markerSep = `\n${marker}\n`;
 
   if (raw.startsWith(`${marker}\n`)) {
-    const remaining = stripAttachmentBlockUrl(raw.slice(marker.length + 1), target);
+    const remaining = replaceAttachmentBlockUrl(raw.slice(marker.length + 1), target);
     return remaining ? `${marker}\n${remaining}` : '';
   }
 
   const idx = raw.indexOf(markerSep);
   if (idx !== -1) {
-    const md = stripMarkdownUrl(raw.slice(0, idx).trimEnd(), target);
-    const remaining = stripAttachmentBlockUrl(raw.slice(idx + markerSep.length), target);
+    const md = replaceMarkdownUrl(raw.slice(0, idx).trimEnd(), target);
+    const remaining = replaceAttachmentBlockUrl(raw.slice(idx + markerSep.length), target);
     if (!md && !remaining) return '';
     if (!remaining) return md;
     if (!md) return `${marker}\n${remaining}`;
     return `${md}${markerSep}${remaining}`;
   }
 
-  return stripMarkdownUrl(raw, target);
+  return replaceMarkdownUrl(raw, target);
 }
 
 const IMAGE_URL_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif)(\?.*)?$/i;

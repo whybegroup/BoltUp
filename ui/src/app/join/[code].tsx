@@ -3,9 +3,9 @@ import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'rea
 import { useLocalSearchParams, type Href } from 'expo-router';
 import { useAppRouter as useRouter } from '../../hooks/useAppRouter';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Toast from 'react-native-toast-message';
 import { Colors, Fonts } from '../../constants/theme';
 import { useJoinByInviteCode } from '../../hooks/api';
+import { showJoinGroupToast } from '../../utils/joinGroupToast';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCurrentUserContext } from '../../contexts/CurrentUserContext';
 import { firstSearchParam } from '../../utils/navigationReturn';
@@ -35,12 +35,13 @@ export default function JoinByInviteCodeScreen() {
     joinByCode.mutate(
       { inviteCode: code, userId },
       {
-        onSuccess: (data: { groupId?: string; groupName?: string; status?: string }) => {
-          const msg =
-            data?.status === 'joined'
-              ? `Joined ${data.groupName || 'the group'}`
-              : `Submitted request to join ${data.groupName || 'the group'}`;
-          Toast.show({ type: 'success', text1: msg });
+        onSuccess: (data: {
+          groupId?: string;
+          groupName?: string;
+          status?: string;
+          alreadyMember?: boolean;
+        }) => {
+          showJoinGroupToast(data);
           if (data.groupId) {
             router.replace(`/(tabs)/groups/${data.groupId}` as Href);
           } else {

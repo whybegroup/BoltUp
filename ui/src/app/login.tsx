@@ -267,8 +267,12 @@ export default function LoginScreen() {
               styles.modalCard,
               { height: sheetHeight, paddingBottom: Math.max(24, insets.bottom + 12) },
             ]}
+            onStartShouldSetResponder={() => true}
           >
-            <Pressable style={styles.modalCardPress} onPress={Keyboard.dismiss}>
+            <Pressable
+              style={styles.modalCardPress}
+              onPress={Platform.OS === 'web' ? undefined : Keyboard.dismiss}
+            >
             <View style={styles.modalTopBar}>
               <TouchableOpacity
                 onPress={closeEmail}
