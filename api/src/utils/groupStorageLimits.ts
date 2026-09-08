@@ -21,7 +21,10 @@ export function storageBytesToDb(n: number): string {
 
 export function groupMaxStorageBytes(raw: unknown): number {
   const n = storageBytesFromDb(raw);
-  return n > 0 ? n : DEFAULT_GROUP_MAX_STORAGE_BYTES;
+  if (n <= 0 || n < MIN_GROUP_STORAGE_LIMIT_BYTES) {
+    return DEFAULT_GROUP_MAX_STORAGE_BYTES;
+  }
+  return n;
 }
 
 export function formatStorageBytes(bytes: number): string {

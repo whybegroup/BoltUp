@@ -1,7 +1,7 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../constants/theme';
-import { DEFAULT_GROUP_MAX_STORAGE_BYTES, formatStorageBytes } from '../utils/groupStorage';
+import { formatStorageBytes, resolveGroupMaxStorageBytes } from '../utils/groupStorage';
 import {
   GROUP_STORAGE_CATEGORY_COLORS,
   GROUP_STORAGE_CATEGORY_LABELS,
@@ -21,7 +21,7 @@ export function GroupStorageUsageBar({
   onPress?: () => void;
   showSectionLabel?: boolean;
 }) {
-  const max = maxBytes && maxBytes > 0 ? maxBytes : DEFAULT_GROUP_MAX_STORAGE_BYTES;
+  const max = resolveGroupMaxStorageBytes(maxBytes);
   const used = Math.max(0, usedBytes);
   const unused = Math.max(0, max - used);
   const hasBreakdown = categories != null;

@@ -43,11 +43,13 @@ import {
   pickDeferredCoverPhotoNative,
   pickDeferredCoverPhotoFromCamera,
   createWebDeferredCoverPhoto,
+  keepWebFilesThatFit,
   prepareWebImageFiles,
   uploadCoverPhotoDrafts,
   revokeCoverPhotoDraftPreview,
   coverPhotoDraftDisplayUri,
   isCancelled,
+  ensureGroupCanUpload,
   type CoverPhotoDraft,
 } from '../services/pickAndUploadImage';
 import { firstSearchParam, parseReturnToParam } from '../utils/navigationReturn';
@@ -321,6 +323,7 @@ export default function CreatePollScreen() {
 
   const addCoverPhotoFromPicker = async () => {
     if (!currentUserId) return;
+    if (!(await ensureGroupCanUpload(currentUserId, form.groupId))) return;
     if (Platform.OS === 'web') {
       coverPhotoFileInputRef.current?.click();
       return;
@@ -328,7 +331,7 @@ export default function CreatePollScreen() {
     if (coverPhotoBusy) return;
     setCoverPhotoBusy(true);
     try {
-      const picked = await pickDeferredCoverPhotoNative();
+      const picked = await pickDeferredCoverPhotoNative({ userId: currentUserId, groupId: form.groupId });
       if (picked?.length) {
         setForm((p) => ({
           ...p,
@@ -349,9 +352,10 @@ export default function CreatePollScreen() {
 
   const addCoverPhotoFromCamera = async () => {
     if (!currentUserId || coverPhotoBusy || Platform.OS === 'web') return;
+    if (!(await ensureGroupCanUpload(currentUserId, form.groupId))) return;
     setCoverPhotoBusy(true);
     try {
-      const picked = await pickDeferredCoverPhotoFromCamera();
+      const picked = await pickDeferredCoverPhotoFromCamera({ userId: currentUserId, groupId: form.groupId });
       if (picked) {
         setForm((p) => ({
           ...p,
@@ -377,7 +381,12 @@ export default function CreatePollScreen() {
     e.target.value = '';
     if (!files.length || !currentUserId) return;
     try {
-      const prepared = await prepareWebImageFiles(files);
+      const prepared = await keepWebFilesThatFit(
+        currentUserId,
+        form.groupId,
+        await prepareWebImageFiles(files)
+      );
+      if (!prepared.length) return;
       setForm((p) => ({
         ...p,
         coverPhotoDrafts: [
@@ -571,6 +580,7 @@ export default function CreatePollScreen() {
           groupId: form.groupId,
         });
       } catch (e) {
+        if (isCancelled(e)) return;
         Alert.alert('Error', e instanceof Error ? e.message : 'Failed to upload photos. Try again.');
         return;
       }

@@ -65,11 +65,14 @@ export class S3UploadService {
     }
 
     const groupId = input.groupId?.trim();
-    if (groupId && input.contentLength != null) {
-      if (!Number.isFinite(input.contentLength) || input.contentLength < 0) {
-        throw Object.assign(new Error('contentLength must be a non-negative number'), { status: 400 });
+    if (groupId) {
+      const extra = input.contentLength;
+      if (extra == null || !Number.isFinite(extra) || extra < 0) {
+        throw Object.assign(new Error('contentLength is required when uploading to a group'), {
+          status: 400,
+        });
       }
-      await groupStorage.assertCanAddBytes(groupId, input.userId, input.contentLength);
+      await groupStorage.assertCanAddBytes(groupId, input.userId, extra);
     }
 
     const ext = extensionFromFilenameOrType(input.filename, input.contentType);

@@ -18,7 +18,9 @@ import {
   uploadPickedImageAsset,
   uploadWebImageFile,
   prepareWebImageFiles,
+  keepWebFilesThatFit,
   isCancelled,
+  ensureGroupCanUpload,
 } from '../services/pickAndUploadImage';
 import { uid } from '../utils/api-helpers';
 import { withUploadSession } from '../services/uploadProgress';
@@ -80,10 +82,11 @@ export function PhotoUrlOrUploadModal({
   };
 
   const handleNativeUpload = async () => {
+    if (!(await ensureGroupCanUpload(userId, groupId))) return;
     setBusy(true);
     const previewIds: string[] = [];
     try {
-      const assets = await pickImagesFromLibrary({ multiple: true });
+      const assets = await pickImagesFromLibrary({ multiple: true, userId, groupId });
       if (onPickPreview) {
         onClose();
         setBusy(false);
@@ -121,7 +124,8 @@ export function PhotoUrlOrUploadModal({
     }
   };
 
-  const triggerWebFilePicker = () => {
+  const triggerWebFilePicker = async () => {
+    if (!(await ensureGroupCanUpload(userId, groupId))) return;
     fileInputRef.current?.click();
   };
 
@@ -131,7 +135,8 @@ export function PhotoUrlOrUploadModal({
     if (!selected.length) return;
     let files: File[];
     try {
-      files = await prepareWebImageFiles(selected);
+      files = await keepWebFilesThatFit(userId, groupId, await prepareWebImageFiles(selected));
+      if (!files.length) return;
     } catch (err) {
       if (!isCancelled(err)) {
         Alert.alert('Upload', err instanceof Error ? err.message : 'Upload failed');

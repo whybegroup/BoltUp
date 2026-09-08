@@ -87,6 +87,8 @@ import {
   revokeCoverPhotoDraftPreview,
   uploadCoverPhotoDrafts,
   uploadPickedFileAsset,
+  isCancelled,
+  ensureGroupCanUpload,
 } from '../services/pickAndUploadImage';
 import {
   loadForumGroupDraft,
@@ -1441,6 +1443,12 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       const hasContent =
         raw.trim().length > 0 || photoDrafts.length > 0 || pendingFiles.length > 0;
       if (!hasContent) return;
+      if (
+        (photoDrafts.length > 0 || pendingFiles.length > 0) &&
+        !(await ensureGroupCanUpload(currentUserId, groupId))
+      ) {
+        return;
+      }
       try {
         setUploadingCommentPhotoPostId(postId);
         const photoUrls = await uploadCoverPhotoDrafts(currentUserId, photoDrafts, { groupId });
@@ -1467,6 +1475,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         setDraftCommentPendingFilesByPost((prev) => ({ ...prev, [postId]: [] }));
         setReplyTargetByPost((prev) => ({ ...prev, [postId]: null }));
       } catch (e) {
+        if (isCancelled(e)) return;
         Alert.alert('Comment', e instanceof Error ? e.message : 'Failed to post comment');
       } finally {
         setUploadingCommentPhotoPostId((cur) => (cur === postId ? null : cur));
@@ -1481,6 +1490,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
       mentionMemberRows,
       replyTargetByPost,
       uploadingCommentPhotoPostId,
+      groupId,
     ]
   );
 
@@ -1503,7 +1513,10 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
   const pickCommentPhotoForPost = useCallback(
     async (postId: string) => {
       if (uploadingCommentPhotoPostId === postId) return;
-      const picked = await pickDeferredCoverPhotoNative();
+      const picked = await pickDeferredCoverPhotoNative({
+        userId: currentUserId ?? undefined,
+        groupId,
+      });
       if (!picked?.length) return;
       for (const item of picked) {
         addCommentPhotoDraftForPost(postId, {
@@ -1513,13 +1526,16 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         });
       }
     },
-    [addCommentPhotoDraftForPost, uploadingCommentPhotoPostId]
+    [addCommentPhotoDraftForPost, currentUserId, groupId, uploadingCommentPhotoPostId]
   );
 
   const takeCommentPhotoForPost = useCallback(
     async (postId: string) => {
       if (uploadingCommentPhotoPostId === postId) return;
-      const picked = await pickDeferredCoverPhotoFromCamera();
+      const picked = await pickDeferredCoverPhotoFromCamera({
+        userId: currentUserId ?? undefined,
+        groupId,
+      });
       if (!picked) return;
       addCommentPhotoDraftForPost(postId, {
         kind: 'pending',
@@ -1527,14 +1543,17 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         pending: picked.pending,
       });
     },
-    [addCommentPhotoDraftForPost, uploadingCommentPhotoPostId]
+    [addCommentPhotoDraftForPost, currentUserId, groupId, uploadingCommentPhotoPostId]
   );
 
   const attachCommentFileForPost = useCallback(
     async (postId: string) => {
       if (uploadingCommentPhotoPostId === postId) return;
       try {
-        const assets = await pickFilesFromDevice();
+        const assets = await pickFilesFromDevice({
+          userId: currentUserId ?? undefined,
+          groupId,
+        });
         setDraftCommentPendingFilesByPost((prev) => ({
           ...prev,
           [postId]: [
@@ -1547,7 +1566,7 @@ export function GroupForumView({ groupId, focusPostId, focusCommentId }: GroupFo
         Alert.alert('Attach file', e instanceof Error ? e.message : 'Could not attach file');
       }
     },
-    [uploadingCommentPhotoPostId]
+    [currentUserId, groupId, uploadingCommentPhotoPostId]
   );
 
   const beginEditComment = useCallback((postId: string, c: GroupPostComment) => {

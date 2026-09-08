@@ -18,6 +18,8 @@ type AddImageButtonProps = {
   onTakePhoto: () => Promise<void> | void;
   onChooseFromLibrary: () => Promise<void> | void;
   onInsertLink: (url: string) => Promise<void> | void;
+  /** Return false to keep the options sheet closed (e.g. no group selected). */
+  onBeforeOpen?: () => boolean;
 };
 
 export function AddImageButton({
@@ -32,6 +34,7 @@ export function AddImageButton({
   onTakePhoto,
   onChooseFromLibrary,
   onInsertLink,
+  onBeforeOpen,
 }: AddImageButtonProps) {
   const [showOptions, setShowOptions] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -44,6 +47,7 @@ export function AddImageButton({
   };
 
   const openOptions = () => {
+    if (onBeforeOpen && !onBeforeOpen()) return;
     setShowOptions(true);
   };
 

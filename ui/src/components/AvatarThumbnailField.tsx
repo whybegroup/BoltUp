@@ -16,6 +16,7 @@ import {
   uploadPickedImageAsset,
   uploadWebImageFile,
   isCancelled,
+  ensureGroupCanUpload,
   type PendingAvatarFile,
   type PickedImageAsset,
 } from '../services/pickAndUploadImage';
@@ -101,7 +102,7 @@ export function AvatarThumbnailField({
     if (!canUpload) return;
     setPickBusy(true);
     try {
-      const asset = await pickImageFromLibrary();
+      const asset = await pickImageFromLibrary({ userId, groupId });
       if (defer) {
         handleDeferredFileChosen(asset.uri, asset);
         onThumbnailChange(asset.uri);
@@ -122,8 +123,9 @@ export function AvatarThumbnailField({
     }
   };
 
-  const onUploadPress = () => {
+  const onUploadPress = async () => {
     if (!canUpload || pickBusy) return;
+    if (!(await ensureGroupCanUpload(userId, groupId))) return;
     if (Platform.OS === 'web') {
       fileInputRef.current?.click();
     } else {

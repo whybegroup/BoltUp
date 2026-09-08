@@ -3,9 +3,17 @@ import { File as ExpoFile } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import { StorageService } from '@moijia/client';
+import { GroupsService, StorageService } from '@moijia/client';
 import * as FileSystem from 'expo-file-system/legacy';
 import { apiErrorMessage } from '../utils/apiErrors';
+import {
+  GROUP_STORAGE_CHECK_FAILED_MESSAGE,
+  GROUP_STORAGE_FULL_MESSAGE,
+  GROUP_STORAGE_FULL_TITLE,
+  GROUP_STORAGE_UNKNOWN_SIZE_MESSAGE,
+  groupStorageDoesNotFitMessage,
+  groupStorageRemainingBytes,
+} from '../utils/groupStorage';
 import {
   abandonUploadSessionIfAuto,
   completeUploadFile,
@@ -15,6 +23,62 @@ import {
 } from './uploadProgress';
 
 export type UploadOpts = { groupId?: string };
+
+function showStorageQuotaAlert(message: string): void {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.alert(`${GROUP_STORAGE_FULL_TITLE}\n\n${message}`);
+    return;
+  }
+  Alert.alert(GROUP_STORAGE_FULL_TITLE, message);
+}
+
+async function loadGroupStorageUsage(
+  userId: string,
+  groupId: string
+): Promise<{ used: unknown; max: unknown } | null> {
+  try {
+    const breakdown = await GroupsService.getStorageBreakdown(groupId, userId);
+    return { used: breakdown.usedBytes, max: breakdown.maxBytes };
+  } catch {
+    try {
+      const group = await GroupsService.getGroup(groupId, userId);
+      return { used: group.usedStorageBytes, max: group.maxStorageBytes };
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** Returns false after an alert when remaining space is 0 or smaller than `additionalBytes`. */
+export async function ensureGroupCanUpload(
+  userId?: string | null,
+  groupId?: string | null,
+  additionalBytes = 0
+): Promise<boolean> {
+  const uid = userId?.trim();
+  const gid = groupId?.trim();
+  if (!gid) return true;
+  if (!uid) {
+    showStorageQuotaAlert(GROUP_STORAGE_CHECK_FAILED_MESSAGE);
+    return false;
+  }
+  const usage = await loadGroupStorageUsage(uid, gid);
+  if (!usage) {
+    showStorageQuotaAlert(GROUP_STORAGE_CHECK_FAILED_MESSAGE);
+    return false;
+  }
+  const remaining = groupStorageRemainingBytes(usage.used, usage.max);
+  const extra = Math.max(0, Math.floor(additionalBytes));
+  if (remaining <= 0) {
+    showStorageQuotaAlert(GROUP_STORAGE_FULL_MESSAGE);
+    return false;
+  }
+  if (extra > remaining) {
+    showStorageQuotaAlert(groupStorageDoesNotFitMessage(extra, remaining));
+    return false;
+  }
+  return true;
+}
 
 function isCancelled(e: unknown): boolean {
   return e instanceof Error && e.message === 'cancelled';
@@ -168,15 +232,20 @@ async function convertPickedImages(assets: PickedImageAsset[]): Promise<PickedIm
 }
 
 /** Opens the image library; throws `cancelled` if the user backs out. */
-export async function pickImageFromLibrary(): Promise<PickedImageAsset> {
-  const assets = await pickImagesFromLibrary({ multiple: false });
+export async function pickImageFromLibrary(opts?: UploadOpts & { userId?: string }): Promise<PickedImageAsset> {
+  const assets = await pickImagesFromLibrary({ multiple: false, userId: opts?.userId, groupId: opts?.groupId });
   return assets[0];
 }
 
 /** Opens the image library. Multiple selection by default. Photos are compressed. */
 export async function pickImagesFromLibrary(opts?: {
   multiple?: boolean;
+  userId?: string;
+  groupId?: string;
 }): Promise<PickedImageAsset[]> {
+  if (!(await ensureGroupCanUpload(opts?.userId, opts?.groupId))) {
+    throw new Error('cancelled');
+  }
   const multiple = opts?.multiple ?? true;
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (perm.status !== 'granted') {
@@ -196,7 +265,10 @@ export async function pickImagesFromLibrary(opts?: {
   }
 
   const picked = result.assets.map(pickerAssetToPicked);
-  return convertPickedImages(picked);
+  const converted = await convertPickedImages(picked);
+  const assets = await keepAssetsThatFit(opts?.userId, opts?.groupId, converted);
+  if (!assets.length) throw new Error('cancelled');
+  return assets;
 }
 
 /** Opens the camera; throws `cancelled` if the user backs out. */
@@ -222,7 +294,10 @@ async function pickCameraImageForUpload(): Promise<PickedImageAsset> {
 }
 
 /** Opens the document picker; throws `cancelled` if the user backs out. */
-export async function pickFilesFromDevice(): Promise<PickedFileAsset[]> {
+export async function pickFilesFromDevice(opts?: UploadOpts & { userId?: string }): Promise<PickedFileAsset[]> {
+  if (!(await ensureGroupCanUpload(opts?.userId, opts?.groupId))) {
+    throw new Error('cancelled');
+  }
   const result = await DocumentPicker.getDocumentAsync({
     multiple: true,
     copyToCacheDirectory: true,
@@ -231,11 +306,14 @@ export async function pickFilesFromDevice(): Promise<PickedFileAsset[]> {
   if (result.canceled || !result.assets?.length) {
     throw new Error('cancelled');
   }
-  return result.assets.slice(0, FILE_SELECTION_LIMIT).map((asset) => ({
+  const picked = result.assets.slice(0, FILE_SELECTION_LIMIT).map((asset) => ({
     uri: asset.uri,
     contentType: asset.mimeType || 'application/octet-stream',
     fileName: asset.name?.trim() || `file-${Date.now()}`,
   }));
+  const assets = await keepAssetsThatFit(opts?.userId, opts?.groupId, picked);
+  if (!assets.length) throw new Error('cancelled');
+  return assets;
 }
 
 export async function pickFileFromDevice(): Promise<PickedFileAsset> {
@@ -363,13 +441,78 @@ async function putSource(url: string, source: PutSource, contentType: string): P
   return putWithXhr(url, body, contentType);
 }
 
+async function localUriByteLength(uri: string): Promise<number> {
+  try {
+    const size = new ExpoFile(uri).size;
+    if (typeof size === 'number' && size > 0) return size;
+  } catch {
+    /* fall through */
+  }
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (info.exists && 'size' in info && typeof info.size === 'number' && info.size > 0) {
+      return info.size;
+    }
+  } catch {
+    /* fall through */
+  }
+  const body = await readUploadBody(uri);
+  return bodyByteLength(body);
+}
+
 async function sourceForLocalUri(uri: string): Promise<PutSource> {
   if (Platform.OS === 'web') {
     const body = await readUploadBody(uri);
     return { kind: 'body', body, byteLength: bodyByteLength(body) };
   }
-  const file = new ExpoFile(uri);
-  return { kind: 'uri', uri, byteLength: file.size || 0 };
+  const byteLength = await localUriByteLength(uri);
+  if (byteLength <= 0) {
+    const body = await readUploadBody(uri);
+    return { kind: 'body', body, byteLength: bodyByteLength(body) };
+  }
+  return { kind: 'uri', uri, byteLength };
+}
+
+async function keepAssetsThatFit<T extends { uri: string }>(
+  userId: string | undefined,
+  groupId: string | undefined,
+  assets: T[]
+): Promise<T[]> {
+  if (!groupId?.trim() || assets.length === 0) return assets;
+  if (!userId?.trim()) {
+    showStorageQuotaAlert(GROUP_STORAGE_CHECK_FAILED_MESSAGE);
+    return [];
+  }
+  const usage = await loadGroupStorageUsage(userId.trim(), groupId.trim());
+  if (!usage) {
+    showStorageQuotaAlert(GROUP_STORAGE_CHECK_FAILED_MESSAGE);
+    return [];
+  }
+  let remaining = groupStorageRemainingBytes(usage.used, usage.max);
+  const kept: T[] = [];
+  let warned = false;
+  for (const asset of assets) {
+    const size = (await sourceForLocalUri(asset.uri)).byteLength;
+    if (size <= 0) {
+      if (!warned) {
+        showStorageQuotaAlert(GROUP_STORAGE_UNKNOWN_SIZE_MESSAGE);
+        warned = true;
+      }
+      continue;
+    }
+    if (remaining <= 0 || size > remaining) {
+      if (!warned) {
+        showStorageQuotaAlert(
+          remaining <= 0 ? GROUP_STORAGE_FULL_MESSAGE : groupStorageDoesNotFitMessage(size, remaining)
+        );
+        warned = true;
+      }
+      continue;
+    }
+    kept.push(asset);
+    remaining -= size;
+  }
+  return kept;
 }
 
 async function presignAndPut(input: {
@@ -382,32 +525,50 @@ async function presignAndPut(input: {
   ensureUploadSession();
   setUploadFileFraction(0.04);
   try {
+    const groupId = input.groupId?.trim() || undefined;
+    if (groupId && input.source.byteLength <= 0) {
+      showStorageQuotaAlert(GROUP_STORAGE_UNKNOWN_SIZE_MESSAGE);
+      throw new Error('cancelled');
+    }
+    if (!(await ensureGroupCanUpload(input.userId, groupId, input.source.byteLength))) {
+      throw new Error('cancelled');
+    }
     let presign;
     try {
       presign = await StorageService.presignUpload({
         userId: input.userId,
         contentType: input.contentType,
         filename: input.filename,
-        groupId: input.groupId?.trim() || undefined,
-        contentLength: input.source.byteLength || undefined,
+        groupId,
+        contentLength: input.source.byteLength,
       });
     } catch (e) {
-      throw new Error(apiErrorMessage(e, 'Upload failed'));
+      const msg = apiErrorMessage(e, 'Upload failed');
+      if (/storage limit/i.test(msg) || /not enough storage/i.test(msg) || /contentLength/i.test(msg)) {
+        showStorageQuotaAlert(msg);
+        throw new Error('cancelled');
+      }
+      throw new Error(msg);
     }
 
     const put = await putSource(presign.uploadUrl, input.source, input.contentType);
     await throwIfPutFailed(put);
     setUploadFileFraction(0.96);
-    if (input.groupId?.trim()) {
+    if (groupId) {
       try {
         await StorageService.completeUpload({
           userId: input.userId,
           publicUrl: presign.publicUrl,
-          groupId: input.groupId.trim(),
+          groupId,
           filename: input.filename,
         });
       } catch (e) {
-        throw new Error(apiErrorMessage(e, 'Upload failed'));
+        const msg = apiErrorMessage(e, 'Upload failed');
+        if (/storage limit/i.test(msg) || /not enough storage/i.test(msg)) {
+          showStorageQuotaAlert(msg);
+          throw new Error('cancelled');
+        }
+        throw new Error(msg);
       }
     }
     completeUploadFile();
@@ -458,7 +619,9 @@ export async function pickAndUploadFileFromDevice(
   userId: string,
   opts?: UploadOpts
 ): Promise<{ publicUrl: string; fileName: string }[]> {
-  const assets = await pickFilesFromDevice();
+  const picked = await pickFilesFromDevice({ userId, groupId: opts?.groupId });
+  const assets = await keepAssetsThatFit(userId, opts?.groupId, picked);
+  if (!assets.length) throw new Error('cancelled');
   return withUploadSession(assets.length, async () => {
     const uploaded: { publicUrl: string; fileName: string }[] = [];
     for (const asset of assets) {
@@ -476,12 +639,16 @@ export function uploadUrlToDownloadUrl(sourceUrl: string): string {
 
 /** Picks from library then presigns + PUT. Throws `cancelled` if the user backs out of the picker. */
 export async function pickAndUploadImageFromLibrary(userId: string, opts?: UploadOpts): Promise<string> {
-  const assets = await pickImagesFromLibrary({ multiple: false });
+  const picked = await pickImagesFromLibrary({ multiple: false, userId, groupId: opts?.groupId });
+  const assets = await keepAssetsThatFit(userId, opts?.groupId, picked);
+  if (!assets.length) throw new Error('cancelled');
   return uploadPickedImageAsset(userId, assets[0], opts);
 }
 
 export async function pickAndUploadImagesFromLibrary(userId: string, opts?: UploadOpts): Promise<string[]> {
-  const assets = await pickImagesFromLibrary({ multiple: true });
+  const picked = await pickImagesFromLibrary({ multiple: true, userId, groupId: opts?.groupId });
+  const assets = await keepAssetsThatFit(userId, opts?.groupId, picked);
+  if (!assets.length) throw new Error('cancelled');
   return withUploadSession(assets.length, async () => {
     const urls: string[] = [];
     for (const asset of assets) {
@@ -492,6 +659,9 @@ export async function pickAndUploadImagesFromLibrary(userId: string, opts?: Uplo
 }
 
 export async function pickAndUploadImageFromCamera(userId: string, opts?: UploadOpts): Promise<string> {
+  if (!(await ensureGroupCanUpload(userId, opts?.groupId))) {
+    throw new Error('cancelled');
+  }
   const asset = await pickCameraImageForUpload();
   return uploadPickedImageAsset(userId, asset, opts);
 }
@@ -564,6 +734,9 @@ export async function uploadCoverPhotoDrafts(
   opts?: UploadOpts
 ): Promise<string[]> {
   const pendingCount = drafts.filter((d) => d.kind === 'pending').length;
+  if (pendingCount > 0 && !(await ensureGroupCanUpload(userId, opts?.groupId))) {
+    throw new Error('cancelled');
+  }
   const run = async () => {
     const out: string[] = [];
     for (const d of drafts) {
@@ -587,12 +760,21 @@ function pendingFromPicked(asset: PickedImageAsset): { previewUri: string; pendi
 }
 
 /** Native image library pick — no network (use with web file input + {@link createWebDeferredCoverPhoto} on web). */
-export async function pickDeferredCoverPhotoNative(): Promise<Array<{
+export async function pickDeferredCoverPhotoNative(opts?: UploadOpts & { userId?: string }): Promise<Array<{
   previewUri: string;
   pending: PendingAvatarFile;
 }> | null> {
+  if (!(await ensureGroupCanUpload(opts?.userId, opts?.groupId))) {
+    return null;
+  }
   try {
-    const assets = await pickImagesFromLibrary({ multiple: true });
+    const picked = await pickImagesFromLibrary({
+      multiple: true,
+      userId: opts?.userId,
+      groupId: opts?.groupId,
+    });
+    const assets = await keepAssetsThatFit(opts?.userId, opts?.groupId, picked);
+    if (!assets.length) return null;
     return assets.map(pendingFromPicked);
   } catch (e) {
     if (isCancelled(e)) return null;
@@ -601,18 +783,64 @@ export async function pickDeferredCoverPhotoNative(): Promise<Array<{
   }
 }
 
-export async function pickDeferredCoverPhotoFromCamera(): Promise<{
+export async function pickDeferredCoverPhotoFromCamera(opts?: UploadOpts & { userId?: string }): Promise<{
   previewUri: string;
   pending: PendingAvatarFile;
 } | null> {
+  if (!(await ensureGroupCanUpload(opts?.userId, opts?.groupId))) {
+    return null;
+  }
   try {
     const asset = await pickCameraImageForUpload();
-    return pendingFromPicked(asset);
+    const fitted = await keepAssetsThatFit(opts?.userId, opts?.groupId, [asset]);
+    if (!fitted.length) return null;
+    return pendingFromPicked(fitted[0]);
   } catch (e) {
     if (isCancelled(e)) return null;
     Alert.alert('Photo', e instanceof Error ? e.message : 'Could not take photo');
     return null;
   }
+}
+
+export async function keepWebFilesThatFit(
+  userId: string | undefined,
+  groupId: string | undefined,
+  files: File[]
+): Promise<File[]> {
+  if (!groupId?.trim() || files.length === 0) return files;
+  if (!userId?.trim()) {
+    showStorageQuotaAlert(GROUP_STORAGE_CHECK_FAILED_MESSAGE);
+    return [];
+  }
+  const usage = await loadGroupStorageUsage(userId.trim(), groupId.trim());
+  if (!usage) {
+    showStorageQuotaAlert(GROUP_STORAGE_CHECK_FAILED_MESSAGE);
+    return [];
+  }
+  let remaining = groupStorageRemainingBytes(usage.used, usage.max);
+  const kept: File[] = [];
+  let warned = false;
+  for (const file of files) {
+    if (file.size <= 0) {
+      if (!warned) {
+        showStorageQuotaAlert(GROUP_STORAGE_UNKNOWN_SIZE_MESSAGE);
+        warned = true;
+      }
+      continue;
+    }
+    if (remaining <= 0 || file.size > remaining) {
+      if (!warned) {
+        showStorageQuotaAlert(
+          remaining <= 0 ? GROUP_STORAGE_FULL_MESSAGE : groupStorageDoesNotFitMessage(file.size, remaining)
+        );
+        warned = true;
+      }
+      continue;
+    }
+    kept.push(file);
+    remaining -= file.size;
+  }
+  return kept;
 }
 
 export function createWebDeferredCoverPhoto(file: File): { previewUri: string; pending: PendingAvatarFile } {

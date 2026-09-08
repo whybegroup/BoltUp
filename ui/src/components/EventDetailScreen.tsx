@@ -1169,7 +1169,7 @@ export function EventDetailScreen({
     } finally {
       setCommentDraftPhotoBusy(false);
     }
-  }, [commentDraftPhotoBusy, currentUserId]);
+  }, [commentDraftPhotoBusy, currentUserId, ev?.groupId]);
 
   const takeCommentDraftPhoto = useCallback(async () => {
     if (!currentUserId || commentDraftPhotoBusy) return;
@@ -1183,7 +1183,7 @@ export function EventDetailScreen({
     } finally {
       setCommentDraftPhotoBusy(false);
     }
-  }, [commentDraftPhotoBusy, currentUserId]);
+  }, [commentDraftPhotoBusy, currentUserId, ev?.groupId]);
 
   const attachCommentDraftFile = useCallback(async () => {
     if (!currentUserId || commentDraftPhotoBusy) return;

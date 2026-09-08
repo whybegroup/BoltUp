@@ -19,7 +19,11 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useMissingGroupRedirect } from '../hooks/useMissingResourceAlert';
 import { GroupStorageUsageBar } from './GroupStorageUsageBar';
 import { GroupStorageRequestForm } from './GroupStorageRequestForm';
-import { DEFAULT_GROUP_MAX_STORAGE_BYTES, formatStorageBytes } from '../utils/groupStorage';
+import {
+  DEFAULT_GROUP_MAX_STORAGE_BYTES,
+  formatStorageBytes,
+  resolveGroupMaxStorageBytes,
+} from '../utils/groupStorage';
 import { parseFromEventId, buildGroupStorageCategoryUrl } from '../utils/breadcrumbUrl';
 import {
   GROUP_STORAGE_CATEGORY_COLORS,
@@ -73,7 +77,7 @@ export function GroupManageStorageView({ groupId }: { groupId: string }) {
   }
 
   const usedBytes = breakdown?.usedBytes ?? group.usedStorageBytes ?? 0;
-  const maxBytes = breakdown?.maxBytes ?? group.maxStorageBytes;
+  const maxBytes = resolveGroupMaxStorageBytes(breakdown?.maxBytes ?? group.maxStorageBytes);
   const categories = groupStorageCategoryUsages(breakdown?.categories);
 
   const cancelSubscription = async () => {

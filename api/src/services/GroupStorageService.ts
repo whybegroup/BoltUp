@@ -59,7 +59,6 @@ export class GroupStorageService {
 
   public async assertCanAddBytes(groupId: string, userId: string | null, additionalBytes: number): Promise<void> {
     const extra = Math.max(0, Math.floor(additionalBytes));
-    if (extra <= 0) return;
 
     const group = await prisma.group.findUnique({
       where: { id: groupId },
@@ -83,7 +82,7 @@ export class GroupStorageService {
 
     const maxBytes = group ? groupMaxStorageBytes(group.maxStorageBytes) : DEFAULT_GROUP_MAX_STORAGE_BYTES;
     const used = await this.getUsedStorageBytes(groupId);
-    if (used + extra > maxBytes) {
+    if (used >= maxBytes || used + extra > maxBytes) {
       throw httpError(413, groupStorageExceededMessage(maxBytes));
     }
   }
@@ -534,7 +533,7 @@ export class GroupStorageService {
     if (used > cap) {
       throw httpError(
         400,
-        `This group is using ${formatStorageBytes(used)}, which is more than 2 GB. Delete files before canceling the subscription.`
+        `This group is using ${formatStorageBytes(used)}, which is more than ${formatStorageBytes(cap)}. Delete files before canceling the subscription.`
       );
     }
 

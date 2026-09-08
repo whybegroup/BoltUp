@@ -18,6 +18,7 @@ import {
   bytesToStorageRequestGb,
   formatStorageBytes,
   gbToBytes,
+  resolveGroupMaxStorageBytes,
   snapStorageRequestGb,
 } from '../utils/groupStorage';
 import { useSetGroupStorageLimit } from '../hooks/api/useGroups';
@@ -35,16 +36,19 @@ export function GroupStorageRequestForm({
   usedBytes: number;
 }) {
   const setLimit = useSetGroupStorageLimit(groupId, userId);
+  const effectiveMax = resolveGroupMaxStorageBytes(currentMaxBytes);
+  const paidFloor = gbToBytes(STORAGE_REQUEST_MIN_GB);
+  const currentPaidGb = effectiveMax >= paidFloor ? bytesToStorageRequestGb(effectiveMax) : null;
 
-  const [selectedGb, setSelectedGb] = useState(() => bytesToStorageRequestGb(currentMaxBytes));
+  const [selectedGb, setSelectedGb] = useState(() => currentPaidGb ?? STORAGE_REQUEST_MIN_GB);
 
   useEffect(() => {
-    setSelectedGb(bytesToStorageRequestGb(currentMaxBytes));
-  }, [currentMaxBytes]);
+    setSelectedGb(currentPaidGb ?? STORAGE_REQUEST_MIN_GB);
+  }, [currentPaidGb]);
 
   const requestedBytes = useMemo(() => gbToBytes(selectedGb), [selectedGb]);
   const used = Math.max(0, usedBytes);
-  const unchanged = requestedBytes === currentMaxBytes;
+  const unchanged = currentPaidGb != null && selectedGb === currentPaidGb;
   const belowUsage = requestedBytes <= used;
   const saving = setLimit.isPending;
   const canSubmit = !unchanged && !belowUsage && !saving;
@@ -64,7 +68,8 @@ export function GroupStorageRequestForm({
     <View style={styles.requestBlock}>
       <Text style={styles.requestTitle}>Storage limit</Text>
       <Text style={styles.hint}>
-        Changes take effect immediately. The limit must stay above current usage.
+        Current limit is {formatStorageBytes(effectiveMax)}. Paid upgrades start at{' '}
+        {STORAGE_REQUEST_MIN_GB} GB and take effect immediately.
       </Text>
       <Text style={styles.value}>{selectedGb} GB</Text>
       <StorageGbSlider valueGb={selectedGb} onChange={setSelectedGb} />

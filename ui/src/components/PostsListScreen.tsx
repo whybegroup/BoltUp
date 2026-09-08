@@ -641,28 +641,68 @@ export function PostsListScreen() {
     [currentUserId, queryClient, removeLightboxUrl]
   );
 
-  const uploadComposerPhoto = useCallback(async (target: 'new' | 'edit' = 'new') => {
+  const promptSelectGroupForAttachments = useCallback(() => {
+    const title = 'Select a group';
+    const msg = 'Choose a group before adding photos or files.';
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${msg}`);
+      setShowGroupSelectModal(true);
+      return;
+    }
+    Alert.alert(title, msg, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Select group', onPress: () => setShowGroupSelectModal(true) },
+    ]);
+  }, []);
+
+  const requireNewPostGroup = useCallback((): boolean => {
+    if (selectedGroupForPost) return true;
+    promptSelectGroupForAttachments();
+    return false;
+  }, [promptSelectGroupForAttachments, selectedGroupForPost]);
+
+  const composerUploadGroupId = useCallback(
+    (target: 'new' | 'edit', editGroupId?: string) => {
+      if (target === 'edit') return editGroupId?.trim() || null;
+      return selectedGroupForPost;
+    },
+    [selectedGroupForPost]
+  );
+
+  const uploadComposerPhoto = useCallback(async (target: 'new' | 'edit' = 'new', editGroupId?: string) => {
     if (!currentUserId || isUploadingAttachment) return;
+    const groupId = composerUploadGroupId(target, editGroupId);
+    if (!groupId) {
+      if (target === 'new') promptSelectGroupForAttachments();
+      return;
+    }
     try {
       setIsUploadingAttachment(true);
-      const publicUrls = await pickAndUploadCoverPhoto(currentUserId, {
-        groupId: selectedGroupForPost || undefined,
-      });
+      const publicUrls = await pickAndUploadCoverPhoto(currentUserId, { groupId });
       if (!publicUrls?.length) return;
       trackManagedUploadUrls(trackedUploadsForComposer(target), publicUrls);
       for (const publicUrl of publicUrls) addComposerPhoto(publicUrl, target);
     } finally {
       setIsUploadingAttachment(false);
     }
-  }, [addComposerPhoto, currentUserId, isUploadingAttachment, selectedGroupForPost]);
+  }, [
+    addComposerPhoto,
+    composerUploadGroupId,
+    currentUserId,
+    isUploadingAttachment,
+    promptSelectGroupForAttachments,
+  ]);
 
-  const takePhotoAndAddComposerPhoto = useCallback(async (target: 'new' | 'edit' = 'new') => {
+  const takePhotoAndAddComposerPhoto = useCallback(async (target: 'new' | 'edit' = 'new', editGroupId?: string) => {
     if (!currentUserId || isUploadingAttachment) return;
+    const groupId = composerUploadGroupId(target, editGroupId);
+    if (!groupId) {
+      if (target === 'new') promptSelectGroupForAttachments();
+      return;
+    }
     try {
       setIsUploadingAttachment(true);
-      const publicUrl = await takeAndUploadCoverPhoto(currentUserId, {
-        groupId: selectedGroupForPost || undefined,
-      });
+      const publicUrl = await takeAndUploadCoverPhoto(currentUserId, { groupId });
       if (!publicUrl) return;
       trackManagedUploadUrl(trackedUploadsForComposer(target), publicUrl);
       addComposerPhoto(publicUrl, target);
@@ -671,15 +711,24 @@ export function PostsListScreen() {
     } finally {
       setIsUploadingAttachment(false);
     }
-  }, [addComposerPhoto, currentUserId, isUploadingAttachment, selectedGroupForPost]);
+  }, [
+    addComposerPhoto,
+    composerUploadGroupId,
+    currentUserId,
+    isUploadingAttachment,
+    promptSelectGroupForAttachments,
+  ]);
 
-  const attachFileToComposer = useCallback(async (target: 'new' | 'edit' = 'new') => {
+  const attachFileToComposer = useCallback(async (target: 'new' | 'edit' = 'new', editGroupId?: string) => {
     if (!currentUserId || isUploadingAttachment) return;
+    const groupId = composerUploadGroupId(target, editGroupId);
+    if (!groupId) {
+      if (target === 'new') promptSelectGroupForAttachments();
+      return;
+    }
     try {
       setIsUploadingAttachment(true);
-      const uploaded = await pickAndUploadFileFromDevice(currentUserId, {
-        groupId: selectedGroupForPost || undefined,
-      });
+      const uploaded = await pickAndUploadFileFromDevice(currentUserId, { groupId });
       if (!uploaded?.length) return;
       const fileEntries = uploaded.map((file) => ({
         name: file.fileName || 'Attachment',
@@ -697,7 +746,12 @@ export function PostsListScreen() {
     } finally {
       setIsUploadingAttachment(false);
     }
-  }, [currentUserId, isUploadingAttachment, selectedGroupForPost]);
+  }, [
+    composerUploadGroupId,
+    currentUserId,
+    isUploadingAttachment,
+    promptSelectGroupForAttachments,
+  ]);
 
   const canPost = (newPostBody.trim() || newPostPhotoUrls.length > 0 || newPostFileAttachments.length > 0) && selectedGroupForPost;
 
@@ -1307,15 +1361,20 @@ export function PostsListScreen() {
                     linkModalTitle="Photo URL"
                     disabled={isUploadingAttachment}
                     busy={isUploadingAttachment}
+                    onBeforeOpen={requireNewPostGroup}
                     onTakePhoto={() => void takePhotoAndAddComposerPhoto()}
                     onChooseFromLibrary={() => void uploadComposerPhoto()}
                     onInsertLink={async (url) => {
+                      if (!requireNewPostGroup()) return;
                       setNewPostPhotoUrls((prev) => [...prev, url.trim()]);
                     }}
                   />
                   <TouchableOpacity
                     style={[styles.composerIconBtn, isUploadingAttachment && styles.postBtnDisabled]}
-                    onPress={() => void attachFileToComposer()}
+                    onPress={() => {
+                      if (!requireNewPostGroup()) return;
+                      void attachFileToComposer();
+                    }}
                     disabled={isUploadingAttachment}
                     accessibilityLabel="Attach file"
                   >
@@ -1526,15 +1585,15 @@ export function PostsListScreen() {
                               linkModalTitle="Photo URL"
                               disabled={isUploadingAttachment}
                               busy={isUploadingAttachment}
-                              onTakePhoto={() => void takePhotoAndAddComposerPhoto('edit')}
-                              onChooseFromLibrary={() => void uploadComposerPhoto('edit')}
+                              onTakePhoto={() => void takePhotoAndAddComposerPhoto('edit', post.groupId)}
+                              onChooseFromLibrary={() => void uploadComposerPhoto('edit', post.groupId)}
                               onInsertLink={async (url) => {
                                 addComposerPhoto(url.trim(), 'edit');
                               }}
                             />
                             <TouchableOpacity
                               style={[styles.composerIconBtn, isUploadingAttachment && styles.postBtnDisabled]}
-                              onPress={() => void attachFileToComposer('edit')}
+                              onPress={() => void attachFileToComposer('edit', post.groupId)}
                               disabled={isUploadingAttachment}
                               accessibilityLabel="Attach file"
                             >
